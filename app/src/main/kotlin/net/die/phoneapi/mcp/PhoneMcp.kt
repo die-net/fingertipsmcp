@@ -50,10 +50,10 @@ internal fun Application.installPhoneMcp(services: ServerServices, sessions: Mcp
                     startSession(services, sessions, call)
                     return@post
                 }
-                val session = sessions.get(id)
+                // Another token's session answers as one that does not exist.
+                val session = sessions.get(id)?.takeIf { it.tokenId == call.token.id }
                 when {
                     session == null -> call.respond(HttpStatusCode.NotFound, noSession())
-                    session.tokenId != call.token.id -> call.respond(HttpStatusCode.NotFound)
                     session.transport != null -> {
                         session.touch(sessions.clock())
                         serve(session, call)
@@ -69,12 +69,16 @@ internal fun Application.installPhoneMcp(services: ServerServices, sessions: Mcp
                 call.respond(HttpStatusCode.MethodNotAllowed)
             }
             delete {
-                val session = call.request.header(SESSION_HEADER)?.let(sessions::get)
-                val transport = session?.transport
-                when {
-                    transport == null -> call.respond(HttpStatusCode.NotFound, noSession())
-                    session.tokenId != call.token.id -> call.respond(HttpStatusCode.NotFound)
-                    else -> transport.handleRequest(null, call)
+                val transport =
+                    call.request
+                        .header(SESSION_HEADER)
+                        ?.let(sessions::get)
+                        ?.takeIf { it.tokenId == call.token.id }
+                        ?.transport
+                if (transport == null) {
+                    call.respond(HttpStatusCode.NotFound, noSession())
+                } else {
+                    transport.handleRequest(null, call)
                 }
             }
         }

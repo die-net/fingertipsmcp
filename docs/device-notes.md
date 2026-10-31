@@ -160,6 +160,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 - Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
 - How long Chrome takes on the Moto G Power to open its DevTools socket after a tab open starts it, against the 10 s limit, and whether a first-run or sign-in screen keeps it from opening one.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
+- That a tab Chrome unloaded still reloads for a read when `readyState` is read in an isolated world right after `Page.reload`, before the new document exists.
 
 ## Checked on the phone
 

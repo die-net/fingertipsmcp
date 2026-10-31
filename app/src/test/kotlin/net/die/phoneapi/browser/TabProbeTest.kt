@@ -39,9 +39,11 @@ class TabProbeTest {
 
     @Test
     fun `unloaded tab reloads on read`() {
-        // Chrome reports the crash before answering, then the reload and the fresh readyState.
-        // Replies are queued ahead, so later commands may not be written yet.
-        val page = StallingSocket(harness.switched() + crashed() + value(3, "\"complete\""))
+        // Chrome reports the crash before answering, then the reload, the isolated world, and the
+        // fresh readyState read in it. Replies are queued ahead, so later commands may not be
+        // written yet.
+        val page =
+            StallingSocket(harness.switched() + crashed() + world(3) + value(5, "\"complete\""))
         val reloaded = onPage(page) { probe().revive(it, CHROME_SOCKET, reading = true) }
         assertTrue(reloaded)
     }
@@ -131,10 +133,10 @@ class TabProbeTest {
 
     private fun empty(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{}}""")
 
-    /** Replies to Page.getFrameTree and Page.createIsolatedWorld. */
-    private fun world() =
-        harness.serverTextFrame("""{"id":1,"result":{"frameTree":{"frame":{"id":"F"}}}}""") +
-            harness.serverTextFrame("""{"id":2,"result":{"executionContextId":7}}""")
+    /** Replies to Page.getFrameTree and Page.createIsolatedWorld, from command [first] on. */
+    private fun world(first: Int = 1) =
+        harness.serverTextFrame("""{"id":$first,"result":{"frameTree":{"frame":{"id":"F"}}}}""") +
+            harness.serverTextFrame("""{"id":${first + 1},"result":{"executionContextId":7}}""")
 
     /** `Inspector.targetCrashed`, then the replies to `Inspector.enable` and `Page.reload`. */
     private fun crashed() =

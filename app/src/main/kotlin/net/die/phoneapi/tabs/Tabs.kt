@@ -399,6 +399,7 @@ class Tabs(
     ) {
         val (socket, _) = parseBrowserTargetId(id)
         if (id == placeholder) throw missing(id)
+        requireExists(id, socket)
         val claimed = mutex.withLock {
             val owner = owners[id]
             when {
@@ -419,6 +420,15 @@ class Tabs(
         }
         val pkg = base.targets().firstOrNull { it.id == id }?.packageName
         if (!lease.holds(holder) || pkg == null || !inFront(pkg)) throw missing(id)
+    }
+
+    /**
+     * Only a tab Chrome has can be claimed. An unowned Chrome id it does not have gets the same
+     * answer as another session's tab, and leaves no owner behind.
+     */
+    private suspend fun requireExists(id: String, socket: String) {
+        if (socket != CHROME_SOCKET || owners.containsKey(id)) return
+        if (base.targets().none { it.id == id }) throw missing(id)
     }
 
     /** Calls that take no session: any tab a live session does not own. */
