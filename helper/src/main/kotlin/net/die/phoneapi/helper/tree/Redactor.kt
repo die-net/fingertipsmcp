@@ -43,15 +43,7 @@ internal class Redactor {
         return MASK
     }
 
-    private fun cards(text: String): String =
-        CARD.replace(text) { match ->
-            if (luhn(match.value.filter(Char::isDigit))) {
-                count++
-                CARD_MASK
-            } else {
-                match.value
-            }
-        }
+    private fun cards(text: String): String = maskCards(text) { count++ }
 
     private fun codeField(node: UiNode, text: String, label: String?): Boolean {
         if (UiStates.EDITABLE !in node.states && node.role != "edit") return false
@@ -85,6 +77,20 @@ internal class Redactor {
                     """(verification|security|confirmation|sign[ _-]?in|login|access|auth\w*|sms)[ _-]?code""",
                 RegexOption.IGNORE_CASE,
             )
+
+        /**
+         * Masks the card numbers in [text]: runs of 13 to 19 digits that pass the Luhn check.
+         * [onMask] runs once for each.
+         */
+        fun maskCards(text: String, onMask: () -> Unit = {}): String =
+            CARD.replace(text) { match ->
+                if (luhn(match.value.filter(Char::isDigit))) {
+                    onMask()
+                    CARD_MASK
+                } else {
+                    match.value
+                }
+            }
 
         /** Whether [digits] passes the Luhn check card numbers carry. */
         fun luhn(digits: String): Boolean {

@@ -76,9 +76,9 @@ public data class SnapshotOptions(
     val textOnly: Boolean = false,
     /**
      * Mask the text of password and one-time-code fields, and card numbers, and count them in
-     * [UiSnapshot.redacted].
+     * [UiSnapshot.redacted]. On by default, so a caller sees secrets only when it asks.
      */
-    val redact: Boolean = false,
+    val redact: Boolean = true,
     val includeInvisible: Boolean = false,
     /** Include every window, not just the ones that are interesting to act on. */
     val allWindows: Boolean = false,
@@ -111,7 +111,7 @@ public data class FindRequest(
     val limit: Int = 20,
     val includeInvisible: Boolean = false,
     /** Mask secrets in the matches as [SnapshotOptions.redact] does, and count them. */
-    val redact: Boolean = false,
+    val redact: Boolean = true,
 )
 
 @Serializable

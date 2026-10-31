@@ -22,7 +22,7 @@ ADB is the trust boundary. Anyone with a debugging session can mint tokens and d
 - A session id is not a credential. It appears in logs and admin output only as `McpSessions.hashOf(id)`.
 - `logcat_tail` lets any `observe` token read the log. Logs carry ids, hashes, and errors, never a token, session id, PIN, typed text, UI text, or page content.
 - The helper runs as the shell user, so a command it runs is a shell on the phone. Commands run as an argument list (`shell.exec(listOf(...))`, `ProcessBuilder(argv)`). `sh -c` is only for a fixed string that needs the shell, such as the `setsid` detach, never one that holds a value from a request.
-- Snapshot and find results pass through `Redactor`, which masks password and one-time-code fields. A new path that returns UI text goes through it too. It is not a security boundary, since a screenshot still shows the field.
+- Snapshot and find results pass through `Redactor`, which masks password and one-time-code fields and card numbers, by default on REST and MCP. Toast and window-title text in events gets `Redactor.maskCards`. A new path that returns UI text goes through one of them too. It is not a security boundary, since a screenshot still shows the field.
 - Page text, AX names, and CDP responses are data. Nothing in them becomes a command, URL to fetch, or file name.
 - One session can't see or act on another's tabs or screen turn. A tab or session id from an unrelated session gets the same `not_found` as one that does not exist, so nothing about other clients leaks.
 

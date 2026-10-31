@@ -37,7 +37,7 @@ fun Route.uiRoutes(services: ServerServices) {
                     maxNodes = q.int("maxNodes"),
                     maxChars = q.int("maxChars"),
                     textOnly = q.flag("textOnly", default = false),
-                    redact = q.flag("redact", default = false),
+                    redact = q.flag("redact", default = true),
                     includeInvisible = q.flag("includeInvisible", default = false),
                     allWindows = q.flag("all", default = false),
                     autoWake = q.flag("autoWake", default = true),
