@@ -108,24 +108,6 @@ class AppsServiceImpl(
         )
     }
 
-    private fun intentFailed(
-        request: IntentRequest,
-        failure: AmFailure,
-        message: String,
-    ): ApiException =
-        when (failure) {
-            AmFailure.UNRESOLVED ->
-                ApiException.notFound("Nothing handles ${describe(request)}: $message")
-            AmFailure.DENIED ->
-                ApiException(403, "forbidden", "Android refused ${describe(request)}: $message")
-            AmFailure.OTHER ->
-                ApiException(
-                    409,
-                    "intent_failed",
-                    "am start failed for ${describe(request)}: $message",
-                )
-        }
-
     private suspend fun manage(
         packageName: String,
         what: String,
@@ -182,11 +164,9 @@ class AppsServiceImpl(
                 cause = e,
             )
         } catch (e: SecurityException) {
-            throw ApiException(
-                403,
-                "forbidden",
+            throw intentRefused(
                 "${describe(intent)} is not exported, so it can only be started by its own app",
-                cause = e,
+                e,
             )
         }
     }
@@ -267,9 +247,6 @@ class AppsServiceImpl(
                 "start. Android blocks this app from starting activities in the background."
         }
     }
-
-    private fun describe(request: IntentRequest): String =
-        request.component ?: request.packageName ?: request.data ?: request.action
 
     private fun describe(intent: Intent): String =
         intent.component?.flattenToShortString() ?: intent.`package` ?: intent.action.orEmpty()

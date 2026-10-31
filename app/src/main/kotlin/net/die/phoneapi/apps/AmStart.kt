@@ -2,6 +2,7 @@ package net.die.phoneapi.apps
 
 import net.die.phoneapi.helperclient.ShellResult
 import net.die.phoneapi.helperclient.failureMessage
+import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.IntentRequest
 
 /**
@@ -74,3 +75,28 @@ private const val WARNING = "Warning:"
 private const val ACTIVITY = "Activity:"
 private val EXCEPTION = Regex("""^[\w.$]+(Exception|Error): """)
 private val CHOOSER = Regex("""/[\w.$]*(ResolverActivity|ChooserActivity)$""")
+
+/** The error for an intent `am start` could not start, by why it failed. */
+internal fun intentFailed(
+    request: IntentRequest,
+    failure: AmFailure,
+    message: String,
+): ApiException =
+    when (failure) {
+        AmFailure.UNRESOLVED ->
+            ApiException.notFound("Nothing handles ${describe(request)}: $message")
+        AmFailure.DENIED -> intentRefused("Android refused ${describe(request)}: $message")
+        AmFailure.OTHER ->
+            ApiException(409, "intent_failed", "am start failed for ${describe(request)}: $message")
+    }
+
+/**
+ * Android would not start the intent, for example an activity that is not exported. It is not a
+ * missing scope, so it is not 403 `forbidden`.
+ */
+internal fun intentRefused(message: String, cause: Throwable? = null): ApiException =
+    ApiException(409, "intent_refused", message, cause = cause)
+
+/** How an error message names the intent [request] starts. */
+internal fun describe(request: IntentRequest): String =
+    request.component ?: request.packageName ?: request.data ?: request.action

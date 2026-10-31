@@ -140,6 +140,18 @@ class AmStartTest {
     }
 
     @Test
+    fun `failures map to codes`() {
+        val request =
+            IntentRequest(action = "android.intent.action.VIEW", component = "com.x/.Hidden")
+        // A refusal is Android's, not a missing scope, so it is never 403 forbidden.
+        val refused = intentFailed(request, AmFailure.DENIED, "not exported")
+        assertEquals(409, refused.status)
+        assertEquals("intent_refused", refused.error)
+        assertEquals("not_found", intentFailed(request, AmFailure.UNRESOLVED, "").error)
+        assertEquals("intent_failed", intentFailed(request, AmFailure.OTHER, "").error)
+    }
+
+    @Test
     fun `a timed out command fails`() {
         val started = parse(124, "Starting: Intent { act=x }")
         assertEquals(AmFailure.OTHER, started.failure)

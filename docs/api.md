@@ -110,7 +110,7 @@ Authenticated errors are JSON:
 | Status | `error` | Typical cause |
 | --- | --- | --- |
 | 400 | `bad_request` | Bad JSON, enum, or query |
-| 403 | `forbidden` | Missing scope. Also an intent Android refused, or an activity that is not exported |
+| 403 | `forbidden` | Missing scope |
 | 404 | `not_found` | Unknown id, tab, session, or package (authenticated), or nothing handles an intent |
 | 404 | `stale_ref` | A UI node ref no longer points at a node; take a new snapshot |
 | 404 | *(empty body)* | Missing/invalid Bearer |
@@ -125,6 +125,7 @@ Authenticated errors are JSON:
 | 409 | `obscured` | Something, such as the keyboard, covers the node. `force` taps the part that shows |
 | 409 | `content_unavailable` | A `touch` tap on a page that is not on screen, or that a dialog, menu, or the tab switcher of the browser covers. Also a call to a page that timed out while Chrome shows a page's dialog, such as an alert, which holds the page until someone dismisses it |
 | 409 | `not_visible` | `cdp` touch input into a tab that is not on screen; Chrome holds it until the tab shows |
+| 409 | `intent_refused` | Android refused the intent, for example an activity that is not exported |
 | 409 | `intent_failed` | Android could not start the intent for another reason; the message has its output |
 | 409 | `stop_failed` / `clear_failed` | `am force-stop` or `pm clear` failed; the message has its output |
 | 409 | `screen_busy` | Someone else held the screen for the whole 60 s wait |
