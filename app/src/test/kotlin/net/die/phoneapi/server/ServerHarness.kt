@@ -394,19 +394,22 @@ internal const val FAILING_SELECTOR = "#fails"
 
 /** A browser with one tab, which [BrowserService.openTab] opens and reads and finds answer. */
 internal open class FakeBrowser : BrowserService {
-    /** Whether Chrome is stopped, so opening a tab starts it and takes the screen. */
-    var stopped = false
-
-    override suspend fun chromeStopped() = stopped
-
-    override suspend fun targets(): List<BrowserTarget> = emptyList()
-
-    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean) =
+    private val tab =
         BrowserTarget(
             id = "chrome_devtools_remote~t",
             type = "page",
             socket = "chrome_devtools_remote",
         )
+
+    /** Whether Chrome is stopped, so opening a tab starts it and takes the screen. */
+    var stopped = false
+
+    override suspend fun chromeStopped() = stopped
+
+    // Chrome has the tab, so a session can claim it without opening it first.
+    override suspend fun targets(): List<BrowserTarget> = listOf(tab)
+
+    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean) = tab
 
     override suspend fun navigate(id: String, url: String) =
         BrowserTarget(id = id, type = "page", url = url, socket = "s")

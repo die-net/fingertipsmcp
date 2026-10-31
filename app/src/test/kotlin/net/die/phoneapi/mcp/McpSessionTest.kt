@@ -85,16 +85,17 @@ class McpSessionTest {
         apiClient().use { http ->
             val id = initialize(http, alice)
             val stolen = rpc(http, bob, id, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""")
-            assertEquals(HttpStatusCode.NotFound, stolen.status)
-            assertEquals("", stolen.bodyAsText())
             val unknown =
                 rpc(
                     http,
-                    alice,
+                    bob,
                     "f".repeat(32),
                     """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",
                 )
-            assertEquals(HttpStatusCode.NotFound, unknown.status)
+            // Another token's session answers exactly as a session that does not exist.
+            assertEquals(HttpStatusCode.NotFound, stolen.status)
+            assertEquals(unknown.status, stolen.status)
+            assertEquals(unknown.bodyAsText(), stolen.bodyAsText())
         }
     }
 

@@ -162,6 +162,17 @@ class TabsTest {
     }
 
     @Test
+    fun `unknown tabs are not claimed`() = runBlocking {
+        val tabs = tabs()
+        val other = tabs.browserFor(b).openTab("https://example.com/").id
+        val unknown = "chrome_devtools_remote~gone"
+        // A made-up id reads as another session's tab, so it tells a caller nothing.
+        assertEquals("not_found", error { tabs.browserFor(a).read(unknown, BrowserReadRequest()) })
+        assertEquals("not_found", error { tabs.browserFor(a).read(other, BrowserReadRequest()) })
+        assertEquals(0, tabs.count(a))
+    }
+
+    @Test
     fun `claimed tabs go back`() = runBlocking {
         val tabs = tabs()
         val old = browser.add("old")

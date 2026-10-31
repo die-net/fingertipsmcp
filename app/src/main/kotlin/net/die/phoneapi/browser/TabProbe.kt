@@ -5,12 +5,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.put
 import net.die.phoneapi.model.ApiException
 
 /**
@@ -113,26 +109,15 @@ internal class TabProbe(
         return cdp.seen("Inspector.targetCrashed")
     }
 
-    private suspend fun evaluate(
-        cdp: CdpSession,
-        expression: String,
-        awaitPromise: Boolean = false,
-    ): JsonElement? =
-        cdp.call(
-                "Runtime.evaluate",
-                buildJsonObject {
-                    put("expression", expression)
-                    put("returnByValue", true)
-                    put("awaitPromise", awaitPromise)
-                },
-            )
-            .let { (it["result"] as? JsonObject)?.get("value") }
-
     /** Waits, up to [reloadMs], until the reloaded page has its document. */
     private suspend fun awaitLoaded(cdp: CdpSession) {
         withTimeoutOrNull(reloadMs) {
             while (true) {
-                val state = withTimeoutOrNull(probeMs) { evaluate(cdp, "document.readyState") }
+                // In an isolated world, like all page script, so the page cannot see the read.
+                val state =
+                    withTimeoutOrNull(probeMs) {
+                        evaluateIn(cdp, "document.readyState", awaitPromise = false).value
+                    }
                 val text = (state as? JsonPrimitive)?.contentOrNull
                 if (text == "interactive" || text == "complete") return@withTimeoutOrNull
                 delay(POLL_MS)
