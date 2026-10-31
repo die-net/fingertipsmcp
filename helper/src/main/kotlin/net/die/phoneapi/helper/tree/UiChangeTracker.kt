@@ -123,7 +123,7 @@ class UiChangeTracker(
     private fun toast(event: AccessibilityEvent, pkg: String?) {
         sink.emit(
             EventTypes.TOAST,
-            ToastData(text = event.text.joinToString(" "), packageName = pkg),
+            ToastData(text = Redactor.maskCards(event.text.joinToString(" ")), packageName = pkg),
         )
     }
 
@@ -134,7 +134,7 @@ class UiChangeTracker(
             WindowChangedData(
                 windowId = event.windowId,
                 packageName = pkg,
-                title = title,
+                title = title?.let { Redactor.maskCards(it) },
                 className = event.className?.toString(),
                 changes = listOf("state"),
             ),
@@ -231,7 +231,7 @@ class UiChangeTracker(
             WindowChangedData(
                 windowId = id,
                 packageName = change.packageName,
-                title = change.title,
+                title = change.title?.let { Redactor.maskCards(it) },
                 changes = names,
             ),
         )

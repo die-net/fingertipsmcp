@@ -159,6 +159,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
 - Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
 - How long Chrome takes on the Moto G Power to open its DevTools socket after a tab open starts it, against the 10 s limit, and whether a first-run or sign-in screen keeps it from opening one.
+- That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
 
 ## Checked on the phone
 

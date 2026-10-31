@@ -138,6 +138,8 @@ internal class FakeApi(leaseWaitMs: Long = ScreenLease.WAIT_MS) {
     var inputTaps = 0
     var imeShow: ImeShowRequest? = null
     var orientation: OrientationRequest? = null
+    var snapshotOptions: SnapshotOptions? = null
+    var findRequest: FindRequest? = null
     /** The fake phone's clipboard, and what the last clipboard call asked for. */
     @Volatile var clip: String? = "on the phone"
     @Volatile var clipWrite: ClipboardWriteRequest? = null
@@ -179,7 +181,20 @@ internal class FakeApi(leaseWaitMs: Long = ScreenLease.WAIT_MS) {
 
     val services: ServerServices =
         ServerServices(
-            ui = FakeUi,
+            ui =
+                object : UiService {
+                    override suspend fun snapshot(options: SnapshotOptions): UiSnapshot {
+                        snapshotOptions = options
+                        return snapshot
+                    }
+
+                    override suspend fun find(request: FindRequest): FindResult {
+                        findRequest = request
+                        return FindResult(seq = 1, matches = emptyList())
+                    }
+
+                    override suspend fun act(ref: String, request: NodeActionRequest) = acted()
+                },
             input =
                 object : InputService {
                     override suspend fun tap(request: TapRequest): ActionResult {
@@ -374,14 +389,6 @@ private val snapshot =
         windows = emptyList(),
         compact = "compact",
     )
-
-private object FakeUi : UiService {
-    override suspend fun snapshot(options: SnapshotOptions) = snapshot
-
-    override suspend fun find(request: FindRequest) = FindResult(seq = 1, matches = emptyList())
-
-    override suspend fun act(ref: String, request: NodeActionRequest) = acted()
-}
 
 private object FakeApps : AppsService {
     override suspend fun list(launchableOnly: Boolean): List<AppInfo> = emptyList()

@@ -74,7 +74,7 @@ One client at a time holds the screen, as [sharing.md](sharing.md) describes. Ca
 | `maxNodes` | — | Most node lines in the compact outline |
 | `maxChars` | — | Most characters of compact outline, cut at a line |
 | `textOnly` | `false` | Leave positions, resource ids, states, and actions out of the compact outline |
-| `redact` | `false` | Mask password and one-time-code fields and card numbers; `redacted` counts them. MCP `ui_snapshot`, `ui_find`, and `wait_for` default to `true` |
+| `redact` | `true` | Mask password and one-time-code fields and card numbers; `redacted` counts them. Pass `false` for the raw text. REST and MCP both default to masking |
 | `includeInvisible` | `false` | |
 | `all` | `false` | All windows, not only actionable |
 | `autoWake` | `true` | Wake before capture |
@@ -93,7 +93,7 @@ Condition `type` values include `node`, `window`, `ime`, `idle`, `screen`, `keyg
 
 - `types` — comma-separated; exact name or prefix ending in `.` (e.g. `ime.`). Omit for the default set **without** logcat.
 - Include `logcat` in `types` to stream log lines (helper required).
-- Event names include `ui.changed`, `window.changed`, `ime.shown`, `ime.hidden`, `screen.on`, `screen.off`, `user.present`, `toast`, `logcat`, `helper.status`, and `screen.taken` (an MCP session without the screen brought `package` forward; `session` is its hash).
+- Event names include `ui.changed`, `window.changed`, `ime.shown`, `ime.hidden`, `screen.on`, `screen.off`, `user.present`, `toast`, `logcat`, `helper.status`, and `screen.taken` (an MCP session without the screen brought `package` forward; `session` is its hash). Card numbers in `toast` text and `window.changed` titles show as `[card number]`.
 
 ## Errors
 

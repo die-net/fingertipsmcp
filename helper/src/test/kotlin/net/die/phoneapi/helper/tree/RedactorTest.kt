@@ -80,6 +80,16 @@ class RedactorTest {
     }
 
     @Test
+    fun `masks cards in event text`() {
+        assertEquals(
+            "Paid with [card number]",
+            Redactor.maskCards("Paid with 4111-1111-1111-1111"),
+        )
+        assertEquals("Your code is 123456", Redactor.maskCards("Your code is 123456"))
+        assertEquals("Order 1234567890123", Redactor.maskCards("Order 1234567890123"))
+    }
+
+    @Test
     fun `luhn check`() {
         assertTrue(Redactor.luhn("4111111111111111"))
         assertTrue(Redactor.luhn("378282246310005"))
