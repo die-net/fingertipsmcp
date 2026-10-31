@@ -1,7 +1,6 @@
 package net.die.phoneapi.server
 
 import io.ktor.server.websocket.DefaultWebSocketServerSession
-import java.io.Closeable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import net.die.phoneapi.core.AppsService
@@ -48,7 +47,6 @@ data class ServerServices(
     val audio: AudioFeed,
     val viewerHtml: suspend () -> ByteArray,
     val shell: suspend (List<String>) -> ShellResult,
-    val cdp: CdpPipes,
     val viewerText: () -> String,
     val logcat: LogcatFeed,
     /** The one screen lease, shared by MCP sessions, the viewer, and REST calls. */
@@ -97,19 +95,4 @@ fun interface VideoFeed {
 
 fun interface AudioFeed {
     suspend fun serve(session: DefaultWebSocketServerSession)
-}
-
-/** One raw DevTools socket, already aimed at a browser target. */
-interface CdpPipe : Closeable {
-    fun handshake()
-
-    fun connect()
-
-    suspend fun relayText(send: suspend (String) -> Unit)
-
-    suspend fun sendText(text: String)
-}
-
-fun interface CdpPipes {
-    suspend fun open(targetId: String): CdpPipe
 }

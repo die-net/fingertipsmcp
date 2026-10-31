@@ -45,8 +45,8 @@ Scopes on a token:
 A REST call that acts on the phone or its tabs runs as a session, as an MCP client does, so a script's steps hold the screen and its tabs together. [sharing.md](sharing.md#rest-sessions) has the design.
 
 - `POST /v1/sessions` starts one (any token, whatever its scopes) → 201 `SessionStarted` with its `id`. Send the id in `Mcp-Session-Id` on every call that needs a session. Without it a call fails with **428** `session_required`; with the id of a session that ended or belongs to another token, **404** `not_found`.
-- Calls that need a session: wake, unlock, lock, orientation, the UI tree and its actions, screenshots, input, IME, app launch, stop, and clear, intents, waits, and every `/v1/browser/` route except the raw CDP socket.
-- Calls that need none: `GET /v1/device`, `GET /v1/apps`, the PIN routes, the OpenAPI document, the events socket, the viewer and its sockets and streams, the raw CDP socket, and session and token admin.
+- Calls that need a session: wake, unlock, lock, orientation, the UI tree and its actions, screenshots, input, IME, app launch, stop, and clear, intents, waits, and every `/v1/browser/` route.
+- Calls that need none: `GET /v1/device`, `GET /v1/apps`, the PIN routes, the OpenAPI document, the events socket, the viewer and its sockets and streams, and session and token admin.
 - `DELETE /v1/sessions/current` ends the session named in the header: cleanup if it held the screen, and the tabs it opened close. `POST /v1/screen/release` lets its screen go and keeps its tabs. A session also ends after 20 minutes without a request.
 - One id works on both sides. An id from MCP's `initialize` works on REST as the same session, and an `initialize` that carries a REST session's id in `Mcp-Session-Id` gives that session an MCP transport. Ending it from either side ends it for both.
 - `phoneapi papi` starts a session when a call first needs one and keeps its id in a `session` file next to the pairing file; it starts a new one, and says so, if the old one ended. `PAPI_SESSION` names a session to use instead, and `phoneapi session id` and `phoneapi session end` show and end the kept one.
@@ -222,7 +222,7 @@ The clipboard calls need the shell helper (`clipboard`), which reads the clip as
 
 Target ids look like `chrome_devtools_remote~<pageId>`. Chrome's tabs are listed with DevTools' `Target.getTargets`, so a tab has the same id however it was found, and `openerId` names the tab that opened a popup. Tabs Chrome has unloaded can be missing from the list, and the blank placeholder tab PhoneAPI keeps for the screen is left out.
 
-A session, from MCP or REST, owns the tabs it opens, popups they open, and unowned tabs it claims by using them; `browser_targets` lists those and unowned tabs, with `owned`, and leaves out other sessions' tabs, which every browser tool refuses as `not_found`. A session can have 4 tabs it opened and all sessions 8; past either, opening fails with `tab_limit`. When a session ends, the tabs it opened close and those it claimed go back to being unowned; tabs left by a restart close when the helper next starts. The screen holder can also use the WebViews of the app in front. The raw CDP socket can use any tab no live session owns. A tab Chrome unloaded to save memory is reloaded in the background when used: reads, finds, and snapshots return the fresh page with `reloaded` true, and input and `eval` fail with `tab_reloaded`. Chrome must publish DevTools; Android 11+ needs Wireless Debugging; Android 10 needs the USB tunnel from `phoneapi helper`.
+A session, from MCP or REST, owns the tabs it opens, popups they open, and unowned tabs it claims by using them; `browser_targets` lists those and unowned tabs, with `owned`, and leaves out other sessions' tabs, which every browser tool refuses as `not_found`. A session can have 4 tabs it opened and all sessions 8; past either, opening fails with `tab_limit`. When a session ends, the tabs it opened close and those it claimed go back to being unowned; tabs left by a restart close when the helper next starts. The screen holder can also use the WebViews of the app in front. A tab Chrome unloaded to save memory is reloaded in the background when used: reads, finds, and snapshots return the fresh page with `reloaded` true, and input and `eval` fail with `tab_reloaded`. Chrome must publish DevTools; Android 11+ needs Wireless Debugging; Android 10 needs the USB tunnel from `phoneapi helper`.
 
 | Method | Path | Scope | Summary |
 | --- | --- | --- | --- |
@@ -288,7 +288,6 @@ Auth: Bearer header, the `phoneapi` cookie, or `access_token` on the upgrade URL
 | --- | --- | --- |
 | `/v1/events` | observe | JSON event frames (see Conventions) |
 | `/v1/input/pointer` | control | The viewer's input: live pointer contacts (`PointerFrame` JSON text frames), keys, text, orientation, copy and paste, and taking the screen over. The socket is a holder of the screen lease |
-| `/v1/browser/targets/{id}/cdp` | browser | Raw CDP |
 | `/v1/stream/video` | stream | H.264; query `maxSize`, `fps`, `bitRate` |
 | `/v1/stream/audio` | stream | Device audio (submix capability) |
 
@@ -343,7 +342,7 @@ Run `phoneapi server` and point a Streamable HTTP client at `http://127.0.0.1:<p
 | `screenshot` | observe | PNG last resort (`scale` default 0.5) |
 | `logcat_tail` | observe | Recent lines via helper |
 
-When node ids are not stable, tool descriptions say so. Raw CDP, streams, and token admin are REST-only.
+When node ids are not stable, tool descriptions say so. Streams and token admin are REST-only.
 
 ### Resources
 

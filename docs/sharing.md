@@ -73,7 +73,7 @@ Every route that acts on the phone, shows the screen, or touches a tab needs a s
 - `POST /v1/input/tap`, `/swipe`, `/gesture`, `/key`, `/text`, the clipboard routes, and `POST /v1/ime/hide` and `/show`
 - `POST /v1/apps/{pkg}/launch`, `/stop`, `/clear`, and `POST /v1/intents`
 - `POST /v1/wait`
-- Everything under `/v1/browser/` except the raw CDP socket: listing tabs, opening, navigating, closing, reading, finding, snapshots, input, `evaluate`, `capture`, and `console`.
+- Everything under `/v1/browser/`: listing tabs, opening, navigating, closing, reading, finding, snapshots, input, `evaluate`, `capture`, and `console`.
 
 One without the header fails with 428 `session_required`: "Create a session with POST /v1/sessions and send its id in Mcp-Session-Id." 428 Precondition Required says the request is fine but a precondition is missing, which a client can tell from a bad request.
 
@@ -83,7 +83,6 @@ These need no session:
 - Token admin, `/v1/tokens`.
 - What neither shows the screen nor touches tabs: `GET /v1/device`, `GET /v1/apps`, setting and clearing the stored PIN (`PUT` and `DELETE /v1/device/pin`), `GET /v1/openapi.json`, and the events socket.
 - The viewer: `/viewer`, its input socket, which is its own holder, and the video and audio streams, which are the viewer's view of the screen.
-- The raw CDP socket, `/v1/browser/targets/{id}/cdp`. A client on it can address any tab through `Target.*`, so ownership cannot be enforced there. It is limited to tabs no session owns, and takes no session.
 
 ### Sharing ids between MCP and REST
 
@@ -178,7 +177,6 @@ A tab id that no longer works says why: the tab closed, as a session's tabs do w
 - A tab that a page opens, through `window.open` or a `target=_blank` link, belongs to the owner of the tab that opened it. PhoneAPI reads the opener from Chrome's `Target` domain.
 - Tabs that existed before PhoneAPI started and tabs left by a session that died belong to no holder. On a phone an agent uses every day they are mostly its own pages from earlier conversations, such as a signed-in shopping tab, so they stay usable. A session claims an unowned tab by using it, and the first session to do so gets it. When that session ends, the tab goes back to being unowned instead of closing.
 - WebViews belong to the app that shows them. The screen holder can use the WebViews of the app in front, which it can already see with `ui_snapshot`. Other sessions cannot.
-- The raw CDP socket can use any tab except one a live holder owns.
 - Each session can have 4 tabs open, and all sessions 8, not counting the placeholder, unowned tabs, or tabs a session claimed. Opening past either fails with `tab_limit` and a message to close one. Under memory pressure Chrome unloads hidden tabs, as in [Tabs that stop answering](#tabs-that-stop-answering). The caps keep that rare, and a few tabs at a time is what a turn needs.
 - The tabs a session opened close when it ends. Tabs it claimed go back to being unowned.
 - A tab's [recorded responses](api.md#recorded-responses) stay with its owner. Recording stops when a session claims a tab and when it gives one back, so a tab never changes hands with someone else's responses in it.

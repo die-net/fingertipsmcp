@@ -106,7 +106,7 @@ The intended loop for an LLM client:
 4. `browser_read` / `browser_find` to read a page as markdown or query its JSON, and `browser_*` input when the work is in Chrome
 5. `screenshot` only when the tree is not enough
 
-MCP exposes that curated set. Raw CDP WebSocket, token admin, and media streams stay off the tool catalog.
+MCP exposes that curated set. Token admin and media streams stay off the tool catalog, and there is no raw CDP socket: every browser action goes through a typed route or tool, so tab ownership and the isolated world always apply.
 
 ## Caveats
 
