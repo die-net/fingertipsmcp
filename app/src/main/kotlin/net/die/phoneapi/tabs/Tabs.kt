@@ -421,7 +421,7 @@ class Tabs(
         if (!lease.holds(holder) || pkg == null || !inFront(pkg)) throw missing(id)
     }
 
-    /** REST and raw CDP: any tab a live session does not own. */
+    /** Calls that take no session: any tab a live session does not own. */
     fun accessShared(id: String) {
         if (owners.containsKey(id) || id == placeholder) throw missing(id)
     }

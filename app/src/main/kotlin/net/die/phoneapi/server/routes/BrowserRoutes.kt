@@ -6,15 +6,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
-import io.ktor.server.websocket.DefaultWebSocketServerSession
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import java.io.IOException
-import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import net.die.phoneapi.browser.DEVTOOLS_CLOSED
 import net.die.phoneapi.browser.requireTouchAccess
 import net.die.phoneapi.browser.touchAllowed
 import net.die.phoneapi.model.ApiException
@@ -34,7 +25,6 @@ import net.die.phoneapi.model.EvalRequest
 import net.die.phoneapi.model.NavigateRequest
 import net.die.phoneapi.model.OpenTabRequest
 import net.die.phoneapi.model.Scope
-import net.die.phoneapi.server.CdpPipe
 import net.die.phoneapi.server.ServerServices
 import net.die.phoneapi.server.browser
 import net.die.phoneapi.server.scoped
@@ -42,9 +32,7 @@ import net.die.phoneapi.server.session
 import net.die.phoneapi.server.token
 import net.die.phoneapi.server.withScreen
 
-/**
- * Browser routes: targets, navigation, snapshot, reading, input, evaluate, console, and raw CDP.
- */
+/** Browser routes: targets, navigation, snapshot, reading, input, evaluate, and console. */
 fun Route.browserRoutes(services: ServerServices) {
     scoped(Scope.BROWSER) {
         get("/v1/browser/targets") {
@@ -86,9 +74,6 @@ fun Route.browserRoutes(services: ServerServices) {
         }
         browserReadRoutes(services)
         browserInputRoutes(services)
-        // The raw socket can address any tab through Target.*, so it takes no session and stays
-        // on tabs no session owns.
-        webSocket("/v1/browser/targets/{id}/cdp") { proxyCdp(this, services, call.targetId()) }
     }
 }
 
@@ -221,61 +206,6 @@ private fun Route.browserInputRoutes(services: ServerServices) {
         )
     }
 }
-
-private suspend fun proxyCdp(
-    session: DefaultWebSocketServerSession,
-    services: ServerServices,
-    id: String,
-) {
-    // A tab a live MCP session owns is not REST's to drive.
-    services.tabs.accessShared(id)
-    services.cdp.open(id).use { pipe ->
-        try {
-            pipe.handshake()
-            pipe.connect()
-            coroutineScope {
-                val reader =
-                    launch(services.ioDispatcher) {
-                        pipe.relayText { text -> session.send(Frame.Text(text)) }
-                    }
-                try {
-                    for (frame in session.incoming) {
-                        if (frame is Frame.Text) forward(pipe, frame.readText())
-                    }
-                } finally {
-                    reader.cancel()
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: IOException) {
-            throw ApiException(
-                502,
-                "cdp_error",
-                e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
-                cause = e,
-            )
-        }
-    }
-}
-
-private suspend fun forward(pipe: CdpPipe, text: String) {
-    if (text.length > MAX_CDP_FRAME) throw ApiException.badRequest("CDP frame is too large")
-    try {
-        pipe.sendText(text)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: IOException) {
-        throw ApiException(
-            502,
-            "cdp_error",
-            e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
-            cause = e,
-        )
-    }
-}
-
-private const val MAX_CDP_FRAME = 1_000_000
 
 private fun ApplicationCall.targetId(): String =
     parameters["id"]?.takeIf { it.isNotBlank() }

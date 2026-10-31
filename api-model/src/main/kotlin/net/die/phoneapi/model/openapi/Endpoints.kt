@@ -435,12 +435,6 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
         ),
         endpoint(
             ApiMethod.WEBSOCKET,
-            "/v1/browser/targets/{id}/cdp",
-            setOf(Scope.BROWSER),
-            "Raw Chrome DevTools Protocol socket.",
-        ),
-        endpoint(
-            ApiMethod.WEBSOCKET,
             "/v1/events",
             setOf(Scope.OBSERVE),
             "Stream device events as JSON text frames. Logcat is included only when types contains logcat.",

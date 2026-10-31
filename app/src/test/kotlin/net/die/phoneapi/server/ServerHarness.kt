@@ -295,25 +295,12 @@ internal class FakeApi(leaseWaitMs: Long = ScreenLease.WAIT_MS) {
             audio = AudioFeed { _ -> },
             viewerHtml = { VIEWER_HTML },
             shell = { _ -> ShellResult(exit = 0, stdout = "log") },
-            cdp = CdpPipes { _ -> IdlePipe },
             viewerText = { "http://127.0.0.1:1/viewer?access_token=TOKEN" },
             logcat = LogcatFeed { _ -> emptyFlow() },
             lease = lease,
             tabs = Tabs(browser, lease, inFront = { false }, store = tabStore),
             foreground = foreground,
         )
-
-    private object IdlePipe : CdpPipe {
-        override fun handshake() = Unit
-
-        override fun connect() = Unit
-
-        override suspend fun relayText(send: suspend (String) -> Unit) = Unit
-
-        override suspend fun sendText(text: String) = Unit
-
-        override fun close() = Unit
-    }
 }
 
 internal fun ApplicationTestBuilder.apiClient(): HttpClient = createClient {

@@ -23,7 +23,6 @@ import net.die.phoneapi.browser.ChromeKeeper
 import net.die.phoneapi.browser.DevtoolsPreconditions
 import net.die.phoneapi.browser.DevtoolsSocket
 import net.die.phoneapi.browser.FREEZER_ARGS
-import net.die.phoneapi.browser.HelperCdpPipes
 import net.die.phoneapi.browser.OPEN_PRIVATE_TAB
 import net.die.phoneapi.browser.TabProbe
 import net.die.phoneapi.browser.USB_DEVTOOLS_SOCKET
@@ -267,7 +266,6 @@ class AppGraph(
             audio = AudioFeed { session -> this.audio.serve(session) },
             viewerHtml = { asset("viewer.html") },
             shell = { argv -> this.shell.exec(argv) },
-            cdp = HelperCdpPipes(::openDevtools, ioDispatcher),
             viewerText = { viewerLink() },
             logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
             lease = screenLease,
