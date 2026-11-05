@@ -112,6 +112,12 @@ Android 16 reports one clipboard write as two clipboard changes, a second apart,
 
 On the Android 16 emulator on 2026-10-29, with the helper as the shell user, cleanup cleared PhoneAPI's own clip, left a clip copied after it, and left the clip after `cleanup` false. On 2026-10-31, text a person pasted in the viewer was still on the clipboard after the viewer let go, and the next session read it as empty. A session read its own write back, found the clipboard empty after a person took over and handed the screen back, and a session that got the screen after a release with `cleanup` false found it empty too.
 
+## Audio capture
+
+`AudioRecord` names the app that records. Android 11 and 12 take the name from `ActivityThread.currentOpPackageName`. Android 13 and later ask the current application for its `AttributionSource` instead, so the helper's stand-in application has to answer that too. Without it the helper threw a `NullPointerException` in `AudioRecord`'s constructor and no audio stream started. The AOSP sources for Android 13 through 16 all take that path; only Android 16 was run.
+
+On the Android 16 emulator on 2026-11-05, with the helper answering as `com.android.shell` and before the app skipped silence or joined packets, `/v1/stream/audio` sent about 50 Opus packets a second. They were 12 bytes while nothing played and 156 to 286 bytes while Chrome played a 6 s 440 Hz tone, for those 6 s.
+
 ## Screen hand-offs
 
 Checked on the Android 16 emulator:
@@ -128,8 +134,8 @@ Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encod
 - On a still home screen a viewer got the key frame it joined with, redraws about 100, 300, and 700 ms after the last mirrored frame, then one frame every 4 s. A second viewer joining got a key frame within 10 ms, and so did the first. The idle frames were deltas of 1 to 30 KB, so the encoder kept refining the still picture.
 - The encoder counts `KEY_I_FRAME_INTERVAL` in frames at the configured `KEY_FRAME_RATE`, not in seconds. With 10 s and `fps=60`, a page animating at about 29 fps got timer key frames every 20 s.
 - adb buffered several MB per stream between the app and the client. A viewer that stopped reading, or read at 12 fps beside a 30 fps stream, never filled PhoneAPI's 4-frame queue. Ktor's ping timeout closed it after about 45 to 50 s instead. So the queue's drop and key-frame recovery did not run on the emulator. Its unit tests cover it.
-- Audio capture fails before the stream starts: the helper's `AudioRecord.Builder().build()` throws a `NullPointerException` from `Context.getAttributionSource()`, since `app_process` has no Context. That also happens without these stream changes. The Android 10 emulator has no submix capture.
-- With the helper's stand-in context answering `getAttributionSource`, a 6 s tone played in Chrome came through as 102 messages: 101 Opus packets of three 20 ms frames, 60 ms apart, and one single frame sent as silence started. Nothing was sent before or after the tone. Apple's AudioToolbox decoder, which Safari's `AudioDecoder` uses, decoded them to 6.08 s of audio, sample for sample the same as the frames split back into 20 ms packets. Chrome's decoder takes packets up to 120 ms. Firefox was not checked.
+- Audio capture failed before the stream started until the helper's stand-in context answered `getAttributionSource`, as [Audio capture](#audio-capture) describes. The Android 10 emulator has no submix capture.
+- A 6 s tone played in Chrome came through as 102 messages: 101 Opus packets of three 20 ms frames, 60 ms apart, and one single frame sent as silence started. Nothing was sent before or after the tone. Apple's AudioToolbox decoder, which Safari's `AudioDecoder` uses, decoded them to 6.08 s of audio, sample for sample the same as the frames split back into 20 ms packets. Chrome's decoder takes packets up to 120 ms. Firefox was not checked.
 
 ## UiAutomation
 
@@ -154,6 +160,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 
 ## Still to check on the phone
 
+- That audio still starts on Android 11 with the helper's `getAttributionSource` override in place. Android 11 has no such method, so it is never called there.
 - That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
 - Whether a tab opened while Chrome is in the background becomes Chrome's selected tab, as it does on the Android 16 emulator.
 - That the shell user can clear the clipboard through `IClipboard.clearPrimaryClip` and read `getPrimaryClipDescription` on Android 11.
