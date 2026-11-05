@@ -142,10 +142,7 @@ private suspend fun attachSession(
 
 private fun newTransport() =
     StreamableHttpServerTransport(
-        StreamableHttpServerTransport.Configuration(
-            enableJsonResponse = true,
-            enableDnsRebindingProtection = false,
-        )
+        StreamableHttpServerTransport.Configuration(enableJsonResponse = true)
     )
 
 /**
