@@ -467,20 +467,29 @@ internal fun matchesIn(
     contextChars: Int,
     limit: Int,
 ): Pair<Int, List<TextMatch>> {
-    val hits = pattern.findAll(text).filter { !it.range.isEmpty() }.take(MAX_COUNTED).toList()
-    val matches =
-        hits.take(limit).map { hit ->
-            val start = hit.range.first
-            val end = hit.range.last + 1
-            TextMatch(
-                offset = start,
-                heading = headings.lastOrNull { it.offset <= start }?.text,
-                before = text.substring((start - contextChars).coerceAtLeast(0), start),
-                match = hit.value,
-                after = text.substring(end, (end + contextChars).coerceAtMost(text.length)),
-            )
+    // One Matcher walks the text. Regex.findAll makes a new Matcher for each match, and on Android
+    // each one copies the text into native memory, so holding the matches of a common word in a
+    // long page took over a gigabyte.
+    val matcher = pattern.toPattern().matcher(text)
+    val matches = ArrayList<TextMatch>()
+    var total = 0
+    while (total < MAX_COUNTED && matcher.find()) {
+        val start = matcher.start()
+        val end = matcher.end()
+        if (start == end) continue
+        total++
+        if (matches.size < limit) {
+            matches +=
+                TextMatch(
+                    offset = start,
+                    heading = headings.lastOrNull { it.offset <= start }?.text,
+                    before = text.substring((start - contextChars).coerceAtLeast(0), start),
+                    match = text.substring(start, end),
+                    after = text.substring(end, (end + contextChars).coerceAtMost(text.length)),
+                )
         }
-    return hits.size to matches
+    }
+    return total to matches
 }
 
 /**

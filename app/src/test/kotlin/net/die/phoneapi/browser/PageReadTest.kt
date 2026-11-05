@@ -340,4 +340,28 @@ class PageReadTest {
         assertEquals(listOf("busy region"), result.pending)
         assertNull(result.shown)
     }
+
+    @Test
+    fun `counts all, keeps the first`() {
+        val text = "the cat and the hat and the bat"
+        val (total, matches) = matchesIn(text, emptyList(), Regex("the"), 4, 2)
+        assertEquals(3, total)
+        assertEquals(listOf(0, 12), matches.map { it.offset })
+        assertEquals(" cat", matches[0].after)
+        assertEquals("and ", matches[1].before)
+    }
+
+    @Test
+    fun `skips empty matches`() {
+        val (total, matches) = matchesIn("axbxx", emptyList(), Regex("x*"), 1, 10)
+        assertEquals(2, total)
+        assertEquals(listOf("x", "xx"), matches.map { it.match })
+    }
+
+    @Test
+    fun `stops counting at the cap`() {
+        val (total, matches) = matchesIn("a".repeat(12_000), emptyList(), Regex("a"), 0, 3)
+        assertEquals(10_000, total)
+        assertEquals(3, matches.size)
+    }
 }
