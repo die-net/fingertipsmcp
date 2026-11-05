@@ -128,7 +128,8 @@ Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encod
 - On a still home screen a viewer got the key frame it joined with, redraws about 100, 300, and 700 ms after the last mirrored frame, then one frame every 4 s. A second viewer joining got a key frame within 10 ms, and so did the first. The idle frames were deltas of 1 to 30 KB, so the encoder kept refining the still picture.
 - The encoder counts `KEY_I_FRAME_INTERVAL` in frames at the configured `KEY_FRAME_RATE`, not in seconds. With 10 s and `fps=60`, a page animating at about 29 fps got timer key frames every 20 s.
 - adb buffered several MB per stream between the app and the client. A viewer that stopped reading, or read at 12 fps beside a 30 fps stream, never filled PhoneAPI's 4-frame queue. Ktor's ping timeout closed it after about 45 to 50 s instead. So the queue's drop and key-frame recovery did not run on the emulator. Its unit tests cover it.
-- Audio capture fails before the stream starts: the helper's `AudioRecord.Builder().build()` throws a `NullPointerException` from `Context.getAttributionSource()`, since `app_process` has no Context. That also happens without these stream changes. The Android 10 emulator has no submix capture, so no emulator checks audio.
+- Audio capture fails before the stream starts: the helper's `AudioRecord.Builder().build()` throws a `NullPointerException` from `Context.getAttributionSource()`, since `app_process` has no Context. That also happens without these stream changes. The Android 10 emulator has no submix capture.
+- With the helper's stand-in context answering `getAttributionSource`, a 6 s tone played in Chrome came through as 102 messages: 101 Opus packets of three 20 ms frames, 60 ms apart, and one single frame sent as silence started. Nothing was sent before or after the tone. Apple's AudioToolbox decoder, which Safari's `AudioDecoder` uses, decoded them to 6.08 s of audio, sample for sample the same as the frames split back into 20 ms packets. Chrome's decoder takes packets up to 120 ms. Firefox was not checked.
 
 ## UiAutomation
 
@@ -169,6 +170,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 - Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
 - That remote submix delivers zeros, or samples within 8 of zero, while nothing plays on Android 11, so the audio socket goes quiet, and that a sound comes through whole, without its start or end clipped. That checks the Opus encoder's output timestamps against its input.
 - That a still screen on the Moto G Power looks sharp after scrolling, with the relay's settle redraws in place of `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, and sends a frame every 4 s.
+- That the viewer in Firefox plays the 60 ms Opus packets the phone sends.
 - That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
 - How long Chrome takes on the Moto G Power to open its DevTools socket after a tab open starts it, against the 10 s limit, and whether a first-run or sign-in screen keeps it from opening one.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
