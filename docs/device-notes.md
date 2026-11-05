@@ -184,7 +184,7 @@ On the phone on 2026-10-22, "UiAutomationService already registered" came from t
 
 ## MCP SDK
 
-PhoneAPI uses the Kotlin MCP SDK 0.15.0. A prototype on the Android 16 emulator showed, on 2026-10-20:
+PhoneAPI uses the Kotlin MCP SDK 0.16.0. A prototype with 0.15.0 on the Android 16 emulator showed, on 2026-10-20:
 
 - `initialize` assigns a random session id. `notifications/cancelled` cancels the tool's coroutine at once. `DELETE` cancels every call in flight, and the session then answers 404.
 - The id a tool handler sees, `ClientConnection.sessionId`, is the SDK's own, not the `Mcp-Session-Id` the client holds. PhoneAPI creates each session's transport and `Server` together, with `setSessionIdGenerator` returning an id it picked, so that id is in the tools' closure. Leases and tabs are keyed by it.
@@ -193,11 +193,13 @@ PhoneAPI uses the Kotlin MCP SDK 0.15.0. A prototype on the Android 16 emulator 
 - A tool ran to the end after its client dropped the connection, on stateless `/mcp` as well as with sessions. That matches the spec, which says not to treat a disconnect as a cancellation, so clients have to send `notifications/cancelled` to stop a wait. Legwork's Go SDK (v1.8.0) does that when a call's context ends, sends `DELETE` when the session closes, and opens the GET stream after `initialize`.
 - Nothing from the SDK, session ids included, reached logcat in a debug build.
 
-The SDK has a stateful transport with session ids, `DELETE`, and open and close callbacks, but no idle timeout, and its Ktor helper keeps the session table private. So PhoneAPI owns the `/mcp` route and drives `StreamableHttpServerTransport` itself, keeping expiry, the token check, and release in one place. The SDK makes ids with Kotlin's `Uuid.random()`, which uses `SecureRandom` on the JVM, so PhoneAPI keeps its generator.
+The SDK has a stateful transport with session ids, `DELETE`, and open and close callbacks. Since 0.16.0 its Ktor helper `mcpStreamableHttp` expires idle sessions and caps how many are open, but the transport does neither, and the helper still keeps the session table private. So PhoneAPI owns the `/mcp` route and drives `StreamableHttpServerTransport` itself, keeping expiry, the token check, and release in one place. The SDK makes ids with Kotlin's `Uuid.random()`, which uses `SecureRandom` on the JVM, so PhoneAPI keeps its generator.
+
+SDK 0.16.0 answers a POST that repeats a request id with 400 `Invalid Request`, where 0.15.0 answered 200. That was seen on the Android 16 and Android 10 emulators on 2026-11-05, for an id sent twice in one POST. The transport's code treats an id still in flight the same way. An id can be used again once its call has finished.
 
 Progress would need one of two things. The session's GET stream already carries it in JSON mode, but clients may skip that stream. Streaming POST responses, which every client must accept, would need PhoneAPI's own transport on the SDK's `Transport` interface, about 250 to 350 lines, owning session ids, headers, and errors. Wrapping the SDK's transport instead is smaller but depends on its internals.
 
-MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need state across calls mint handles that clients pass as tool arguments, as `session_start` does. SDK 0.15.0 does not speak that revision yet, so such clients cannot connect, but the tools would carry over.
+MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need state across calls mint handles that clients pass as tool arguments, as `session_start` does. SDK 0.16.0 does not speak that revision yet (its latest protocol version is 2025-11-25), so such clients cannot connect, but the tools would carry over.
 
 ## Still to check on the phone
 
