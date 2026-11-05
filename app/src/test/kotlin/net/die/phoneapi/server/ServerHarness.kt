@@ -130,10 +130,12 @@ internal class RecordingWaits : WaitService {
 
 /** Fakes of the service interfaces, so [phoneApiModule] can run under `testApplication`. */
 @Suppress("InjectDispatcher") // The test server has no injected graph dispatcher.
-internal class FakeApi(leaseWaitMs: Long = ScreenLease.WAIT_MS) {
+internal class FakeApi(
+    leaseWaitMs: Long = ScreenLease.WAIT_MS,
+    val browser: FakeBrowser = FakeBrowser(),
+) {
     val tokens = MemoryTokens()
     val waits = RecordingWaits()
-    val browser = FakeBrowser()
     var capabilities = allCapabilities()
     var inputTaps = 0
     var imeShow: ImeShowRequest? = null
@@ -456,7 +458,7 @@ internal open class FakeBrowser : BrowserService {
 
     // A tab a url read opens has loaded at once.
     override suspend fun evaluate(id: String, request: EvalRequest) =
-        if (request.expression == "document.readyState")
+        if (request.expression.endsWith("document.readyState"))
             EvalResult(value = JsonPrimitive("complete"))
         else EvalResult()
 

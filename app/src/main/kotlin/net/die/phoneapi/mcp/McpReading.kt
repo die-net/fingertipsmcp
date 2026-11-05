@@ -1,5 +1,6 @@
 package net.die.phoneapi.mcp
 
+import android.util.Log
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import kotlinx.coroutines.delay
@@ -15,6 +16,7 @@ import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserFindResult
 import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserReadResult
+import net.die.phoneapi.model.BrowserTarget
 import net.die.phoneapi.model.DATA_PATHS_DOC
 import net.die.phoneapi.model.DATA_PATH_DOC
 import net.die.phoneapi.model.DataBlob
@@ -114,23 +116,96 @@ internal suspend fun browserRead(
             path = args.path,
             paths = args.paths,
         )
-    // A data read of a page it opens records the page's responses too, as browser_capture does.
-    val opened =
-        args.url?.let { url ->
-            openAndSettle(services, scopes, url, args.close, args.scope == ReadScope.DATA)
+    val text: suspend (String) -> String = { target ->
+        val result = services.browser.read(target, read)
+        val label = if (args.scope == ReadScope.DATA) dataLabel(args, result) else null
+        when {
+            result.changed == false -> unchangedText(result, args.show, label)
+            label == null && args.outline -> outlineText(result, args.maxChars, args.show)
+            else -> readText(result, args.show, label)
         }
-    val target = opened?.target ?: args.target.orEmpty()
-    val text =
-        closingAfter(services, target, args.close, opened != null) {
-            val result = services.browser.read(target, read)
-            val label = if (args.scope == ReadScope.DATA) dataLabel(args, result) else null
-            when {
-                result.changed == false -> unchangedText(result, args.show, label)
-                label == null && args.outline -> outlineText(result, args.maxChars, args.show)
-                else -> readText(result, args.show, label)
-            }
+    }
+    onTarget(services, scopes, args.target, args.url, args.close, args.scope, text)
+}
+
+/**
+ * Runs [block] on [target], or on a new tab at [url], closing the tab after when [close] is set. A
+ * data read of a page it opens records the page's responses too, as browser_capture does.
+ */
+private suspend fun onTarget(
+    services: ServerServices,
+    scopes: Set<Scope>,
+    target: String?,
+    url: String?,
+    close: Boolean,
+    scope: ReadScope,
+    block: suspend (String) -> String,
+): String {
+    if (url == null) {
+        val id = target.orEmpty()
+        return closingAfter(services, id, close, opened = false) { block(id) }
+    }
+    if (services.browser.savedPdf(url)) {
+        pdfTab(services, url, close)?.let {
+            return onOpened(services, it, close, block)
         }
-    opened?.let { "${it.line}\n$text" } ?: text
+    }
+    val tab = services.browser.openTab(url, scope == ReadScope.DATA)
+    return try {
+        val opened = settled(services, scopes, tab, close, scope == ReadScope.DATA)
+        onOpened(services, opened, close, block)
+    } catch (e: ApiException) {
+        // Chrome closes a new tab when it saves the PDF the tab opened, rather than showing it.
+        val pdf = if (tabGone(services, tab.id, e)) pdfTab(services, url, close) else null
+        onOpened(services, pdf ?: throw e, close, block)
+    }
+}
+
+/** The result of [block] on the tab the call [opened], after the line that names it. */
+private suspend fun onOpened(
+    services: ServerServices,
+    opened: Opened,
+    close: Boolean,
+    block: suspend (String) -> String,
+): String {
+    val text = closingAfter(services, opened.target, close, opened = true) { block(opened.target) }
+    return "${opened.line}\n$text"
+}
+
+/** Whether [e] came from the tab [id] closing, rather than from anything it was asked. */
+private suspend fun tabGone(services: ServerServices, id: String, e: ApiException): Boolean {
+    if (e.error != "cdp_error" && e.error != "not_found") return false
+    return try {
+        services.browser.targets().none { it.id == id }
+    } catch (listing: ApiException) {
+        Log.d(TAG, "Listing tabs failed: ${listing.error}")
+        false
+    }
+}
+
+/**
+ * A new tab holding the PDF at [url], which Chrome saves rather than shows. Null when [url] is not
+ * a PDF, with the tab closed again.
+ */
+private suspend fun pdfTab(services: ServerServices, url: String, closing: Boolean): Opened? {
+    val tab = services.browser.openTab(BLANK)
+    val loaded =
+        try {
+            services.browser.loadPdf(tab.id, url)
+        } catch (e: ApiException) {
+            closeQuietly(services, tab.id)
+            throw e
+        }
+    if (!loaded) {
+        closeQuietly(services, tab.id)
+        return null
+    }
+    val line = buildString {
+        append("# opened target=").append(tab.id)
+        append("; Chrome saves this PDF to Downloads rather than showing it, so this tab holds it")
+        if (!closing) append("; close it with browser_close when done")
+    }
+    return Opened(tab.id, line)
 }
 
 private data class Opened(val target: String, val line: String)
@@ -189,25 +264,24 @@ private suspend fun closeQuietly(services: ServerServices, target: String): Stri
     }
 
 /**
- * Opens [url] in a new tab, waits up to [OPEN_LOAD_MS] for it to load, and then up to
- * [AFTER_LOAD_SETTLE_MS] more for it to settle. A busy page, with ads, tracking requests, or
- * carousels, never goes quiet, so a long settle wait would cost every read of it the whole wait
- * while its content was already there. Load comes first because a settle wait alone can match
- * before the page has loaded: requests from before the wait started are not seen.
+ * Waits up to [OPEN_LOAD_MS] for the new [tab] to load, and then up to [AFTER_LOAD_SETTLE_MS] more
+ * for it to settle. A busy page, with ads, tracking requests, or carousels, never goes quiet, so a
+ * long settle wait would cost every read of it the whole wait while its content was already there.
+ * Load comes first because a settle wait alone can match before the page has loaded: requests from
+ * before the wait started are not seen.
  */
-private suspend fun openAndSettle(
+private suspend fun settled(
     services: ServerServices,
     scopes: Set<Scope>,
-    url: String,
-    closing: Boolean = false,
-    capture: Boolean = false,
+    tab: BrowserTarget,
+    closing: Boolean,
+    capture: Boolean,
 ): Opened {
-    val tab = services.browser.openTab(url, capture)
     val deadline = System.currentTimeMillis() + OPEN_LOAD_MS
-    var loaded = loaded(services, tab.id)
+    var loaded = loaded(services, tab)
     while (!loaded && System.currentTimeMillis() < deadline) {
         delay(LOAD_POLL_MS)
-        loaded = loaded(services, tab.id)
+        loaded = loaded(services, tab)
     }
     val settled =
         loaded &&
@@ -247,8 +321,9 @@ private suspend fun settle(
     return wait.matched
 }
 
-private suspend fun loaded(services: ServerServices, target: String): Boolean {
-    val state = services.browser.evaluate(target, EvalRequest("document.readyState")).value
+private suspend fun loaded(services: ServerServices, tab: BrowserTarget): Boolean {
+    val expression = if (tab.url == BLANK) "document.readyState" else LOAD_STATE
+    val state = services.browser.evaluate(tab.id, EvalRequest(expression)).value
     return (state as? JsonPrimitive)?.contentOrNull == "complete"
 }
 
@@ -276,18 +351,10 @@ internal suspend fun browserFind(
             path = args.path,
         )
     checkFind(find)
-    // A data read of a page it opens records the page's responses too, as browser_capture does.
-    val opened =
-        args.url?.let { url ->
-            openAndSettle(services, scopes, url, args.close, args.scope == ReadScope.DATA)
-        }
-    val target = opened?.target ?: args.target.orEmpty()
-    val text =
-        closingAfter(services, target, args.close, opened != null) {
-            val result = services.browser.find(target, find)
-            if (args.kind == FindKind.LINKS) linksText(result) else matchesText(result)
-        }
-    opened?.let { "${it.line}\n$text" } ?: text
+    onTarget(services, scopes, args.target, args.url, args.close, args.scope) { target ->
+        val result = services.browser.find(target, find)
+        if (args.kind == FindKind.LINKS) linksText(result) else matchesText(result)
+    }
 }
 
 /** The page line every read and find result starts with. */
@@ -566,6 +633,15 @@ private const val MAX_LISTED_BLOBS = 5
 private const val DATA_OFFSETS =
     "Each match shows its path, and @ is its offset into the JSON browser_read returns for that " +
         "blob, or for find's path when one was given"
+private const val TAG = "PhoneApiMcp"
+private const val BLANK = "about:blank"
+
+/**
+ * A page's `readyState`. A new tab starts on a blank page that is already complete, and stays there
+ * until the server answers, so that does not count as loaded.
+ */
+private const val LOAD_STATE = """location.href === "$BLANK" ? "blank" : document.readyState"""
+
 private const val OPEN_LOAD_MS = 15_000L
 private const val AFTER_LOAD_SETTLE_MS = 5_000L
 private const val MS_PER_S = 1_000

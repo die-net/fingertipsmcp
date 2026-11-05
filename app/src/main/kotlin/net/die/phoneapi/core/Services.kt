@@ -210,6 +210,18 @@ interface BrowserService {
     /** Reads a target's content, or its outline. */
     suspend fun read(id: String, request: BrowserReadRequest): BrowserReadResult
 
+    /**
+     * Whether Chrome saved the PDF at [url] rather than showing it, as far as this remembers. Such
+     * a URL goes to [loadPdf], since opening it would save another copy.
+     */
+    fun savedPdf(url: String): Boolean = false
+
+    /**
+     * Puts the PDF at [url] in the tab [id], without Chrome showing or saving it, for [read] and
+     * [find] to read. False when [url] is not a PDF.
+     */
+    suspend fun loadPdf(id: String, url: String): Boolean = false
+
     /** Finds text or links in a target's content, at the offsets [read] uses. */
     suspend fun find(id: String, request: BrowserFindRequest): BrowserFindResult
 

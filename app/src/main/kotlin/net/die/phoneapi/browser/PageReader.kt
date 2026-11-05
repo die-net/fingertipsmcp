@@ -83,6 +83,19 @@ internal class PageReader(
 
     private fun noSelector() = ApiException.badRequest("A PDF has no elements to select")
 
+    /** Whether Chrome saved the PDF at [url], rather than showing it. */
+    fun savedPdf(url: String): Boolean = pdf.saved(url)
+
+    /** Puts the PDF at [url] in the tab [id]. False when [url] is not a PDF. */
+    suspend fun loadPdf(id: String, url: String): Boolean {
+        var loaded = false
+        onPage(id) { cdp ->
+            loaded = pdf.open(cdp, id, url)
+            EvalResult()
+        }
+        return loaded
+    }
+
     /** Runs [expression] in an isolated world on the tab. */
     private suspend fun evaluate(id: String, expression: String): Evaluated =
         onPage(id) { cdp -> evaluateIn(cdp, expression, awaitPromise = false) }
