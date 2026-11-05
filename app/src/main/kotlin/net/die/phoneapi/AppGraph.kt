@@ -28,6 +28,7 @@ import net.die.phoneapi.browser.TabProbe
 import net.die.phoneapi.browser.USB_DEVTOOLS_SOCKET
 import net.die.phoneapi.browser.UsbDevtools
 import net.die.phoneapi.browser.freezerOn
+import net.die.phoneapi.browser.pdfSource
 import net.die.phoneapi.core.AppsService
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.ClipboardService
@@ -443,6 +444,13 @@ class AppGraph(
             },
             dataScript = { asset("page-data.js").decodeToString() },
             pendingScript = { asset("page-pending.js").decodeToString() },
+            pdfScript = {
+                pdfSource(
+                    asset("pdfjs/pdf.worker.min.mjs").decodeToString(),
+                    asset("pdfjs/pdf.min.mjs").decodeToString(),
+                    asset("pdf-read.js").decodeToString(),
+                )
+            },
             devtoolsGap = DevtoolsPreconditions(context)::explain,
             refreshHz = { deviceInfo.display().refreshRate },
             touchscreen = { touchBackend.touchscreen() },

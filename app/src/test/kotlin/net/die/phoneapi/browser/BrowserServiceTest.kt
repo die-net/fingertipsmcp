@@ -665,10 +665,15 @@ class BrowserServiceTest {
         val length = payload.size
         if (length < 126) {
             out.write(length)
-        } else {
+        } else if (length <= 0xFFFF) {
             out.write(126)
             out.write(length ushr 8)
             out.write(length and 0xFF)
+        } else {
+            out.write(127)
+            for (shift in 56 downTo 0 step 8) out.write(
+                (length.toLong() ushr shift).toInt() and 0xFF
+            )
         }
         out.write(payload)
         return out.toByteArray()

@@ -31,24 +31,33 @@ internal class StallingSocket(replies: ByteArray) : DevtoolsSocket {
     override fun close() = closed.countDown()
 
     /** The CDP methods sent, in order. */
-    fun methods(): List<String> {
-        val text = String((output as ByteArrayOutputStream).toByteArray(), Charsets.ISO_8859_1)
-        return METHOD.findAll(unmasked(text)).map { it.groupValues[1] }.toList()
+    fun methods(): List<String> = METHOD.findAll(sent()).map { it.groupValues[1] }.toList()
+
+    /**
+     * The CDP methods sent, once there are [count] of them. Replies are played before anything is
+     * sent, so a call can return before its own message is written, and the last ones can lag.
+     */
+    fun awaitMethods(count: Int): List<String> {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(STALL_S)
+        while (true) {
+            val sent = methods()
+            if (sent.size >= count || System.nanoTime() > deadline) return sent
+            Thread.sleep(POLL_MS)
+        }
     }
+
+    /** The text of every message sent, one per line. */
+    fun sent(): String =
+        unmasked(String((output as ByteArrayOutputStream).toByteArray(), Charsets.ISO_8859_1))
 
     private fun unmasked(text: String): String {
         val bytes = text.toByteArray(Charsets.ISO_8859_1)
         var at = text.indexOf("\r\n\r\n") + HEADER_END
         val out = StringBuilder()
-        while (at + 2 <= bytes.size) {
-            var length = bytes[at + 1].toInt() and LENGTH_BITS
-            var header = 2
-            if (length == LENGTH_16) {
-                length = (bytes[at + 2].toUByte().toInt() shl 8) or bytes[at + 3].toUByte().toInt()
-                header = 4
-            }
-            val mask = bytes.copyOfRange(at + header, at + header + MASK_BYTES)
-            val start = at + header + MASK_BYTES
+        while (true) {
+            // The client may still be writing a frame, so stop at one that is not all here.
+            val (start, length) = frameAt(bytes, at) ?: break
+            val mask = bytes.copyOfRange(start - MASK_BYTES, start)
             for (i in 0 until length) {
                 out.append((bytes[start + i].toInt() xor mask[i % MASK_BYTES].toInt()).toChar())
             }
@@ -57,6 +66,29 @@ internal class StallingSocket(replies: ByteArray) : DevtoolsSocket {
         }
         return out.toString()
     }
+
+    /** Where the payload of the client frame at [at] starts and its length, once it is all here. */
+    private fun frameAt(bytes: ByteArray, at: Int): Pair<Int, Int>? {
+        if (at + 2 > bytes.size) return null
+        val short = bytes[at + 1].toInt() and LENGTH_BITS
+        val extra =
+            when (short) {
+                LENGTH_16 -> 2
+                LENGTH_64 -> 8
+                else -> 0
+            }
+        if (at + 2 + extra > bytes.size) return null
+        val length =
+            if (extra == 0) {
+                short
+            } else {
+                (0 until extra)
+                    .fold(0L) { n, i -> (n shl 8) or bytes[at + 2 + i].toUByte().toLong() }
+                    .toInt()
+            }
+        val start = at + 2 + extra + MASK_BYTES
+        return if (start + length > bytes.size) null else start to length
+    }
 }
 
 private const val STALL_S = 10L
@@ -64,6 +96,7 @@ private const val BYTE = 0xFF
 private const val HEADER_END = 4
 private const val LENGTH_BITS = 0x7F
 private const val LENGTH_16 = 126
+private const val LENGTH_64 = 127
 private const val MASK_BYTES = 4
 private val METHOD = Regex(""""method":"([^"]+)"""")
 

@@ -27,9 +27,9 @@ import net.die.phoneapi.model.ReadScope
 import net.die.phoneapi.model.TextMatch
 
 /**
- * What `page-read.js` returns: page facts, and the content as blocks. Each block is a heading
- * (`h`), paragraph (`p`), list item (`li`), preformatted text (`pre`), table row (`tr`), or rule
- * (`hr`). Block text is a list of runs, each with an optional link and style.
+ * What `page-read.js` and `pdf-read.js` return: page facts, and the content as blocks. Each block
+ * is a heading (`h`), paragraph (`p`), list item (`li`), preformatted text (`pre`), table row
+ * (`tr`), or rule (`hr`). Block text is a list of runs, each with an optional link and style.
  */
 @Serializable
 internal data class PageExtract(

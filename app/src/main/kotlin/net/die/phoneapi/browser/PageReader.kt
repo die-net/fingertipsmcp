@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserFindResult
 import net.die.phoneapi.model.BrowserReadRequest
@@ -7,7 +8,7 @@ import net.die.phoneapi.model.BrowserReadResult
 import net.die.phoneapi.model.EvalResult
 import net.die.phoneapi.model.ReadScope
 
-/** What [PageReader]'s evaluate gives back: the result, and whether Chrome had unloaded the tab. */
+/** What [PageReader]'s onPage gives back: the result, and whether Chrome had unloaded the tab. */
 internal data class Evaluated(val result: EvalResult, val reloaded: Boolean)
 
 /** A read's result, with the page's `document.visibilityState`, which says whether it was drawn. */
@@ -15,16 +16,19 @@ internal data class PageRead(val result: BrowserReadResult, val visibility: Stri
 
 /**
  * Reads and searches a tab's text or data with the reading scripts. [pageScript] is Readability.js,
- * page-pending.js, page-data.js, then page-read.js; [dataScript] is page-data.js. [evaluate] runs
- * an expression in an isolated world on the tab with the given id. Data reads add the responses
+ * page-pending.js, page-data.js, then page-read.js; [dataScript] is page-data.js; [pdfScript] is
+ * pdf.js and pdf-read.js, for a tab showing Chrome's PDF viewer, which [PdfReader] reads. [onPage]
+ * runs a block on a DevTools session to the tab with the given id. Data reads add the responses
  * [capture] recorded, after the page's own blobs.
  */
 internal class PageReader(
     private val pageScript: suspend () -> String,
     private val dataScript: suspend () -> String,
+    pdfScript: suspend () -> String,
     private val capture: NetworkCapture?,
-    private val evaluate: suspend (id: String, expression: String) -> Evaluated,
+    private val onPage: suspend (id: String, run: suspend (CdpSession) -> EvalResult) -> Evaluated,
 ) {
+    private val pdf = PdfReader(pdfScript)
     @Volatile private var pageSource: String? = null
     @Volatile private var dataSource: String? = null
 
@@ -48,13 +52,35 @@ internal class PageReader(
         return findWithFallback(request) { scope -> page(id, scope, request.selector) }
     }
 
+    /**
+     * The tab's page facts and blocks. A tab showing Chrome's PDF viewer is read from the file,
+     * since that page holds no text.
+     */
     private suspend fun page(id: String, scope: ReadScope, selector: String?): PageExtract {
         val source = pageSource ?: pageScript().also { pageSource = it }
-        val (result, reloaded) = evaluate(id, readScript(source, scope, selector))
-        val extract = decodeExtract(result, selector)
+        var pdfRead = false
+        val (result, reloaded) =
+            onPage(id) { cdp ->
+                val frame = mainFrame(cdp)
+                val pdfUrl = viewedPdf(frame.url)
+                pdfRead = pdfUrl != null
+                if (pdfUrl == null) {
+                    evaluateInFrame(cdp, frame.id, readScript(source, scope, selector), false)
+                } else if (selector != null) {
+                    throw ApiException.badRequest("A PDF has no elements to select")
+                } else {
+                    pdf.read(cdp, frame.id, pdfUrl)
+                }
+            }
+        val extract = decodeExtract(result, selector).copy(reloaded = reloaded)
+        if (pdfRead) return extract
         val responses = capture?.listed(id).orEmpty()
-        return extract.copy(reloaded = reloaded, data = extract.data + responses)
+        return extract.copy(data = extract.data + responses)
     }
+
+    /** Runs [expression] in an isolated world on the tab. */
+    private suspend fun evaluate(id: String, expression: String): Evaluated =
+        onPage(id) { cdp -> evaluateIn(cdp, expression, awaitPromise = false) }
 
     /** The page's data blobs, with the text of those [want] names, or of all when it is null. */
     private suspend fun data(id: String, want: List<String>?): DataExtract {
