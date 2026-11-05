@@ -115,9 +115,9 @@ function reportDecoder(error) {
     : "VideoDecoder is missing. This browser has no WebCodecs.";
 }
 
-// The phone sends at least one frame a second, even from a still screen, so a longer gap with
+// The phone sends at least one frame every 4 s, even from a still screen, so a longer gap with
 // no picture means the stream is stuck and is worth reopening.
-const STALL_MS = 5000;
+const STALL_MS = 12000;
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 10000;
 let lastPicture = 0;

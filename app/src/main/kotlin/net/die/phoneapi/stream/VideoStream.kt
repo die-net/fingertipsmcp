@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.RemoteException
+import android.os.SystemClock
 import android.util.Log
 import android.view.Display
 import io.ktor.server.websocket.DefaultWebSocketServerSession
@@ -25,7 +26,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -42,7 +42,8 @@ data class VideoSpec(val maxSize: Int, val fps: Int, val bitRate: Int)
 /**
  * One H.264 encoder shared by every video viewer. The helper mirrors the display into a
  * [FrameRelay], which draws onto the encoder's input surface and redraws the last frame on demand.
- * A joining client receives the parameter sets and a new keyframe, even on a still screen.
+ * A joining client receives the parameter sets and a new keyframe, even on a still screen. A viewer
+ * that falls behind drops frames until the next keyframe, and asks for one (see [FrameQueue]).
  *
  * If the helper dies, the mirror dies with it, so every viewer is closed and can reconnect.
  *
@@ -77,6 +78,9 @@ internal class VideoStream(
     private var activeHeight = 0
     private var listening = false
     private var displayJob: Job? = null
+
+    /** Only the codec's callback thread uses this, through [emitFrame]. */
+    private val keyRequests = KeyRequests()
 
     private val displayListener =
         object : DisplayManager.DisplayListener {
@@ -135,7 +139,7 @@ internal class VideoStream(
             // before the codec-config frame of the encoder that follows it.
             val out: Frame? = select {
                 viewer.headers.onReceiveCatching { it.getOrNull()?.let(Frame::Text) }
-                viewer.frames.onReceiveCatching { result ->
+                viewer.queue.frames.onReceiveCatching { result ->
                     result.getOrNull()?.let { Frame.Binary(true, it) }
                 }
             }
@@ -264,8 +268,7 @@ internal class VideoStream(
             )
             setInteger(MediaFormat.KEY_BIT_RATE, spec.bitRate)
             setInteger(MediaFormat.KEY_FRAME_RATE, spec.fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            setInteger(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, REPEAT_US)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, KEY_FRAME_INTERVAL_S)
             applyLowLatency(encoder, this)
         }
 
@@ -404,20 +407,20 @@ internal class VideoStream(
     }
 
     private fun emitFrame(frame: ByteArray) {
-        for (viewer in subscribers) viewer.frames.trySend(frame)
+        for (viewer in subscribers) viewer.queue.offer(frame)
+        if (subscribers.none { it.queue.waitsForKey }) {
+            keyRequests.satisfied()
+        } else if (keyRequests.due(SystemClock.uptimeMillis())) {
+            requestSync()
+        }
     }
 
     private fun emitHeader(json: String) {
         for (viewer in subscribers) {
-            drain(viewer.frames)
+            // Queued frames are not shown at the new picture size.
+            viewer.queue.drain()
             viewer.headers.trySend(json)
         }
-    }
-
-    /** Drops queued frames so they are not shown at the new picture size. */
-    private fun drain(frames: Channel<ByteArray>) {
-        var skipped = frames.tryReceive()
-        while (skipped.isSuccess) skipped = frames.tryReceive()
     }
 
     private fun closeViewers(reason: String) {
@@ -526,14 +529,14 @@ internal class VideoStream(
      * the header.
      */
     private class Viewer {
-        val frames = Channel<ByteArray>(CHANNEL_CAP, BufferOverflow.DROP_OLDEST)
+        val queue = FrameQueue(CHANNEL_CAP)
         val headers = Channel<String>(Channel.CONFLATED)
 
         /** Why the stream closed this viewer, sent as the close reason. */
         @Volatile var failure: String? = null
 
         fun close() {
-            frames.close()
+            queue.frames.close()
             headers.close()
         }
     }
@@ -541,7 +544,12 @@ internal class VideoStream(
     private companion object {
         const val TAG = "PhoneApiStream"
         const val CHANNEL_CAP = 4
-        const val REPEAT_US = 100_000
+
+        /**
+         * Key frames on a timer are only a backstop. Joining viewers and viewers that dropped a
+         * frame ask for one, so a still screen does not send a full picture every second.
+         */
+        const val KEY_FRAME_INTERVAL_S = 10
         const val DISPLAY_POLL_MS = 400L
         const val ENCODER_STOPPED = "The video encoder stopped"
         const val HELPER_STOPPED = "The shell helper stopped"

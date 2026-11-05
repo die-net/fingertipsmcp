@@ -57,6 +57,8 @@ internal class AudioStream(
     private var frameBytes: Int = OPUS_BYTES
     private var frameUs: Long = OPUS_US
 
+    @Volatile private var silence = SilenceGate(0)
+
     suspend fun serve(session: DefaultWebSocketServerSession) {
         val channel = Channel<ByteArray>(CHANNEL_CAP, BufferOverflow.DROP_OLDEST)
         lease.opened()
@@ -92,6 +94,7 @@ internal class AudioStream(
         val opened = openCodec()
         frameBytes = opened.frameBytes
         frameUs = opened.frameUs
+        silence = SilenceGate(HANGOVER_FRAMES * opened.frameUs)
         headerJson = audioHeader(opened.codecName, SAMPLE_RATE, CHANNELS)
         val encoder = opened.encoder
         val inputQueue = Channel<Int>(Channel.UNLIMITED)
@@ -231,6 +234,7 @@ internal class AudioStream(
             publishConfig(audioCodecDescription(data))
             return
         }
+        if (!silence.keeps(info.presentationTimeUs)) return
         emit(packFrame(FRAME_DELTA, info.presentationTimeUs, data))
     }
 
@@ -261,10 +265,12 @@ internal class AudioStream(
 
     private fun readPcm(capture: ParcelFileDescriptor, pcm: Channel<Pcm>) {
         val frame = ByteArray(frameBytes)
+        val sounds = silence
         var pts = 0L
         try {
             ParcelFileDescriptor.AutoCloseInputStream(capture).use { input ->
                 while (running && readFull(input, frame)) {
+                    sounds.heard(frame, pts)
                     pcm.trySend(Pcm(frame.copyOf(), pts))
                     pts += frameUs
                 }
@@ -402,6 +408,9 @@ internal class AudioStream(
         const val JOIN_MS = 500L
         const val MAX_PENDING = 8
         const val BIT_RATE = 64_000
+
+        /** Packets kept after the last sound: the encoder's lookahead, then one to fade out on. */
+        const val HANGOVER_FRAMES = 3L
 
         fun opusFormat(): MediaFormat =
             MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, CHANNELS)
