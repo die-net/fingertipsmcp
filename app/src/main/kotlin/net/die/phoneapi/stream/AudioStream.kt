@@ -31,7 +31,8 @@ import net.die.phoneapi.model.ApiException
 
 /**
  * One audio encoder shared by every audio viewer. The helper writes PCM from remote submix, and
- * this encodes Opus when the device has that encoder, otherwise AAC.
+ * this encodes Opus when the device has that encoder, otherwise AAC. [OpusBundler] joins Opus
+ * packets into 60 ms ones, and [SilenceGate] leaves out silent stretches.
  */
 internal class AudioStream(
     private val lease: StreamLease,
@@ -58,6 +59,11 @@ internal class AudioStream(
     private var frameUs: Long = OPUS_US
 
     @Volatile private var silence = SilenceGate(0)
+
+    /**
+     * Joins Opus packets into 60 ms ones. Null for AAC, which WebCodecs takes one frame at a time.
+     */
+    @Volatile private var bundler: OpusBundler? = null
 
     suspend fun serve(session: DefaultWebSocketServerSession) {
         val channel = Channel<ByteArray>(CHANNEL_CAP, BufferOverflow.DROP_OLDEST)
@@ -95,6 +101,12 @@ internal class AudioStream(
         frameBytes = opened.frameBytes
         frameUs = opened.frameUs
         silence = SilenceGate(HANGOVER_FRAMES * opened.frameUs)
+        bundler =
+            if (opened.codecName == "opus") {
+                OpusBundler { pts, packet -> emit(packFrame(FRAME_DELTA, pts, packet)) }
+            } else {
+                null
+            }
         headerJson = audioHeader(opened.codecName, SAMPLE_RATE, CHANNELS)
         val encoder = opened.encoder
         val inputQueue = Channel<Int>(Channel.UNLIMITED)
@@ -234,8 +246,16 @@ internal class AudioStream(
             publishConfig(audioCodecDescription(data))
             return
         }
-        if (!silence.keeps(info.presentationTimeUs)) return
-        emit(packFrame(FRAME_DELTA, info.presentationTimeUs, data))
+        val joiner = bundler
+        if (!silence.keeps(info.presentationTimeUs)) {
+            joiner?.flush()
+            return
+        }
+        if (joiner != null) {
+            joiner.add(info.presentationTimeUs, data)
+        } else {
+            emit(packFrame(FRAME_DELTA, info.presentationTimeUs, data))
+        }
     }
 
     private fun readOutput(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo): ByteArray? {
@@ -323,6 +343,7 @@ internal class AudioStream(
             val current = codec
             codec = null
             configFrame = null
+            bundler = null
             val job = reader
             reader = null
             inputs?.close()
