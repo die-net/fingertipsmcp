@@ -1,11 +1,12 @@
 // Turns a PDF into blocks for browser_read and browser_find, in the same shape page-read.js gives.
-// Chrome's PDF viewer is a document Chrome builds itself, with no site script, so this runs in its
-// main world after pdf.js and stays there as `phoneapiPdf`, keeping the parsed file between calls
-// until the tab closes or navigates. The viewer's page cannot fetch, so PhoneAPI fetches the file
-// over DevTools and hands it over in base64 chunks. pdf.js gives positioned runs of text; this
-// joins them into lines, then lines into headings, list items, paragraphs, and code by font size,
-// spacing, and font. Rendering, offsets, and searching happen in Kotlin. PhoneAPI wraps this in a
-// strict function, so only `phoneapiPdf` is global.
+// PhoneAPI answers the tab's navigation to the PDF's URL with an empty page of its own, so this
+// runs in that page's main world after pdf.js, with no site script beside it, and stays there as
+// `phoneapiPdf`, keeping the parsed file between calls until the tab navigates or closes. The page
+// has the PDF's origin, so it fetches the file as the site's own page would, from Chrome's cache
+// when opening the PDF put it there. pdf.js gives positioned runs of text; this joins them into
+// lines, then lines into headings, list items, paragraphs, and code by font size, spacing, and
+// font. Rendering, offsets, and searching happen in Kotlin. PhoneAPI wraps this in a strict
+// function, so only `phoneapiPdf` is global.
 
 const MAX_CHARS = 2000000;
 // A line counts as a heading when its font is this much larger than the body text's.
@@ -23,18 +24,6 @@ const MAX_SECTION_CHARS = 80;
 const EDGE_LINES = 2;
 const BULLET = /^\s*([•◦▪‣∙●○■□–]|-(?=\s))\s*/;
 const NUMBERED = /^\s*(\d{1,3})[.)]\s+/;
-
-// Joins the decoded chunks into one array.
-function joined(parts) {
-  const total = parts.reduce((n, part) => n + part.length, 0);
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
-}
 
 // Where text sits on the page as it is displayed, after the page's own rotation, turned by
 // `quarter` quarter turns so that text in that direction reads left to right. `y` grows upward.
@@ -163,17 +152,27 @@ async function pageLines(page, number) {
 // every page: one of the two lines nearest the top or bottom of its page, no larger than the body
 // text, whose text without its digits is in the same place on at least 3 pages and a quarter of
 // them. A slide's title repeats too, but it is set larger. A watermark, such as "Draft", is the
-// same text at the same height and size on at least half the pages, wherever it sits.
+// same text, set larger than the body, at the same height and size on at least half the pages,
+// wherever it sits. Body text that repeats, as a form's labels do, stays.
 function dropRunning(pages) {
+  const body = bodySize(pages.flatMap((page) => page.lines));
   const marks = new Map();
   const markKey = (line) =>
-    [Math.round(line.y / 3), Math.round(line.size), norm(lineText(line).replace(/\d+/g, ""))].join(":");
+    line.size > body + 0.5
+      ? [Math.round(line.y / 3), Math.round(line.size), norm(lineText(line))].join(":")
+      : null;
   for (const page of pages) {
-    for (const k of new Set(page.lines.map(markKey))) marks.set(k, (marks.get(k) || 0) + 1);
+    for (const k of new Set(page.lines.map(markKey).filter(Boolean))) {
+      marks.set(k, (marks.get(k) || 0) + 1);
+    }
   }
   const watermarked = Math.max(3, pages.length / 2);
-  for (const page of pages) page.lines = page.lines.filter((l) => marks.get(markKey(l)) < watermarked);
-  const body = bodySize(pages.flatMap((page) => page.lines));
+  for (const page of pages) {
+    page.lines = page.lines.filter((l) => {
+      const k = markKey(l);
+      return !k || marks.get(k) < watermarked;
+    });
+  }
   const keys = pages.map((page) => {
     const order = page.lines.slice().sort((a, b) => b.y - a.y);
     const edges = new Map();
@@ -626,9 +625,7 @@ async function finish(doc, url, progress) {
   };
 }
 
-// The file arriving for `loading`, and the document parsed from `url` with its extract.
-let parts = [];
-let loading = null;
+// The document parsed from `url`, the pages read so far, and its extract once worked out.
 let task = null;
 let doc = null;
 let url = null;
@@ -636,8 +633,6 @@ let progress = null;
 let extract = null;
 
 async function drop() {
-  parts = [];
-  loading = null;
   doc = null;
   url = null;
   progress = null;
@@ -649,41 +644,47 @@ async function drop() {
   }
 }
 
+// Fetches the file at `want` and parses it. A copy that opening the PDF left in Chrome's cache is
+// used as it is, fresh or not, so a cached PDF costs no request. Returns `{ok: true}`, or the error
+// and what went wrong: `fetch` when the request failed, `http` for an error status, `type` when the
+// reply is not a PDF, and `size` when it is over `maxBytes`.
+async function load(want, maxBytes) {
+  await drop();
+  let response;
+  try {
+    response = await fetch(want, { credentials: "include", cache: "force-cache" });
+  } catch (e) {
+    return { error: "fetch", detail: String((e && e.message) || e) };
+  }
+  if (!response.ok) return { error: "http", detail: String(response.status) };
+  const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (type && !/\/(x-)?pdf$/.test(type) && type !== "application/octet-stream") {
+    return { error: "type", detail: type };
+  }
+  const length = Number(response.headers.get("content-length") || 0);
+  if (length > maxBytes) return { error: "size", detail: String(length) };
+  const data = new Uint8Array(await response.arrayBuffer());
+  if (data.length > maxBytes) return { error: "size", detail: String(data.length) };
+  task = globalThis.pdfjsLib.getDocument({
+    data: data,
+    verbosity: 0,
+    isEvalSupported: false,
+    disableFontFace: true,
+    useWorkerFetch: false,
+    stopAtErrors: false,
+  });
+  doc = await task.promise;
+  url = want;
+  progress = newProgress();
+  return { ok: true };
+}
+
 globalThis.phoneapiPdf = {
   // Whether the document from `want` is parsed.
   has(want) {
     return doc !== null && url === want;
   },
-  // Starts taking the file at `want`, dropping any earlier document.
-  async begin(want) {
-    await drop();
-    loading = want;
-  },
-  // Adds one base64 chunk of the file.
-  add(chunk) {
-    const binary = atob(chunk);
-    const part = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) part[i] = binary.charCodeAt(i);
-    parts.push(part);
-  },
-  // Parses the chunks added since `begin`.
-  async open(want) {
-    if (loading !== want) throw new Error("Another read of this tab took over the PDF");
-    const data = joined(parts);
-    parts = [];
-    task = globalThis.pdfjsLib.getDocument({
-      data: data,
-      verbosity: 0,
-      isEvalSupported: false,
-      disableFontFace: true,
-      useWorkerFetch: false,
-      stopAtErrors: false,
-    });
-    doc = await task.promise;
-    url = want;
-    progress = newProgress();
-    loading = null;
-  },
+  load: load,
   // Reads pages for about `budget` milliseconds, so that no one call runs long. Returns whether
   // every page has been read.
   async step(budget) {

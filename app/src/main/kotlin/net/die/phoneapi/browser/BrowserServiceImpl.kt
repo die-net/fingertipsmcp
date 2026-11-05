@@ -875,4 +875,5 @@ internal data class FrameInfo(
     val id: String? = null,
     val url: String? = null,
     val parentId: String? = null,
+    val loaderId: String? = null,
 )

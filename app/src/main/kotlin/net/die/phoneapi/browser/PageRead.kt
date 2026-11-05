@@ -59,6 +59,11 @@ internal data class PageExtract(
     val selected: Int? = null,
     val clipped: Boolean = false,
     val blocks: List<PageBlock> = emptyList(),
+    /**
+     * Set only on the page PhoneAPI puts in place of a PDF: the PDF's URL. That page holds no text,
+     * so [PageReader] reads the PDF instead.
+     */
+    val pdf: String? = null,
 )
 
 @Serializable

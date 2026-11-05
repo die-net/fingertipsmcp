@@ -4,43 +4,65 @@ import android.util.Log
 import java.net.URI
 import java.net.URISyntaxException
 import java.net.URLDecoder
-import kotlin.coroutines.cancellation.CancellationException
+import java.util.Base64
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
+import kotlinx.serialization.json.putJsonArray
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.EvalResult
 
 /**
- * Reads a PDF that Chrome shows in its own viewer. That page holds no text, and script in it can't
- * fetch, since its origin is opaque. So the file is fetched over DevTools for the tab's frame, with
- * the tab's cookies, and pdf.js turns it into blocks in the viewer's main world. The viewer is a
- * document Chrome builds itself, with no site script to see that, so pdf.js and the parsed file
- * stay there between calls, and a tab's PDF is fetched and parsed once. [script] gives
- * [pdfSource]'s result. It is loaded only when a tab lacks it and is not kept, since it takes about
- * 3.7 MB of heap.
+ * Reads a PDF that a tab shows, in Chrome's viewer or in a page this put there before. Chrome's
+ * viewer holds no text, so the tab is taken over: its navigation to the PDF's URL is answered with
+ * an empty page of PhoneAPI's own, [PAGE], before it reaches the network. That page has the PDF's
+ * origin, so pdf-read.js in it fetches the file as the site's own page would, with the site's
+ * cookies and from Chrome's cache when opening the PDF put it there, and pdf.js parses it there.
+ * The page has no site script, so this runs in its main world and keeps the parsed file between
+ * calls. [script] gives [pdfSource]'s result. It is loaded only into a page this has just made and
+ * is not kept, since it takes about 3.7 MB of heap.
  */
 internal class PdfReader(private val script: suspend () -> String) {
     /**
-     * Held while a tab's PDF loads and its pages are read, so two reads of one tab don't interleave
-     * their chunks or read a page twice. PDF reads are rare, so one lock for every tab is enough.
+     * Held while a tab is taken over and its pages are read, so two reads of one tab don't take it
+     * over twice or read a page twice. PDF reads are rare, so one lock for every tab is enough.
      */
     private val loading = Mutex()
 
     /**
-     * Runs pdf-read.js on the PDF at [url], which the main frame [frameId] shows, returning its
-     * page facts and blocks, as page-read.js does for a web page.
+     * The DevTools loader id of the page this made in each tab, by target id. A page with that id
+     * is the one this made, so script runs in its main world; any other page at the PDF's URL, even
+     * one that copies [PAGE], is taken over again first. Read and written only under [loading].
      */
-    suspend fun read(cdp: CdpSession, frameId: String, url: String): EvalResult {
+    private val pages =
+        object : LinkedHashMap<String, String>(PAGES_KEPT, LOAD_FACTOR, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>) =
+                size > PAGES_KEPT
+        }
+
+    /**
+     * Runs pdf-read.js on the PDF at [url] in the tab [target], whose main frame is [frame],
+     * returning its page facts and blocks, as page-read.js does for a web page.
+     */
+    suspend fun read(cdp: CdpSession, target: String, frame: MainFrame, url: String): EvalResult {
         requireWebUrl(url)
         loading.withLock {
-            val state = state(cdp, url)
-            if (state != true) load(cdp, frameId, url, scripted = state != null)
+            val ours = frame.url == url && frame.loaderId != null && pages[target] == frame.loaderId
+            if (!ours || !parsed(cdp, url)) {
+                pages.remove(target)
+                pages[target] = takeOver(cdp, url)
+                run(cdp, script(), awaitPromise = false)
+                load(cdp, url)
+            }
             // Pages are read a few seconds at a time, so that a long PDF stays within each
             // DevTools call's time limit.
             do {
@@ -50,41 +72,144 @@ internal class PdfReader(private val script: suspend () -> String) {
         return evaluateInMainWorld(cdp, "phoneapiPdf.read()", awaitPromise = true)
     }
 
-    /** Null when the tab lacks pdf-read.js, true when it has [url]'s document parsed. */
-    private suspend fun state(cdp: CdpSession, url: String): Boolean? {
+    /** Whether this tab's page, one this made, has [url]'s document parsed. */
+    private suspend fun parsed(cdp: CdpSession, url: String): Boolean {
         val result =
             run(
                 cdp,
-                "typeof phoneapiPdf === \"object\" ? phoneapiPdf.has(${quoted(url)}) : null",
+                "typeof phoneapiPdf === \"object\" && phoneapiPdf.has(${quoted(url)})",
                 awaitPromise = false,
             )
-        return (result.value as? JsonPrimitive)?.booleanOrNull
+        return (result.value as? JsonPrimitive)?.booleanOrNull == true
     }
 
-    /** Fetches and parses [url]'s file in the tab, first adding pdf-read.js unless [scripted]. */
-    private suspend fun load(cdp: CdpSession, frameId: String, url: String, scripted: Boolean) {
-        if (!scripted) run(cdp, script(), awaitPromise = false)
-        run(cdp, "phoneapiPdf.begin(${quoted(url)})", awaitPromise = true)
-        try {
-            fetchBase64(cdp, frameId, url) { chunk ->
-                run(cdp, "phoneapiPdf.add(\"$chunk\")", awaitPromise = false)
-            }
-            run(cdp, "phoneapiPdf.open(${quoted(url)})", awaitPromise = true)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: ApiException) {
-            // Free the chunks added so far, which would otherwise wait in the tab for the next
-            // read.
+    /**
+     * Navigates the tab to [url] and answers that navigation with [PAGE] before it reaches the
+     * network, returning the new page's loader id once it is ready for script.
+     */
+    private suspend fun takeOver(cdp: CdpSession, url: String): String {
+        cdp.call(
+            "Fetch.enable",
+            buildJsonObject {
+                putJsonArray("patterns") {
+                    addJsonObject {
+                        put("urlPattern", "*")
+                        put("resourceType", "Document")
+                        put("requestStage", "Request")
+                    }
+                }
+            },
+        )
+        // Interception ends with the DevTools session, so a cancelled takeover needs no cleanup.
+        val navigated =
             try {
-                run(cdp, "phoneapiPdf.drop()", awaitPromise = true)
-            } catch (dropped: ApiException) {
-                Log.d(TAG, "Dropping a partial PDF failed: ${dropped.error}")
+                coroutineScope {
+                    val answered = async { answer(cdp, url) }
+                    val result =
+                        cdp.call("Page.navigate", buildJsonObject { put("url", url) })
+                            .decodeCdp<Navigated>()
+                    answered.await()
+                    result
+                }
+            } catch (e: ApiException) {
+                disableFetch(cdp)
+                throw e
             }
-            throw e
+        disableFetch(cdp)
+        navigated?.errorText?.let {
+            throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not open the PDF's page: $it")
+        }
+        val loader =
+            navigated?.loaderId
+                ?: throw ApiException(
+                    BAD_GATEWAY,
+                    "page_error",
+                    "Chrome did not open the PDF's page",
+                )
+        awaitReady(cdp)
+        return loader
+    }
+
+    /**
+     * Answers the tab's paused navigation to [url] with [PAGE], letting any other paused document
+     * request go on as it was.
+     */
+    private suspend fun answer(cdp: CdpSession, url: String) {
+        cdp.events.first { event ->
+            val paused =
+                event.takeIf { it.method == "Fetch.requestPaused" }?.params?.decodeCdp<Paused>()
+                    ?: return@first false
+            if (sameDocument(paused.request?.url, url)) {
+                cdp.call(
+                    "Fetch.fulfillRequest",
+                    buildJsonObject {
+                        put("requestId", paused.requestId)
+                        put("responseCode", HTTP_OK)
+                        putJsonArray("responseHeaders") {
+                            addJsonObject {
+                                put("name", "Content-Type")
+                                put("value", "text/html; charset=utf-8")
+                            }
+                        }
+                        put("body", PAGE_BASE64)
+                    },
+                )
+                true
+            } else {
+                cdp.call(
+                    "Fetch.continueRequest",
+                    buildJsonObject { put("requestId", paused.requestId) },
+                )
+                false
+            }
         }
     }
 
-    /** Runs [expression] in the viewer's main world, turning a script error into `page_error`. */
+    private suspend fun disableFetch(cdp: CdpSession) {
+        try {
+            cdp.call("Fetch.disable")
+        } catch (e: ApiException) {
+            // Interception ends with the DevTools session anyway.
+            Log.d(TAG, "Fetch.disable failed: ${e.error}")
+        }
+    }
+
+    /** Waits until the new page has finished loading, which takes a moment after it commits. */
+    private suspend fun awaitReady(cdp: CdpSession) {
+        repeat(READY_TRIES) {
+            val state = evaluateInMainWorld(cdp, "document.readyState", awaitPromise = false)
+            if ((state.value as? JsonPrimitive)?.content == "complete") return
+            delay(READY_POLL_MS)
+        }
+        throw ApiException(BAD_GATEWAY, "page_error", "The PDF's page did not finish loading")
+    }
+
+    /** Fetches and parses the PDF in the page, turning what went wrong into an API error. */
+    private suspend fun load(cdp: CdpSession, url: String) {
+        val loaded =
+            run(cdp, "phoneapiPdf.load(${quoted(url)}, $MAX_PDF_BYTES)", awaitPromise = true)
+                .value
+                ?.decodeCdp<Loaded>()
+        if (loaded?.ok == true) return
+        val detail = loaded?.detail.orEmpty()
+        throw when (loaded?.error) {
+            "size" -> ApiException(413, "too_large", "The PDF is over ${MAX_PDF_BYTES / MB} MB")
+            "http" ->
+                ApiException(BAD_GATEWAY, "page_error", "The PDF's site answered HTTP $detail")
+            "type" ->
+                ApiException(BAD_GATEWAY, "page_error", "The PDF's URL gave $detail, not a PDF")
+            "fetch" ->
+                ApiException(
+                    BAD_GATEWAY,
+                    "page_error",
+                    "Chrome could not fetch the PDF: $detail. Chrome refuses this for an http " +
+                        "PDF at a local or LAN address.",
+                )
+            else -> ApiException(BAD_GATEWAY, "page_error", "Reading the PDF failed")
+        }
+    }
+
+    /** Runs [expression] in the PDF's page, turning a script error into `page_error`. */
     private suspend fun run(
         cdp: CdpSession,
         expression: String,
@@ -159,12 +284,7 @@ private fun requireWebUrl(url: String) {
         try {
             URI(url).scheme?.lowercase()
         } catch (e: URISyntaxException) {
-            throw ApiException(
-                BAD_GATEWAY,
-                "page_error",
-                "Chrome's PDF viewer names a bad URL",
-                cause = e,
-            )
+            throw ApiException(BAD_GATEWAY, "page_error", "The PDF's URL does not parse", cause = e)
         }
     if (scheme != "http" && scheme != "https") {
         throw ApiException(
@@ -175,127 +295,31 @@ private fun requireWebUrl(url: String) {
     }
 }
 
-/**
- * Fetches [url] for [frameId] with `Network.loadNetworkResource` and hands each base64 chunk to
- * [onChunk] as Chrome reads it, so only one chunk is held at a time. A stream left open when this
- * fails closes with the DevTools session.
- */
-private suspend fun fetchBase64(
-    cdp: CdpSession,
-    frameId: String,
-    url: String,
-    onChunk: suspend (String) -> Unit,
-) {
-    val stream = openStream(cdp, frameId, url)
-    var bytes = 0L
-    while (true) {
-        val chunk =
-            cdp.call(
-                    "IO.read",
-                    buildJsonObject {
-                        put("handle", stream)
-                        put("size", CHUNK_BYTES)
-                    },
-                )
-                .decodeCdp<IoChunk>()
-                ?: throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not read the PDF")
-        if (chunk.data.isNotEmpty()) {
-            // Chrome gives text it can decode as text, which would have changed a PDF's bytes.
-            if (!chunk.base64Encoded) {
-                throw ApiException(BAD_GATEWAY, "page_error", "Chrome gave the PDF as text")
-            }
-            bytes += chunk.data.length / BASE64_GROUP * BASE64_BYTES
-            if (bytes > MAX_PDF_BYTES) {
-                throw ApiException(413, "too_large", "The PDF is over ${MAX_PDF_BYTES / MB} MB")
-            }
-            onChunk(chunk.data)
-        }
-        if (chunk.eof) break
-    }
-    try {
-        cdp.call("IO.close", buildJsonObject { put("handle", stream) })
-    } catch (e: ApiException) {
-        // The stream closes with the session anyway.
-        Log.d(TAG, "IO.close failed: ${e.error}")
-    }
-}
+/** Whether a request for [requested] loads the document at [wanted], whatever its fragment. */
+private fun sameDocument(requested: String?, wanted: String): Boolean =
+    requested?.substringBefore('#') == wanted.substringBefore('#')
 
 /**
- * Asks Chrome to fetch [url] for [frameId], returning the stream to read it from, or failing when
- * what came back is not the PDF.
+ * The page that stands in for a PDF. page-read.js knows it by its `phoneapi-pdf` meta tag and hands
+ * the tab to [PdfReader]; a site's page that copies the tag is only taken over again.
  */
-private suspend fun openStream(cdp: CdpSession, frameId: String, url: String): String {
-    val loaded =
-        cdp.call(
-                "Network.loadNetworkResource",
-                buildJsonObject {
-                    put("frameId", frameId)
-                    put("url", url)
-                    putJsonObject("options") {
-                        put("disableCache", false)
-                        put("includeCredentials", true)
-                    }
-                },
-            )
-            .decodeCdp<LoadedResource>()
-            ?.resource
-    val stream = loaded?.stream
-    if (loaded?.success != true || stream == null) {
-        throw ApiException(BAD_GATEWAY, "page_error", fetchFailure(loaded))
-    }
-    val status = loaded.httpStatusCode ?: 0
-    val type =
-        loaded.headers.entries
-            .firstOrNull { it.key.equals("content-type", ignoreCase = true) }
-            ?.value
-    val got =
-        when {
-            status >= HTTP_ERROR -> "HTTP $status"
-            type != null && !pdfType(type) -> type
-            else -> return stream
-        }
-    throw ApiException(
-        BAD_GATEWAY,
-        "page_error",
-        "Chrome fetched the PDF again and got $got, not the PDF. The viewer's fetch carries " +
-            "none of the site's SameSite cookies, so a PDF that needs a login can't be read.",
-    )
-}
+internal const val PAGE =
+    """<!doctype html><html><head><meta charset="utf-8"><meta name="phoneapi-pdf"></head><body></body></html>"""
 
-/** Why Chrome's fetch failed, in terms a caller can act on. */
-private fun fetchFailure(loaded: Resource?): String =
-    when (val error = loaded?.netErrorName) {
-        "net::ERR_BLOCKED_BY_RESPONSE" ->
-            "The site's Cross-Origin-Resource-Policy doesn't let Chrome's PDF viewer fetch the file again."
-        "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS" ->
-            "Chrome doesn't let its PDF viewer fetch a file from a local or LAN address again."
-        null ->
-            "Chrome could not fetch the PDF again: ${loaded?.httpStatusCode?.let { "HTTP $it" } ?: "no answer"}"
-        else -> "Chrome could not fetch the PDF again: $error"
-    }
-
-/** Whether a Content-Type can be a PDF; some servers send PDFs as generic binary. */
-private fun pdfType(type: String): Boolean {
-    val bare = type.substringBefore(';').trim().lowercase()
-    return bare.endsWith("/pdf") || bare.endsWith("/x-pdf") || bare == "application/octet-stream"
-}
-
-@Serializable private data class LoadedResource(val resource: Resource? = null)
+private val PAGE_BASE64 = Base64.getEncoder().encodeToString(PAGE.toByteArray())
 
 @Serializable
-private data class Resource(
-    val success: Boolean = false,
-    val netErrorName: String? = null,
-    val httpStatusCode: Int? = null,
-    val stream: String? = null,
-    val headers: Map<String, String> = emptyMap(),
-)
+private data class Navigated(val loaderId: String? = null, val errorText: String? = null)
+
+@Serializable private data class Paused(val requestId: String, val request: PausedRequest? = null)
+
+@Serializable private data class PausedRequest(val url: String? = null)
 
 @Serializable
-private data class IoChunk(
-    val data: String = "",
-    val base64Encoded: Boolean = false,
-    val eof: Boolean = true,
+private data class Loaded(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val detail: String? = null,
 )
 
 private const val TAG = "PhoneApiPdf"
@@ -304,7 +328,7 @@ private const val TAG = "PhoneApiPdf"
 private val EXPORT_LIST = Regex("""export\s*\{[^}]*\};?\s*(//#[^\n]*\s*)?$""")
 
 private const val BAD_GATEWAY = 502
-private const val HTTP_ERROR = 400
+private const val HTTP_OK = 200
 
 private const val MB = 1024 * 1024
 
@@ -314,11 +338,13 @@ private const val MAX_PDF_BYTES = 20L * MB
 /** How long one `phoneapiPdf.step` call reads pages for, well within a DevTools call's limit. */
 private const val STEP_MS = 2_000
 
-/** How much Chrome reads per `IO.read`. */
-private const val CHUNK_BYTES = MB
+/** How many tabs' pages [PdfReader] remembers. */
+private const val PAGES_KEPT = 64
+private const val LOAD_FACTOR = 0.75f
 
-private const val BASE64_GROUP = 4
-private const val BASE64_BYTES = 3
+/** How often, and how many times, to look for the new page to finish loading. */
+private const val READY_POLL_MS = 50L
+private const val READY_TRIES = 100
 
 /** Room for the strict function around a script. */
 private const val WRAPPER_CHARS = 64

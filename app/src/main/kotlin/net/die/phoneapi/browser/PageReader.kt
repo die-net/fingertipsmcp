@@ -53,30 +53,35 @@ internal class PageReader(
     }
 
     /**
-     * The tab's page facts and blocks. A tab showing Chrome's PDF viewer is read from the file,
-     * since that page holds no text.
+     * The tab's page facts and blocks. A tab showing a PDF, in Chrome's viewer or in the page
+     * [PdfReader] put in its place, is read from the file, since neither page holds its text.
      */
     private suspend fun page(id: String, scope: ReadScope, selector: String?): PageExtract {
         val source = pageSource ?: pageScript().also { pageSource = it }
-        var pdfRead = false
+        var viewer: String? = null
         val (result, reloaded) =
             onPage(id) { cdp ->
                 val frame = mainFrame(cdp)
-                val pdfUrl = viewedPdf(frame.url)
-                pdfRead = pdfUrl != null
-                if (pdfUrl == null) {
-                    evaluateInFrame(cdp, frame.id, readScript(source, scope, selector), false)
-                } else if (selector != null) {
-                    throw ApiException.badRequest("A PDF has no elements to select")
-                } else {
-                    pdf.read(cdp, frame.id, pdfUrl)
+                viewer = viewedPdf(frame.url)
+                val url = viewer
+                when {
+                    url == null ->
+                        evaluateInFrame(cdp, frame.id, readScript(source, scope, selector), false)
+                    selector != null -> throw noSelector()
+                    else -> pdf.read(cdp, id, frame, url)
                 }
             }
         val extract = decodeExtract(result, selector).copy(reloaded = reloaded)
-        if (pdfRead) return extract
-        val responses = capture?.listed(id).orEmpty()
-        return extract.copy(data = extract.data + responses)
+        if (viewer != null) return extract
+        val standIn =
+            extract.pdf ?: return extract.copy(data = extract.data + capture?.listed(id).orEmpty())
+        if (selector != null) throw noSelector()
+        val (pdfResult, pdfReloaded) =
+            onPage(id) { cdp -> pdf.read(cdp, id, mainFrame(cdp), standIn) }
+        return decodeExtract(pdfResult, null).copy(reloaded = reloaded || pdfReloaded)
     }
+
+    private fun noSelector() = ApiException.badRequest("A PDF has no elements to select")
 
     /** Runs [expression] in an isolated world on the tab. */
     private suspend fun evaluate(id: String, expression: String): Evaluated =

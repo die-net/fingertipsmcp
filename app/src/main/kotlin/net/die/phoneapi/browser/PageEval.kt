@@ -22,15 +22,15 @@ internal suspend fun evaluateIn(
 /** The id of the page's main frame. */
 internal suspend fun mainFrameId(cdp: CdpSession): String = mainFrame(cdp).id
 
-/** The page's main frame, with its id and URL. */
+/** The page's main frame, with its id, URL, and loader id. */
 internal suspend fun mainFrame(cdp: CdpSession): MainFrame {
     val frame = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()?.frameTree?.frame
     val id = frame?.id ?: throw ApiException(502, "cdp_error", "Chrome did not return a frame")
-    return MainFrame(id, frame.url)
+    return MainFrame(id, frame.url, frame.loaderId)
 }
 
-/** A page's main frame. */
-internal data class MainFrame(val id: String, val url: String?)
+/** A page's main frame. [loaderId] names the document loaded in it, and changes with each load. */
+internal data class MainFrame(val id: String, val url: String?, val loaderId: String? = null)
 
 /**
  * [evaluateIn] for a caller that already has the main frame's id. A world belongs to one document,
