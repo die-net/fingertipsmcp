@@ -63,6 +63,11 @@ internal class SessionBrowser(
     override suspend fun find(id: String, request: BrowserFindRequest): BrowserFindResult =
         mine(id) { base.find(id, request) }
 
+    override fun savedPdf(url: String): Boolean = base.savedPdf(url)
+
+    override suspend fun loadPdf(id: String, url: String): Boolean =
+        mine(id) { base.loadPdf(id, url) }
+
     override suspend fun tap(id: String, request: BrowserTapRequest): ActionResult =
         acting(id, request.input) { base.tap(id, request) }
 

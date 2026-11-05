@@ -50,6 +50,33 @@ internal class PdfReader(private val script: suspend () -> String) {
         }
 
     /**
+     * URLs of PDFs Chrome saved rather than showed, most recently used last, so a later read goes
+     * straight to [open] and Chrome saves no second copy. A URL can hold a secret, so it stays in
+     * memory and out of the log.
+     */
+    private val savedUrls =
+        object : LinkedHashMap<String, Boolean>(SAVED_KEPT, LOAD_FACTOR, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
+                size > SAVED_KEPT
+        }
+
+    /** Whether Chrome saved the PDF at [url], as far as this remembers. */
+    fun saved(url: String): Boolean = synchronized(savedUrls) { savedUrls[url] == true }
+
+    /**
+     * Puts the PDF at [url] in the tab [target] without Chrome showing or saving it, as for a PDF
+     * Chrome saved, and remembers [url]. False, with nothing remembered, when [url] is not a PDF.
+     */
+    suspend fun open(cdp: CdpSession, target: String, url: String): Boolean {
+        requireWebUrl(url)
+        val loaded = loading.withLock { standIn(cdp, target, url) }
+        if (loaded?.error == "type") return false
+        failure(loaded)?.let { throw it }
+        synchronized(savedUrls) { savedUrls[url] = true }
+        return true
+    }
+
+    /**
      * Runs pdf-read.js on the PDF at [url] in the tab [target], whose main frame is [frame],
      * returning its page facts and blocks, as page-read.js does for a web page.
      */
@@ -57,12 +84,7 @@ internal class PdfReader(private val script: suspend () -> String) {
         requireWebUrl(url)
         loading.withLock {
             val ours = frame.url == url && frame.loaderId != null && pages[target] == frame.loaderId
-            if (!ours || !parsed(cdp, url)) {
-                pages.remove(target)
-                pages[target] = takeOver(cdp, url)
-                run(cdp, script(), awaitPromise = false)
-                load(cdp, url)
-            }
+            if (!ours || !parsed(cdp, url)) failure(standIn(cdp, target, url))?.let { throw it }
             // Pages are read a few seconds at a time, so that a long PDF stays within each
             // DevTools call's time limit.
             do {
@@ -184,15 +206,21 @@ internal class PdfReader(private val script: suspend () -> String) {
         throw ApiException(BAD_GATEWAY, "page_error", "The PDF's page did not finish loading")
     }
 
-    /** Fetches and parses the PDF in the page, turning what went wrong into an API error. */
-    private suspend fun load(cdp: CdpSession, url: String) {
-        val loaded =
-            run(cdp, "phoneapiPdf.load(${quoted(url)}, $MAX_PDF_BYTES)", awaitPromise = true)
-                .value
-                ?.decodeCdp<Loaded>()
-        if (loaded?.ok == true) return
+    /** Takes the tab over and has the new page fetch and parse the PDF, returning how that went. */
+    private suspend fun standIn(cdp: CdpSession, target: String, url: String): Loaded? {
+        pages.remove(target)
+        pages[target] = takeOver(cdp, url)
+        run(cdp, script(), awaitPromise = false)
+        return run(cdp, "phoneapiPdf.load(${quoted(url)}, $MAX_PDF_BYTES)", awaitPromise = true)
+            .value
+            ?.decodeCdp<Loaded>()
+    }
+
+    /** The API error for what [loaded] says went wrong, or null when the PDF loaded. */
+    private fun failure(loaded: Loaded?): ApiException? {
+        if (loaded?.ok == true) return null
         val detail = loaded?.detail.orEmpty()
-        throw when (loaded?.error) {
+        return when (loaded?.error) {
             "size" -> ApiException(413, "too_large", "The PDF is over ${MAX_PDF_BYTES / MB} MB")
             "http" ->
                 ApiException(BAD_GATEWAY, "page_error", "The PDF's site answered HTTP $detail")
@@ -340,6 +368,9 @@ private const val STEP_MS = 2_000
 
 /** How many tabs' pages [PdfReader] remembers. */
 private const val PAGES_KEPT = 64
+
+/** How many URLs of saved PDFs [PdfReader] remembers. */
+private const val SAVED_KEPT = 256
 private const val LOAD_FACTOR = 0.75f
 
 /** How often, and how many times, to look for the new page to finish loading. */

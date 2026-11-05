@@ -523,6 +523,10 @@ internal class BrowserServiceImpl(
         )
     }
 
+    override fun savedPdf(url: String): Boolean = reader.savedPdf(url)
+
+    override suspend fun loadPdf(id: String, url: String): Boolean = reader.loadPdf(id, url)
+
     override suspend fun timersStalled(id: String): Boolean =
         timers?.let { it.stalled(id) && it.confirm(id) } == true
 
@@ -714,15 +718,6 @@ internal class BrowserServiceImpl(
         )
     }
 
-    private fun dialogOpen(cause: ApiException) =
-        ApiException(
-            409,
-            "content_unavailable",
-            "Chrome is showing a page's dialog, such as an alert, and that page answers nothing " +
-                "until someone dismisses it. ui_snapshot shows the dialog; tap one of its buttons.",
-            cause = cause,
-        )
-
     private fun browserPackage(socket: DevtoolsSocketInfo?, name: String): String? =
         socket?.packageName ?: if (name == CHROME_SOCKET) CHROME_PACKAGE else null
 
@@ -865,6 +860,15 @@ internal class AxTreeCache(cap: Int) {
         const val LOAD = 0.75f
     }
 }
+
+private fun dialogOpen(cause: ApiException) =
+    ApiException(
+        409,
+        "content_unavailable",
+        "Chrome is showing a page's dialog, such as an alert, and that page answers nothing " +
+            "until someone dismisses it. ui_snapshot shows the dialog; tap one of its buttons.",
+        cause = cause,
+    )
 
 @Serializable internal data class FrameTreeResult(val frameTree: FrameNode? = null)
 

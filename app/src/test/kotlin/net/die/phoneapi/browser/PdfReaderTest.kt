@@ -145,6 +145,30 @@ class PdfReaderTest {
     }
 
     @Test
+    fun `remembers a PDF it opened`() {
+        val reader = PdfReader { "" }
+        assertFalse(reader.saved(URL))
+        assertTrue(open(reader, URL, """{"ok":true}"""))
+        assertTrue(reader.saved(URL))
+    }
+
+    @Test
+    fun `forgets what is not a PDF`() {
+        val reader = PdfReader { "" }
+        assertFalse(open(reader, URL, """{"error":"type","detail":"text/html"}"""))
+        assertFalse(reader.saved(URL))
+    }
+
+    @Test
+    fun `remembers only so many PDFs`() {
+        val reader = PdfReader { "" }
+        repeat(257) { n -> open(reader, "https://example.com/$n.pdf", """{"ok":true}""") }
+        assertFalse(reader.saved("https://example.com/0.pdf"))
+        assertTrue(reader.saved("https://example.com/1.pdf"))
+        assertTrue(reader.saved("https://example.com/256.pdf"))
+    }
+
+    @Test
     fun `refuses a PDF over 20 MB`() {
         val error = loadFails("""{"error":"size","detail":"25000000"}""")
         assertEquals(413, error.status)
@@ -290,6 +314,15 @@ class PdfReaderTest {
         )
     }
 
+    /** [PdfReader.open] on [url], whose `phoneapiPdf.load` answers [loaded]. */
+    private fun open(reader: PdfReader, url: String, loaded: String): Boolean {
+        val replies = Replies()
+        replies.takeOver(loader = "L1", url = url)
+        replies.value("\"object\"")
+        replies.value(loaded)
+        return onPage(replies.socket(), 7) { reader.open(it, "t", url) }
+    }
+
     /** A load from the viewer whose `phoneapiPdf.load` answers [loaded]. */
     private fun loadFails(loaded: String): ApiException {
         val replies = Replies()
@@ -356,9 +389,9 @@ class PdfReaderTest {
          * Chrome's side of a takeover whose first command has id [first]: Fetch.enable, the paused
          * navigation, its fulfillment, the navigation itself, Fetch.disable, and a loaded page.
          */
-        fun takeOver(loader: String, first: Int = 1) {
+        fun takeOver(loader: String, first: Int = 1, url: String = URL) {
             idTo(first, "{}")
-            event("""{"requestId":"R1","request":{"url":"$URL"}}""")
+            event("""{"requestId":"R1","request":{"url":"$url"}}""")
             idTo(first + 2, "{}")
             idTo(first + 1, """{"frameId":"F","loaderId":"$loader"}""")
             idTo(first + 3, "{}")
