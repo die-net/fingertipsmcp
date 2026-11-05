@@ -17,13 +17,20 @@ internal suspend fun evaluateIn(
     cdp: CdpSession,
     expression: String,
     awaitPromise: Boolean,
-): EvalResult {
-    val loaded = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()
-    val frameId =
-        loaded?.frameTree?.frame?.id
-            ?: throw ApiException(502, "cdp_error", "Chrome did not return a frame")
-    return evaluateInFrame(cdp, frameId, expression, awaitPromise)
+): EvalResult = evaluateInFrame(cdp, mainFrameId(cdp), expression, awaitPromise)
+
+/** The id of the page's main frame. */
+internal suspend fun mainFrameId(cdp: CdpSession): String = mainFrame(cdp).id
+
+/** The page's main frame, with its id and URL. */
+internal suspend fun mainFrame(cdp: CdpSession): MainFrame {
+    val frame = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()?.frameTree?.frame
+    val id = frame?.id ?: throw ApiException(502, "cdp_error", "Chrome did not return a frame")
+    return MainFrame(id, frame.url)
 }
+
+/** A page's main frame. */
+internal data class MainFrame(val id: String, val url: String?)
 
 /**
  * [evaluateIn] for a caller that already has the main frame's id. A world belongs to one document,
@@ -63,13 +70,7 @@ private fun worldGone(e: ApiException): Boolean =
     e.error == "cdp_error" && e.message.orEmpty().contains(NO_CONTEXT, ignoreCase = true)
 
 /** A new isolated world on the page's main frame, by its execution context id. */
-internal suspend fun isolatedWorld(cdp: CdpSession): Int {
-    val loaded = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()
-    val frameId =
-        loaded?.frameTree?.frame?.id
-            ?: throw ApiException(502, "cdp_error", "Chrome did not return a frame")
-    return isolatedWorld(cdp, frameId)
-}
+internal suspend fun isolatedWorld(cdp: CdpSession): Int = isolatedWorld(cdp, mainFrameId(cdp))
 
 private suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
     cdp.call(
@@ -82,6 +83,26 @@ private suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
         .decodeCdp<WorldResult>()
         ?.executionContextId
         ?: throw ApiException(502, "cdp_error", "Chrome did not return an isolated world")
+
+/**
+ * Evaluates [expression] in the page's own world, where it leaves globals behind. Only for a
+ * document Chrome builds itself, with no site script to see them, such as its PDF viewer.
+ */
+internal suspend fun evaluateInMainWorld(
+    cdp: CdpSession,
+    expression: String,
+    awaitPromise: Boolean,
+): EvalResult =
+    evalResult(
+        cdp.call(
+            "Runtime.evaluate",
+            buildJsonObject {
+                put("expression", expression)
+                put("returnByValue", true)
+                put("awaitPromise", awaitPromise)
+            },
+        )
+    )
 
 /** Evaluates [expression] in the isolated world [contextId]. */
 internal suspend fun evaluateInWorld(

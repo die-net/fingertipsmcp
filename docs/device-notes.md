@@ -91,6 +91,36 @@ Checked on the Android 16 emulator with Chrome 133 on 2026-10-31, with the helpe
 - With an incognito tab opened outside PhoneAPI holding a cookie, an incognito open closed it, and the new tab, opened right after, was in a new browser context with no cookies. A second session's open kept the first session's tab, saw its cookie, and got the note.
 - The Incognito Screenshot flag was in `chrome://flags`. It stayed on after Relaunch; Chrome writes flags as it shuts down, so a force stop loses the change. With it on, the video and `/v1/screenshot` showed an incognito tab's page and Chrome's incognito icon.
 
+## PDFs
+
+Checked on the Android 16 emulator with Chrome 133 on 2026-11-05, with a test PDF served from the Mac:
+
+- With Chrome's defaults, `POST /v1/browser/tabs` to a PDF URL returned a tab id, then Chrome saved the file to `/sdcard/Download/` and the tab was gone from `browser_targets`. Nothing was left to read.
+- `chrome://flags` has "Open PDF Inline on Android" (`#android-open-pdf-inline`), "Open PDF Inline on Android pre-V", and "Provide assist content for PDF", all at Default. With the first one Enabled, the tab stayed open on `chrome-native://pdf/link?url=…`, a native viewer. A flag set on `chrome://flags` and followed within seconds by a force stop was kept once and lost once; one set 20 s before a force stop was kept, so Chrome seems to write flags on a timer as well as at shutdown. The page's Relaunch button kept the flag, but left Chrome running with no activity, and `Target.createTarget` answered "Not supported" until Chrome was started again. `Browser.close` is not in Android Chrome's DevTools. `--enable-features=AndroidOpenPdfInline` in `/data/local/tmp/chrome-command-line` turned the viewer on reliably.
+- On that tab the web page is empty: `read` and `find` returned 0 characters, `snapshot` showed only `RootWebArea`, and `evaluate` saw `<html><head></head><body></body></html>`. `navigate` to a PDF URL returned 400 `net::ERR_ABORTED` though the viewer opened.
+- UiAutomation sees the text. Each page the viewer has laid out is an `android.view.ViewGroup` whose content description holds that page's full text, lines split by `\r\n`. `ui_find` with `descContains` returns it whole; the compact snapshot cuts it. Of a 6-page PDF, only the pages on screen had nodes (pages 1 and 2, then 5 and 6 after swiping), so reading a whole PDF this way takes a swipe and a find per screen, holding the screen.
+- Script in an isolated world on the viewer can't fetch the PDF: its origin is `null`, and `fetch` failed with or without `grantUniveralAccess`. `Network.loadNetworkResource` for the viewer's frame fetched it in 8 ms, and `IO.read` gave it as base64. Chrome's viewer had already fetched the file twice to show it.
+- pdf.js 6.4.299's modern build failed in Chrome 133 (`Uint8Array.prototype.toHex` is newer); its legacy build worked. Loading it into a fresh isolated world took about 110 ms.
+- Through `browser_read`, a 2-page PDF printed from HTML read in 0.8 s, with its headings, lists, inline code, and both web links. A 23-page, 1.3 MB PDF of 144,000 characters read in 1.3 to 1.6 s. Its headings came out at the right levels; its tables came out as runs of cell text.
+
+Checked on the Android 17 emulator image (`android-37.0;google_apis` revision 7) with Chrome 145 on 2026-11-05, with Chrome's default flags:
+
+- Chrome showed a PDF in its viewer, at the same `chrome-native://pdf/link?url=…` address, without a flag, and saved nothing. The viewer's page descriptions start with "Page 1: ".
+- `Page.navigate` to a PDF answered `isDownload` true and `net::ERR_ABORTED` while the viewer opened, which is where `navigate`'s 400 comes from.
+- `Network.loadNetworkResource` for a PDF on `127.0.0.1` failed with `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`: the viewer's frame has an opaque origin, which Chrome treats as public, and Chrome 145 blocks a public origin's request to a local address. A PDF from the web was fetched. So a PDF on a LAN or loopback address can't be read this way.
+- pdf.js and `pdf-read.js`, run over raw DevTools as `PdfReader` runs them, read the 15-page arXiv PDF of "Attention Is All You Need" in 1.2 to 1.9 s, network fetch included: 37,600 characters, the title, every numbered section heading, and 18 links. Bold subsection headings in body-size type read as paragraphs, tables as one paragraph of cell text, and superscripts as plain digits. Before rotated text was skipped, the margin's arXiv stamp read as the top heading and a figure's axis labels as 170 one-word paragraphs.
+- `/json/new` on the DevTools socket did not open a tab.
+
+With pdf.js kept in the viewer's main world, checked through PhoneAPI on the Android 16 emulator with Chrome 133 and `AndroidOpenPdfInline` on, on 2026-11-05: the first `read` of the 23-page PDF took 2.0 s, and a `find` and a second `read` after it took 150 ms and 140 ms. The test server saw two requests for the file, one from Chrome's viewer and one from the first read. A `navigate` to another PDF in the same tab read the new file.
+
+Checked through PhoneAPI on the Android 16 emulator, Chrome 133 with `AndroidOpenPdfInline` on, on 2026-11-05, against 22 public PDFs and the scoring in `pdftotext`. Word recall against `pdftotext` was 95 to 100% for papers in one and two columns, menus, the RFC, a Census report whose table pages carry `/Rotate 90`, an IRS form, a Supreme Court opinion, slides, a designed annual report, and Chinese and Arabic reports. Running headers and footers, which `pdftotext` keeps, account for most of the rest.
+- Bookmarks gave the outline where a PDF has real ones: every bookmark of the papers, the RFC, and the RISC-V manual came out as a heading at its depth, and 803 of the RP2350 datasheet's 1168, the rest being past the 2,000,000-character cap. Census and a menu had bookmarks that name nothing on the page, so they used the size and numbering rules.
+- The first read of the 1371-page RP2350 datasheet took 12.4 s in 2 s steps; a find after it took 0.4 s.
+- A menu whose site sends `Cross-Origin-Resource-Policy: same-origin` failed the second fetch with `net::ERR_BLOCKED_BY_RESPONSE`. The RISC-V manual's release URL is sent as an attachment, so Chrome saved it and the tab was left on `about:blank`. The 23 MB and 55 MB files were refused as over 20 MB.
+- A scanned manual has no text, and a gazette whose glyphs are drawn as outlines has none either. An Arabic card whose font maps glyphs to the wrong Unicode reads as fragments, as it does in `pdftotext`.
+- The second fetch went out as `Sec-Fetch-Site: cross-site`, `Sec-Fetch-Mode: no-cors`, with no `Referer` and no cookie set `SameSite=Lax`, `Strict`, or with no SameSite, while the navigation that showed the PDF sent all three.
+- A find for "the" in the datasheet's 2,000,000 characters took PhoneAPI from 190 MB to 1.3 GB resident in a second, and the low-memory killer stopped it. Kotlin's `Regex.findAll` makes a `Matcher` for each match, and Android's ICU-backed `Matcher` keeps its own copy of the text in native memory, so 10,000 kept matches held about 40 GB of copies before the kill. Walking one `Matcher` kept the peak at 182 MB.
+
 ## Starting Chrome
 
 Chrome opens `chrome_devtools_remote` only while it runs. A tab open with Chrome stopped starts it from its launcher entry, as tapping its icon would, and waits for the socket, as [sharing.md](sharing.md) describes.
@@ -179,6 +209,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 - That a still screen on the Moto G Power looks sharp after scrolling, with the relay's settle redraws in place of `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, and sends a frame every 4 s.
 - That the viewer in Firefox plays the 60 ms Opus packets the phone sends.
 - That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
+- What the phone's Chrome does with a PDF by default: save it, as Chrome 133 on the Android 16 emulator did, or show it in its viewer, as Chrome 145 on the Android 17 emulator did. Reports say the viewer needs Android 12 or later, so the Android 11 test phone likely saves it, and `browser_read` has no tab to read. Where it shows, how long a long PDF takes to read on the phone, against DevTools' 15 s call limit. Also `browser_read` end to end through PhoneAPI on Android 17, which was checked only over raw DevTools.
 - How long Chrome takes on the Moto G Power to open its DevTools socket after a tab open starts it, against the 10 s limit, and whether a first-run or sign-in screen keeps it from opening one.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
 - That a tab Chrome unloaded still reloads for a read when `readyState` is read in an isolated world right after `Page.reload`, before the new document exists.

@@ -109,6 +109,8 @@ internal class BrowserServiceImpl(
     dataScript: suspend () -> String = { "" },
     /** page-pending.js, for snapshots. */
     private val pendingScript: suspend () -> String = { "" },
+    /** pdf.js and pdf-read.js, as [pdfSource] joins them. */
+    pdfScript: suspend () -> String = { "" },
     private val devtoolsGap: (BrowserGap) -> String = { gap ->
         browserGapMessage(gap, chromeInstalled = true, usbDebugging = true)
     },
@@ -143,13 +145,13 @@ internal class BrowserServiceImpl(
             null
         }
     private val reader =
-        PageReader(pageScript, dataScript, recorder) { id, expression ->
+        PageReader(pageScript, dataScript, pdfScript, recorder) { id, run ->
             val (socket, chromeId) = parseBrowserTargetId(id)
             var reloaded = false
             val result =
                 usePage(socket, chromeId, repeatable = true) { cdp ->
                     reloaded = probe?.revive(cdp, socket, reading = true) == true || reloaded
-                    evaluateIn(cdp, expression, awaitPromise = false)
+                    run(cdp)
                 }
             Evaluated(result, reloaded)
         }

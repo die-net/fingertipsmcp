@@ -377,7 +377,9 @@ public data class BrowserReadResult(
         "Chrome has stopped this hidden tab's timers, as it does to tabs in the background, so content the page would load or update on its own is not coming. Read with show true to bring it forward."
     )
     val timersStopped: Boolean = false,
-    @Doc("What was read: article, page (also when no article was found), or selector.")
+    @Doc(
+        "What was read: article, page (also when no article was found), selector, or pdf for a PDF that Chrome shows in its own viewer."
+    )
     val extracted: String,
     @Doc(SELECTED_DOC) val selected: Int? = null,
     @Doc("Changes when the rendered content changes, so offsets from another call still apply.")

@@ -6,7 +6,7 @@ PhoneAPI lets an AI agent use your Android phone the way you would: read the scr
 
 ## What it does
 
-**Reads pages as text and data, not pixels.** Rather than reading screenshots or the raw DOM, an agent reads a Chrome page as markdown, cleaned up by Mozilla's Readability, a slice at a time, or searches it for text and links. JSON a page embeds (Next.js data, JSON-LD, state blobs in scripts) or fetches after it loads can be outlined and queried by path, so prices, listings, and search results come back as data. Apps are read through Android's accessibility tree as compact lines like `[e12] button "Sign in"`. Screenshots are there as a last resort.
+**Reads pages as text and data, not pixels.** Rather than reading screenshots or the raw DOM, an agent reads a Chrome page as markdown, cleaned up by Mozilla's Readability, a slice at a time, or searches it for text and links. A PDF Chrome shows reads the same way, through Mozilla's pdf.js. JSON a page embeds (Next.js data, JSON-LD, state blobs in scripts) or fetches after it loads can be outlined and queried by path, so prices, listings, and search results come back as data. Apps are read through Android's accessibility tree as compact lines like `[e12] button "Sign in"`. Screenshots are there as a last resort.
 
 **Keeps the agent's context small.** Every outline and read is capped and says what it left out. A read of a page that has not changed comes back as one line. Links come once each, without tracking parameters. One call can open a page, read it, and close it, or act, wait for the result, and show it. Password and one-time-code fields are masked in screen outlines.
 
@@ -77,3 +77,5 @@ Copyright 2026 Aaron Hopkins and contributors. All rights reserved.
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
 `app/src/main/assets/readability/` is Mozilla's [Readability.js](https://github.com/mozilla/readability) 0.6.0, under the Apache License 2.0; see its `LICENSE.md`.
+
+`app/src/main/assets/pdfjs/` is the legacy build of Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) 6.4.299 (`pdfjs-dist`), unmodified, under the Apache License 2.0; see its `LICENSE`.

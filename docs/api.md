@@ -136,7 +136,7 @@ Authenticated errors are JSON:
 | 409 | `tab_frozen` | `cdp` or `cdp-mouse` input into a tab Chrome has paused, or whose timers it has stopped, as it does to tabs hidden in the background. Also a wait on such a tab. Bring it forward with `touch` or `show`, or reload it |
 | 409 | `session_conflict` | A screen call while the session that started the caller with `session_start`, or one the caller started, holds the screen |
 | 409 | `clipboard_unreadable` | The helper could not read the clipboard's image from the app that copied it |
-| 413 | `too_large` | A clipboard image over 20 MB, sent or on the clipboard |
+| 413 | `too_large` | A clipboard image over 20 MB, sent or on the clipboard, or a PDF over 20 MB to read |
 | 422 | `unsupported_char` | Text the on-screen keyboard cannot type; use `mode` `setText` or `keyevent` |
 | 422 | `unsupported` | An action this Android release lacks, such as the IME enter action before Android 11 |
 | 428 | `session_required` | A REST call that needs a session came without `Mcp-Session-Id`; start one with `POST /v1/sessions` |
@@ -144,7 +144,7 @@ Authenticated errors are JSON:
 | 500 | `internal` | Unexpected failure |
 | 500 | `pin_store_failed` | The PIN could not be encrypted or saved |
 | 502 | `cdp_error` | Chrome's DevTools socket closed or answered with an error. Also a read whose page loaded a new document twice while it ran |
-| 502 | `page_error` | The page-reading script failed or returned nothing, or a recorded response cannot be read: it is not JSON, or Chrome no longer has its body |
+| 502 | `page_error` | The page-reading script failed or returned nothing, or a recorded response cannot be read: it is not JSON, or Chrome no longer has its body. Also a PDF Chrome could not fetch again: one whose site's Cross-Origin-Resource-Policy refuses it, one on a local or LAN address, one behind a login (the second fetch carries no SameSite cookies, so the message names what came back instead), or one that is not from an http or https URL |
 | 502 | `stream_error` | The helper stopped during video or audio capture |
 | 503 | `helper_unavailable` | Helper down or dropped; message may say starting / needs pairing / needs USB / stopped |
 | 503 | `helper_error` | A helper call, or a shell command it ran, failed; the message has its output |
@@ -232,7 +232,7 @@ A session, from MCP or REST, owns the tabs it opens, popups they open, and unown
 | `POST` | `/v1/browser/targets/{id}/navigate` | browser | `NavigateRequest` |
 | `POST` | `/v1/browser/targets/{id}/close` | browser | Close the tab without bringing it forward → `ActionResult` |
 | `GET` | `/v1/browser/targets/{id}/snapshot` | browser | Compact AX outline → `BrowserSnapshot`. `maxNodes` (default 400, up to 5000) and `maxChars` cap it; cuts are reported as for the UI snapshot. `show` brings the tab on screen first. `shown` and `pending` as for `read` |
-| `POST` | `/v1/browser/targets/{id}/read` | browser | `BrowserReadRequest` → `BrowserReadResult`: the page's text as markdown or plain text, a slice at a time, or its outline. A `selector` reads every element it matches, in page order, and `selected` counts them. `version` from an earlier result gets `changed` false and no content when the content still has it. `paywall`, `feeds`, `next`, and `canonical` come from the page's JSON-LD and its `rel` links. `data` names the JSON the page embeds, and `scope` `data` reads it; see [Embedded data](#embedded-data). `shown` says whether Chrome was drawing the tab, and `pending` lists signs of content still to load. `show` brings the tab on screen first and waits for its text to stop growing |
+| `POST` | `/v1/browser/targets/{id}/read` | browser | `BrowserReadRequest` → `BrowserReadResult`: the page's text as markdown or plain text, a slice at a time, or its outline. A `selector` reads every element it matches, in page order, and `selected` counts them. `version` from an earlier result gets `changed` false and no content when the content still has it. `paywall`, `feeds`, `next`, and `canonical` come from the page's JSON-LD and its `rel` links. `data` names the JSON the page embeds, and `scope` `data` reads it; see [Embedded data](#embedded-data). `shown` says whether Chrome was drawing the tab, and `pending` lists signs of content still to load. `show` brings the tab on screen first and waits for its text to stop growing. A PDF that Chrome shows in its own viewer is read from the file, and `extracted` says `pdf`; a `selector` on it is a 400 |
 | `POST` | `/v1/browser/targets/{id}/find` | browser | `BrowserFindRequest` → `BrowserFindResult`: text matches or links, at the offsets `read` uses. `queries` (up to 20) searches for each on its own, with results in `queries`. Links come once per URL, without tracking parameters such as `utm_*` and Amazon's `pd_rd_*` and `/ref=`, and `repeats` counts those left out |
 | `POST` | `/v1/browser/targets/{id}/tap` | browser | Ref or CSS. A selector waits up to `waitMs` (default 5000, up to 30000) for an element with a box. `input` `auto` (default), `touch`, `cdp`, or `cdp-mouse` (`BrowserTapRequest`) |
 | `POST` | `/v1/browser/targets/{id}/swipe` | browser | CSS pixels or a direction. `input` `touch` or `cdp` (`BrowserSwipeRequest`). With `touch`, a point off the page is 409 `offscreen` |
