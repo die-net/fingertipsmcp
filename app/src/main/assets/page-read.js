@@ -245,6 +245,9 @@ function blocked(status, text) {
 const BLOCK_TEXT =
   /automated (queries|requests|access|traffic)|unusual traffic|verify you are (a )?human|are you (a robot|human)|access (to this page )?has been denied|pardon our interruption/i;
 
+// The page PhoneAPI puts in place of a PDF holds no text; PhoneAPI reads the PDF instead.
+if (document.querySelector('meta[name="phoneapi-pdf"]')) return { pdf: location.href };
+
 const ldJson = [];
 for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
   try {

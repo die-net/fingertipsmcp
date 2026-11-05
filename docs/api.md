@@ -144,7 +144,7 @@ Authenticated errors are JSON:
 | 500 | `internal` | Unexpected failure |
 | 500 | `pin_store_failed` | The PIN could not be encrypted or saved |
 | 502 | `cdp_error` | Chrome's DevTools socket closed or answered with an error. Also a read whose page loaded a new document twice while it ran |
-| 502 | `page_error` | The page-reading script failed or returned nothing, or a recorded response cannot be read: it is not JSON, or Chrome no longer has its body. Also a PDF Chrome could not fetch again: one whose site's Cross-Origin-Resource-Policy refuses it, one on a local or LAN address, one behind a login (the second fetch carries no SameSite cookies, so the message names what came back instead), or one that is not from an http or https URL |
+| 502 | `page_error` | The page-reading script failed or returned nothing, or a recorded response cannot be read: it is not JSON, or Chrome no longer has its body. Also a PDF that could not be read from the page PhoneAPI puts in its place: an HTTP error, a reply that is not a PDF, a fetch Chrome refuses (as it does for an `http` PDF at a local or LAN address), or one not from an http or https URL |
 | 502 | `stream_error` | The helper stopped during video or audio capture |
 | 503 | `helper_unavailable` | Helper down or dropped; message may say starting / needs pairing / needs USB / stopped |
 | 503 | `helper_error` | A helper call, or a shell command it ran, failed; the message has its output |
