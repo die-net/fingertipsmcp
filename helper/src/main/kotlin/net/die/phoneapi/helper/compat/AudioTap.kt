@@ -2,6 +2,7 @@ package net.die.phoneapi.helper.compat
 
 import android.annotation.SuppressLint
 import android.app.Application
+import android.content.AttributionSource
 import android.content.Context
 import android.content.ContextWrapper
 import android.media.AudioFormat
@@ -171,8 +172,10 @@ internal class AudioTap {
     }
 
     /**
-     * [AudioRecord] reads [android.app.ActivityThread.currentOpPackageName] while it is
-     * constructed. A process with no application is named `uid:<n>`, and AppOps refuses that name.
+     * [AudioRecord] names its caller while it is constructed. Android 11 and 12 read
+     * [android.app.ActivityThread.currentOpPackageName], and Android 13 and later ask the current
+     * application for its attribution source. A process with no application is named `uid:<n>`, and
+     * AppOps refuses that name, so this installs an application that answers as the shell package.
      * The activity thread's handler has to be created on the helper looper.
      */
     private fun useShellPackage() {
@@ -270,10 +273,22 @@ internal class AudioTap {
             null
         }
 
+    /**
+     * The base context of the application [installShellPackage] installs. It has no base of its
+     * own, so every method [AudioRecord] reaches through it is overridden here.
+     */
     private class ShellContext : ContextWrapper(null) {
         override fun getPackageName(): String = SHELL_PACKAGE
 
         override fun getOpPackageName(): String = SHELL_PACKAGE
+
+        override fun getAttributionSource(): AttributionSource {
+            // Android 11 has no such method, so only Android 12 and later call it.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                throw UnsupportedOperationException("No AttributionSource before Android 12")
+            }
+            return AttributionSource.Builder(Process.myUid()).setPackageName(SHELL_PACKAGE).build()
+        }
     }
 
     private companion object {
