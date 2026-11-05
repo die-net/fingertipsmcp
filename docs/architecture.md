@@ -132,7 +132,11 @@ The helper calls into framework internals that apps are not supposed to use. On 
 
 Video encoding also uses `MediaFormat.KEY_LOW_LATENCY` where the codec claims support; that key is not equally real on every device.
 
-The mirror only draws when the screen changes, and some encoders ignore `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, so a still screen can send nothing at all. The mirror therefore draws into a `SurfaceTexture`, and a GLES relay copies each frame onto the encoder's input surface. The relay redraws the last frame when a viewer joins, so the requested key frame has input, and after a second without a new one.
+The mirror only draws when the screen changes, so a still screen can send nothing at all. The mirror therefore draws into a `SurfaceTexture`, and a GLES relay copies each frame onto the encoder's input surface. The relay redraws the last frame when a viewer joins, so the requested key frame has input. It also redraws 100, 300, and 700 ms after the screen stops changing, so the encoder can sharpen what it blurred during motion, and then every 4 s, so a viewer can tell a still screen from a dead stream. The encoder's own `KEY_REPEAT_PREVIOUS_FRAME_AFTER` isn't used: some encoders ignore it, and the ones that honor it repeat frames ten times a second on a still screen, which costs a message each over a relay.
+
+Each viewer has a short frame queue. When it is full, the new frame is dropped and that viewer skips delta frames until a key frame. The stream asks for one at once, and again while any viewer still waits, since a viewer still behind can drop the key frame too. The gap between requests doubles from 500 ms to 8 s, because every key frame goes to every viewer. So a slow viewer sees the picture pause rather than smear. `KEY_I_FRAME_INTERVAL` is 10 s, only a backstop. Encoders count it in frames at the configured rate, so on a screen that changes less often it is longer.
+
+Audio packets are dropped while remote submix delivers silence, apart from 60 ms after each sound, which covers the encoder's lookahead and lets the decoder fade out. The viewer plays packets as they arrive, so a gap needs nothing on its side.
 
 Until the mirror draws once, the relay has nothing to redraw. Samsung's Android 10 SurfaceFlinger can leave a new `SurfaceControl` mirror undrawn for seconds on a still screen, so 250 ms after creating one the helper projects it two pixels short and back. That makes SurfaceFlinger draw it. The `DisplayManager` mirror isn't nudged.
 

@@ -11,6 +11,7 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
@@ -24,11 +25,13 @@ import java.util.concurrent.TimeoutException
 /**
  * Copies mirrored frames onto the encoder's input surface, and can draw the last one again.
  *
- * The mirror only draws when the screen changes, and many encoders ignore
- * `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, so on a still screen nothing reaches the encoder. A sync-frame
- * request then waits forever, and a viewer cannot tell a still screen from a dead one. The relay
- * redraws the last frame when asked (so a joining viewer gets its key frame) and after [IDLE_MS]
- * without one (so a still screen still sends a frame a second).
+ * The mirror only draws when the screen changes, so on a still screen nothing reaches the encoder.
+ * A sync-frame request then waits forever, and a viewer cannot tell a still screen from a dead one.
+ * The relay redraws the last frame when asked, so a joining viewer gets its key frame, and on the
+ * schedule in [RedrawPlan]: a few times as the screen settles, so the encoder can sharpen it, then
+ * every few seconds. The relay does this itself rather than through the encoder's
+ * `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, which some encoders ignore and others honor ten times a
+ * second.
  *
  * Until the mirror delivers its first frame there is nothing to redraw.
  */
@@ -52,6 +55,7 @@ internal class FrameRelay(
     private var hasFrame = false
     private var released = false
     private var lastPtsNs = 0L
+    private val plan = RedrawPlan()
     private val matrix = FloatArray(16)
     private val quad: FloatBuffer =
         ByteBuffer.allocateDirect(QUAD.size * Float.SIZE_BYTES)
@@ -65,14 +69,8 @@ internal class FrameRelay(
     /** The surface the mirror draws into. */
     val input: Surface
 
-    private val idleTick =
-        object : Runnable {
-            override fun run() {
-                if (released) return
-                if (hasFrame && System.nanoTime() - lastPtsNs >= IDLE_MS * NS_PER_MS) draw()
-                handler.postDelayed(this, IDLE_MS / 2)
-            }
-        }
+    /** Tags the scheduled redraw, so a new schedule can replace it. */
+    private val tickToken = Any()
 
     init {
         input =
@@ -87,7 +85,12 @@ internal class FrameRelay(
 
     /** Draws the last mirrored frame again, so a pending sync-frame request has input. */
     fun redraw() {
-        handler.post { if (!released && hasFrame) draw() }
+        handler.post {
+            if (!released && hasFrame) {
+                draw()
+                schedule()
+            }
+        }
     }
 
     /** Stops drawing and frees the GL objects. Call after the mirror stops, before the codec. */
@@ -132,7 +135,6 @@ internal class FrameRelay(
         mirrored.setDefaultBufferSize(width, height)
         mirrored.setOnFrameAvailableListener({ onMirrored() }, handler)
         frames = mirrored
-        handler.postDelayed(idleTick, IDLE_MS / 2)
         return Surface(mirrored)
     }
 
@@ -217,7 +219,22 @@ internal class FrameRelay(
         }
         mirrored.getTransformMatrix(matrix)
         hasFrame = true
+        plan.mirrored(SystemClock.uptimeMillis())
         draw()
+        schedule()
+    }
+
+    private fun schedule() {
+        handler.removeCallbacksAndMessages(tickToken)
+        plan.delayMs(SystemClock.uptimeMillis())?.let {
+            handler.postDelayed(::onTick, tickToken, it)
+        }
+    }
+
+    private fun onTick() {
+        if (released) return
+        if (plan.due(SystemClock.uptimeMillis())) draw()
+        schedule()
     }
 
     private fun draw() {
@@ -240,11 +257,12 @@ internal class FrameRelay(
             Log.w(TAG, "eglSwapBuffers failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
         }
         lastPtsNs = pts
+        plan.drew(SystemClock.uptimeMillis())
     }
 
     private fun tearDown() {
         released = true
-        handler.removeCallbacks(idleTick)
+        handler.removeCallbacksAndMessages(tickToken)
         frames?.let {
             it.setOnFrameAvailableListener(null)
             it.release()
@@ -297,8 +315,6 @@ internal class FrameRelay(
 
     private companion object {
         const val TAG = "PhoneApiStream"
-        const val IDLE_MS = 1_000L
-        const val NS_PER_MS = 1_000_000L
         const val GL_WAIT_MS = 2_000L
         const val EGL_RECORDABLE_ANDROID = 0x3142
         const val STRIDE = 4 * Float.SIZE_BYTES
