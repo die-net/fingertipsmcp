@@ -15,8 +15,10 @@
     #keys svg { width: 1.25rem; height: 1.25rem; fill: currentColor; }
     p { margin: 0.4rem 0.5rem 0.6rem; max-width: 40rem; text-align: center; }
     [hidden] { display: none !important; }
-    #lease { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.4rem 0.5rem 0; max-width: 40rem; color: #f0c674; text-align: center; }
-    #lease button { padding: 0.3rem 0.8rem; background: #3a2f12; color: #f0c674; border: 1px solid #806a2a; border-radius: 4px; font: inherit; }
+    /* Holds its space while idle, so the video doesn't move when the screen changes hands. */
+    #lease { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.4rem 0.5rem 0; width: min(40rem, calc(100% - 1rem)); min-height: 3.7rem; color: #f0c674; text-align: center; }
+    #lease.idle { visibility: hidden; }
+    #lease button { flex: none; padding: 0.3rem 0.8rem; background: #3a2f12; color: #f0c674; border: 1px solid #806a2a; border-radius: 4px; font: inherit; }
   </style>
 </head>
 <body>
@@ -34,7 +36,7 @@
   <button type="button" data-key="QUICK_SETTINGS" title="Quick settings" aria-label="Quick settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17v2h6v-2zm0-12v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z"/></svg></button>
   <button type="button" id="orientation" title="Orientation" aria-label="Orientation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05c.5 6.16 5.66 11 11.95 11l.66-.03-3.81-3.81z"/></svg></button>
 </nav>
-<div id="lease" hidden><span id="lease-text"></span><button type="button" id="take">Take over</button><button type="button" id="done">Done</button></div>
+<div id="lease" class="idle"><span id="lease-text"></span><button type="button" id="take">Take over</button><button type="button" id="done">Done</button></div>
 <p id="status">Connecting</p>
 <script>
 const status = document.getElementById("status");
@@ -466,7 +468,7 @@ function onSocketMessage(data) {
 function showLease() {
   const other = HOLDERS[lease.holder];
   const mine = lease.holder === "you";
-  leaseBox.hidden = !other && !mine;
+  leaseBox.classList.toggle("idle", !other && !mine);
   takeButton.hidden = !other;
   doneButton.hidden = !mine;
   if (other) {
