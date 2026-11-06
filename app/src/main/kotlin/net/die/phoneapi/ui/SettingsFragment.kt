@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.PhoneApiApp
 import net.die.phoneapi.R
+import net.die.phoneapi.helperclient.doNotDisturbOn
 import net.die.phoneapi.helperclient.notificationsAllowed
 import net.die.phoneapi.model.HelperStatus
 import net.die.phoneapi.model.Scope
@@ -35,7 +36,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             findPreference<Preference>(KEY_WIRELESS)?.isVisible = false
             findPreference<Preference>(KEY_WIRELESS_SETTINGS)?.isVisible = false
-            findPreference<Preference>(KEY_PAIR)?.isVisible = false
         }
         findPreference<SwitchPreferenceCompat>(KEY_HELPER)?.setOnPreferenceChangeListener { _, value
             ->
@@ -55,11 +55,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
             }
         }
         findPreference<Preference>(KEY_WIRELESS_SETTINGS)?.setOnPreferenceClickListener {
-            openWirelessDebuggingSettings()
-            true
-        }
-        findPreference<Preference>(KEY_PAIR)?.setOnPreferenceClickListener {
-            pairWireless()
+            if (graph.helperSupervisor.isPaired()) openWirelessDebuggingSettings()
+            else pairWireless()
             true
         }
     }
@@ -86,7 +83,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
             .collect { controls ->
                 showHelper(controls)
                 showWireless(controls)
-                showPair(controls)
             }
     }
 
@@ -116,12 +112,15 @@ class SettingsFragment : PreferenceFragmentCompat() {
             openSettings?.isVisible = false
             return
         }
-        val canWrite = graph.helperSupervisor.canControlWireless()
-        toggle?.isVisible = canWrite
-        openSettings?.isVisible = !canWrite
-        if (canWrite) {
+        // Pairing comes first: the switch can't start the helper until the phone is paired.
+        val canToggle = controls.paired && graph.helperSupervisor.canControlWireless()
+        toggle?.isVisible = canToggle
+        openSettings?.isVisible = !canToggle
+        if (canToggle) {
             toggle?.isChecked = controls.wirelessOn
             toggle?.summary = getString(R.string.wireless_summary)
+        } else if (!controls.paired) {
+            openSettings?.summary = getString(R.string.wireless_setup)
         } else {
             val state =
                 getString(
@@ -130,12 +129,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 )
             openSettings?.summary = getString(R.string.wireless_needs_permission, state)
         }
-    }
-
-    private fun showPair(controls: Controls) {
-        val pair = findPreference<Preference>(KEY_PAIR) ?: return
-        pair.summary = getString(if (controls.paired) R.string.pair_yes else R.string.pair_not)
-        pair.isSelectable = !controls.paired
     }
 
     private suspend fun refreshTokens() {
@@ -185,6 +178,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
             return
         }
         graph.wirelessPairing.start()
+        if (context.doNotDisturbOn()) {
+            Toast.makeText(context, R.string.wireless_dnd, Toast.LENGTH_LONG).show()
+        }
         openWirelessDebuggingSettings()
     }
 
@@ -212,7 +208,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
         const val KEY_HELPER = "helper"
         const val KEY_WIRELESS = "wireless"
         const val KEY_WIRELESS_SETTINGS = "wireless_settings"
-        const val KEY_PAIR = "pair"
         const val KEY_TOKENS = "tokens"
         const val TAG = "PhoneApi"
         const val FRAGMENT_ARG_KEY = ":settings:fragment_args_key"

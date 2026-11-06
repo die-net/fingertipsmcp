@@ -12,11 +12,10 @@ This guide installs a release build and connects an agent to it. To build from s
 
 1. Download a release APK (`phoneapi-v*.apk`) from [GitHub Releases](https://github.com/die-net/phoneapi/releases).
 2. Copy [`scripts/phoneapi`](../scripts/phoneapi) somewhere on your `PATH`, for example `~/bin/phoneapi`. It does not need the rest of the repo.
-3. Install the APK. Optionally grant `WRITE_SECURE_SETTINGS` so the app can turn Wireless Debugging on itself, which is handy after a reboot. Without it you turn that on in Developer options.
+3. Install the APK. The first time the helper runs, the app grants itself `WRITE_SECURE_SETTINGS` through it, so it can turn Wireless Debugging on itself, which is handy after a reboot.
 
 ```sh
 adb install -r -g phoneapi-vX.Y.Z.apk
-adb shell pm grant net.die.phoneapi android.permission.WRITE_SECURE_SETTINGS
 ```
 
 4. Pair, expose the server, and start the helper:
@@ -68,11 +67,11 @@ Launch it once from the computer:
 phoneapi helper
 ```
 
-`phoneapi helper <package>` starts it for another install, such as a debug build. The process detaches, so the command returns while the helper keeps running. That USB start does not survive a reboot; run it again after a reboot, or start the listener and helper over Wireless Debugging. On Android 11+, after pairing Wireless Debugging once, the app restarts the helper itself after a crash or a package update while its process is running. Turning the helper switch off shuts that process down and leaves it stopped until the switch is turned on again. A successful launch leaves Wireless Debugging on, because that connection is also how the browser API reaches Chrome. The optional `WRITE_SECURE_SETTINGS` grant lets the app flip that switch; without it, turn Wireless Debugging on in Developer options when it drops, for example after a reboot.
+`phoneapi helper <package>` starts it for another install, such as a debug build. The process detaches, so the command returns while the helper keeps running. That USB start does not survive a reboot; run it again after a reboot, or start the listener and helper over Wireless Debugging. On Android 11+, after pairing Wireless Debugging once, the app restarts the helper itself after a crash or a package update while its process is running. Turning the helper switch off shuts that process down and leaves it stopped until the switch is turned on again. A successful launch leaves Wireless Debugging on, because that connection is also how the browser API reaches Chrome. The `WRITE_SECURE_SETTINGS` grant lets the app flip that switch. Until the helper has run once, turn Wireless Debugging on in Developer options.
 
 On Android 10, browser calls use a USB tunnel instead. `phoneapi helper` sets that up.
 
-To pair Wireless Debugging from the phone (Android 11+), tap "Pair wireless debugging" in the app. It opens Developer options and watches mDNS for this phone's pairing service. When the system "Pair device with pairing code" dialog opens, a heads-up notification asks for the code inline. The dialog has to stay in front: Android closes the pairing port when it is dismissed, including when you switch apps. On Android 10 that row is hidden.
+To pair Wireless Debugging from the phone (Android 11+), tap the Wireless debugging row in the app while it says "Not set up yet". It opens Developer options and puts a notification in the shade that takes the code inline. It stays there for 5 minutes. When mDNS sees this phone's pairing service, which means the system "Pair device with pairing code" dialog is open, the notification drops down over the dialog. If it doesn't drop down, read the code, pull down the shade, and type the code there. Do Not Disturb can hide the notification completely, so the app warns if it is on. Turn it off while pairing. The dialog has to stay in front: Android closes the pairing port when it is dismissed, including when you switch apps. On Android 10 that row is hidden.
 
 Snapshots, injected input, screenshots, logcat, browser routes, and streams need the helper. App launch and wake still run without it, with limited fallbacks. See [api.md](api.md) for which routes require the helper or the browser scope.
 

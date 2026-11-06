@@ -41,12 +41,16 @@ class ListenerService : Service() {
     }
 
     private fun notification() = run {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "PhoneAPI", NotificationManager.IMPORTANCE_LOW)
+        // Creating it every time renames the channel on an existing install. The user's settings
+        // for the channel stay as they are.
+        getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL,
+                    "Keeps PhoneAPI running",
+                    NotificationManager.IMPORTANCE_LOW,
+                )
             )
-        }
         val open =
             PendingIntent.getActivity(
                 this,
