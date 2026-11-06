@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
-import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
@@ -26,8 +25,8 @@ import net.die.phoneapi.model.LaunchRequest
 /**
  * Launching, stopping, clearing and deep-linking apps. Installing is out of scope.
  *
- * Launching goes through the platform, so it works without the helper; intents, `stop` and `clear`
- * need the helper's shell UID (`apps.manage` in the capability map).
+ * Launching goes through the helper's shell when it runs, and through the platform without it;
+ * intents, `stop` and `clear` need the helper's shell UID (`apps.manage` in the capability map).
  */
 class AppsServiceImpl(
     private val context: Context,
@@ -50,18 +49,24 @@ class AppsServiceImpl(
                 .sortedBy { it.label.lowercase() }
         }
 
+    /**
+     * Android drops this app's background activity starts without an error, so the launch goes
+     * through the helper's shell when it runs, as [intent] does. Without the helper it is this
+     * app's own start, which works only while PhoneAPI was on screen in the last few seconds.
+     */
     override suspend fun launch(packageName: String, request: LaunchRequest): ActionResult {
         val woke = prepare(true)
         val intent = launchIntent(packageName, request)
-        start(intent)
-        val arrived = foreground(intent, packageName, request.wait)
+        val viaShell = shell.isAvailable
+        if (viaShell) startFromShell(intent) else start(intent)
+        val arrived = !request.wait || awaitForeground(packageName)
         invalidateSnapshots()
         return ActionResult(
             ok = arrived,
-            backend = "activity",
+            backend = if (viaShell) "shell" else "activity",
             woke = woke,
             seq = seq.value,
-            message = if (arrived) null else notForeground(intent, packageName),
+            message = if (arrived) null else notForeground(intent, packageName, viaShell),
         )
     }
 
@@ -171,23 +176,21 @@ class AppsServiceImpl(
         }
     }
 
-    private suspend fun foreground(intent: Intent, packageName: String, wait: Boolean): Boolean {
-        if (!wait) return true
-        if (awaitForeground(packageName)) return true
-        if (!startFromShell(intent)) return false
-        return awaitForeground(packageName)
+    /** Starts [intent] with the helper's `am start`, which may start activities. */
+    private suspend fun startFromShell(intent: Intent) {
+        val request = launchRequest(intent)
+        val started = parseAmStart(shell.exec(amStartArgs(request), AM_START_TIMEOUT_MS))
+        started.failure?.let { throw intentFailed(request, it, started.message.orEmpty()) }
     }
 
-    /** Background activity starts are blocked. The helper's shell is allowed to start the app. */
-    private suspend fun startFromShell(intent: Intent): Boolean {
-        val component = intent.component?.flattenToShortString() ?: return false
-        return try {
-            shell.exec(listOf("am", "start", "-n", component, "-f", intent.flags.toString())).ok
-        } catch (e: ApiException) {
-            Log.i(TAG, "Could not start $component from the helper", e)
-            false
-        }
-    }
+    /** [intent], a launch intent with its component set, as the helper's `am start` takes it. */
+    private fun launchRequest(intent: Intent): IntentRequest =
+        IntentRequest(
+            action = intent.action ?: Intent.ACTION_MAIN,
+            component = intent.component?.flattenToShortString(),
+            categories = intent.categories?.toList().orEmpty(),
+            flags = intent.flags,
+        )
 
     private suspend fun awaitForeground(packageName: String): Boolean =
         awaitDeviceState(state, bus, FOREGROUND_WAIT_MS) {
@@ -237,14 +240,14 @@ class AppsServiceImpl(
             null
         }
 
-    private fun notForeground(intent: Intent, packageName: String): String {
+    private fun notForeground(intent: Intent, packageName: String, viaShell: Boolean): String {
         val started =
             "Started ${describe(intent)}, but $packageName did not come to the foreground."
-        return if (shell.isAvailable) {
-            "$started The helper's am start did not bring it forward either."
+        return if (viaShell) {
+            started
         } else {
-            "$started The shell helper is not running, so PhoneAPI could not retry with am " +
-                "start. Android blocks this app from starting activities in the background."
+            "$started The shell helper is not running, and Android blocks this app from " +
+                "starting activities in the background. Start the helper and try again."
         }
     }
 
@@ -255,7 +258,6 @@ class AppsServiceImpl(
         if (activity.startsWith(".")) packageName + activity else activity
 
     private companion object {
-        const val TAG = "PhoneApi"
         const val FOREGROUND_WAIT_MS = 5_000L
         // am start -W waits for the first frame, and a cold start can take several seconds.
         const val AM_START_TIMEOUT_MS = 20_000L
