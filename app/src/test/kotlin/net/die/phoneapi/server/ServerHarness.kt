@@ -304,7 +304,14 @@ internal class FakeApi(
             viewerText = { "http://127.0.0.1:1/viewer?access_token=TOKEN" },
             logcat = LogcatFeed { _ -> emptyFlow() },
             lease = lease,
-            tabs = Tabs(browser, lease, inFront = { false }, store = tabStore),
+            tabs =
+                Tabs(
+                    browser,
+                    lease,
+                    inFront = { false },
+                    store = tabStore,
+                    scope = CoroutineScope(Dispatchers.Default),
+                ),
             foreground = foreground,
         )
 }
