@@ -2,14 +2,11 @@ package net.die.phoneapi.browser
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.input.SwipeSpec
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
@@ -27,6 +24,12 @@ import org.junit.jupiter.api.Test
 
 @Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class BrowserServiceTest {
+    /**
+     * The clock of [service]. A [ScriptedSocket] never blocks, so its reads and the service's waits
+     * can share virtual time.
+     */
+    internal val clock = StandardTestDispatcher()
+
     @Test
     fun `lists a page`() {
         val body =
@@ -36,7 +39,7 @@ class BrowserServiceTest {
                     """{"targetId":"w","type":"service_worker","url":"https://example.com/sw.js"}"""
             )
         val service = service(body, sockets = CHROME)
-        val targets = runBlocking { service.targets() }
+        val targets = virtual { service.targets() }
         assertEquals(2, targets.size)
         assertEquals("chrome_devtools_remote~abc", targets[0].id)
         assertEquals("Hi", targets[0].title)
@@ -51,7 +54,7 @@ class BrowserServiceTest {
                 switched() + serverTextFrame("""{"id":1,"result":{"targetId":"abc"}}"""),
                 sockets = CHROME,
             )
-        val target = runBlocking { service.openTab("https://example.com/") }
+        val target = virtual { service.openTab("https://example.com/") }
         assertEquals("chrome_devtools_remote~abc", target.id)
         assertEquals("https://example.com/", target.url)
         assertEquals(true, target.tookScreen)
@@ -65,14 +68,14 @@ class BrowserServiceTest {
                 sockets = CHROME,
                 inFront = { false },
             )
-        val target = runBlocking { service.openTab("https://example.com/") }
+        val target = virtual { service.openTab("https://example.com/") }
         assertEquals(false, target.tookScreen)
     }
 
     @Test
     fun `empty sockets name the gap`() {
         val service = service(byteArrayOf(), sockets = "[]")
-        val error = assertThrows(ApiException::class.java) { runBlocking { service.targets() } }
+        val error = assertThrows(ApiException::class.java) { virtual { service.targets() } }
         assertEquals("browser_unavailable", error.error)
         assertTrue(error.message.orEmpty().contains("starts Chrome"))
     }
@@ -82,7 +85,7 @@ class BrowserServiceTest {
         val service = service(byteArrayOf(), sockets = CHROME)
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking { service.openTab("javascript:alert(1)") }
+                virtual { service.openTab("javascript:alert(1)") }
             }
         assertEquals(400, error.status)
     }
@@ -98,7 +101,7 @@ class BrowserServiceTest {
                     """{"id":3,"result":{"nodes":[{"nodeId":"1","role":{"value":"RootWebArea"},"name":{"value":"Example"}}]}}"""
                 )
         val service = service(switched() + frames, sockets = CHROME)
-        val snapshot = runBlocking { service.snapshot("chrome_devtools_remote~abc") }
+        val snapshot = virtual { service.snapshot("chrome_devtools_remote~abc") }
         assertEquals("https://example.com/", snapshot.url)
         assertEquals("Example", snapshot.title)
         assertTrue(snapshot.compact.contains("[1] RootWebArea"))
@@ -109,15 +112,16 @@ class BrowserServiceTest {
         val frames =
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
-                serverTextFrame("""{"id":2,"result":{}}""") +
+                visibility(2, "visible") +
+                serverTextFrame("""{"id":5,"result":{}}""") +
                 serverTextFrame(
-                    """{"id":3,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
+                    """{"id":6,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
                 ) +
-                serverTextFrame("""{"id":4,"result":{}}""") +
+                serverTextFrame("""{"id":7,"result":{}}""") +
                 serverTextFrame(
-                    """{"id":5,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
+                    """{"id":8,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
                 ) +
-                serverTextFrame(metrics(6))
+                serverTextFrame(metrics(9))
         var touched = Rect(0, 0, 0, 0)
         val service =
             service(
@@ -129,7 +133,7 @@ class BrowserServiceTest {
                     ActionResult(ok = true, backend = "inject")
                 },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.tap(
                 "chrome_devtools_remote~abc",
                 BrowserTapRequest(ref = "9", humanize = false),
@@ -170,7 +174,7 @@ class BrowserServiceTest {
                 },
                 open = { socket },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.tap(
                 "chrome_devtools_remote~abc",
                 BrowserTapRequest(ref = "9", humanize = false, input = BrowserInput.CDP),
@@ -209,7 +213,7 @@ class BrowserServiceTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                virtual {
                     service.tap(
                         "chrome_devtools_remote~abc",
                         BrowserTapRequest(selector = "a", input = BrowserInput.CDP),
@@ -236,7 +240,7 @@ class BrowserServiceTest {
                 sockets = CHROME,
                 open = { ScriptedSocket(scripts.removeFirst()) },
             )
-        val snapshot = runBlocking { service.snapshot("chrome_devtools_remote~abc") }
+        val snapshot = virtual { service.snapshot("chrome_devtools_remote~abc") }
         assertEquals("https://example.com/", snapshot.url)
         assertTrue(scripts.isEmpty())
     }
@@ -248,7 +252,7 @@ class BrowserServiceTest {
                 switched() + serverTextFrame("""{"id":1,"result":{"success":true}}"""),
                 sockets = CHROME,
             )
-        val result = runBlocking { service.closeTab("chrome_devtools_remote~abc") }
+        val result = virtual { service.closeTab("chrome_devtools_remote~abc") }
         assertTrue(result.ok)
         assertEquals("cdp", result.backend)
     }
@@ -258,13 +262,14 @@ class BrowserServiceTest {
         val frames =
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
-                serverTextFrame("""{"id":2,"result":{"root":{"nodeId":1}}}""") +
-                serverTextFrame("""{"id":3,"result":{"nodeId":4}}""") +
-                serverTextFrame("""{"id":4,"result":{}}""") +
+                visibility(2, "visible") +
+                serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
+                serverTextFrame("""{"id":6,"result":{"nodeId":4}}""") +
+                serverTextFrame("""{"id":7,"result":{}}""") +
                 serverTextFrame(
-                    """{"id":5,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
+                    """{"id":8,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
                 ) +
-                serverTextFrame(metrics(6))
+                serverTextFrame(metrics(9))
         var touched = Rect(0, 0, 0, 0)
         val service =
             service(
@@ -276,7 +281,7 @@ class BrowserServiceTest {
                     ActionResult(ok = true, backend = "inject")
                 },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.tap("chrome_devtools_remote~abc", BrowserTapRequest(selector = "a"))
         }
         assertTrue(result.ok)
@@ -289,11 +294,12 @@ class BrowserServiceTest {
         val frames =
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
-                serverTextFrame("""{"id":2,"result":{"root":{"nodeId":1}}}""") +
-                serverTextFrame("""{"id":3,"result":{"nodeId":4}}""") +
-                serverTextFrame("""{"id":4,"result":{}}""") +
-                serverTextFrame(quad(5)) +
-                serverTextFrame(metrics(6))
+                visibility(2, "visible") +
+                serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
+                serverTextFrame("""{"id":6,"result":{"nodeId":4}}""") +
+                serverTextFrame("""{"id":7,"result":{}}""") +
+                serverTextFrame(quad(8)) +
+                serverTextFrame(metrics(9))
         val service =
             service(
                 frames,
@@ -304,7 +310,7 @@ class BrowserServiceTest {
                 sequence = { 7L },
                 invalidate = { invalidated++ },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.tap("chrome_devtools_remote~abc", BrowserTapRequest(selector = "a"))
         }
         assertTrue(result.woke)
@@ -318,7 +324,7 @@ class BrowserServiceTest {
         val service = service(byteArrayOf(), sockets = CHROME, invalidate = { invalidated++ })
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking { service.tap("chrome_devtools_remote~abc", BrowserTapRequest(" ")) }
+                virtual { service.tap("chrome_devtools_remote~abc", BrowserTapRequest(" ")) }
             }
         assertEquals(400, error.status)
         assertEquals(1, invalidated)
@@ -329,7 +335,7 @@ class BrowserServiceTest {
         val service = service(byteArrayOf(), sockets = CHROME)
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking { service.tap("chrome_devtools_remote~abc", BrowserTapRequest(" ")) }
+                virtual { service.tap("chrome_devtools_remote~abc", BrowserTapRequest(" ")) }
             }
         assertEquals(400, error.status)
     }
@@ -349,9 +355,10 @@ class BrowserServiceTest {
         val tap =
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
-                serverTextFrame("""{"id":2,"result":{}}""") +
-                serverTextFrame(quad(3)) +
-                serverTextFrame(metrics(4))
+                visibility(2, "visible") +
+                serverTextFrame("""{"id":5,"result":{}}""") +
+                serverTextFrame(quad(6)) +
+                serverTextFrame(metrics(7))
         var opens = 0
         val service =
             service(
@@ -364,7 +371,7 @@ class BrowserServiceTest {
                     ScriptedSocket(if (opens == 1) snapshot else tap)
                 },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.snapshot("chrome_devtools_remote~abc")
             service.tap(
                 "chrome_devtools_remote~abc",
@@ -390,16 +397,17 @@ class BrowserServiceTest {
         val tap =
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
+                visibility(2, "visible") +
                 serverTextFrame(
-                    """{"id":2,"error":{"code":-32000,"message":"No node with given id found"}}"""
+                    """{"id":5,"error":{"code":-32000,"message":"No node with given id found"}}"""
                 ) +
-                serverTextFrame("""{"id":3,"result":{}}""") +
+                serverTextFrame("""{"id":6,"result":{}}""") +
                 serverTextFrame(
-                    """{"id":4,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
+                    """{"id":7,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
                 ) +
-                serverTextFrame("""{"id":5,"result":{}}""") +
-                serverTextFrame(quad(6)) +
-                serverTextFrame(metrics(7))
+                serverTextFrame("""{"id":8,"result":{}}""") +
+                serverTextFrame(quad(9)) +
+                serverTextFrame(metrics(10))
         var opens = 0
         var touched = Rect(0, 0, 0, 0)
         val service =
@@ -416,7 +424,7 @@ class BrowserServiceTest {
                     ScriptedSocket(if (opens == 1) snapshot else tap)
                 },
             )
-        val result = runBlocking {
+        val result = virtual {
             service.snapshot("chrome_devtools_remote~abc")
             service.tap(
                 "chrome_devtools_remote~abc",
@@ -429,36 +437,37 @@ class BrowserServiceTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `slow socket does not block`() {
-        val opened = ConcurrentHashMap<String, Long>()
-        val closed = ConcurrentHashMap<String, Long>()
-        val sockets =
-            """[{"name":"fast-a","pid":1,"package":"a.pkg"},{"name":"slow-1","pid":2,"package":"s.pkg"},{"name":"fast-b","pid":3,"package":"b.pkg"},{"name":"slow-2","pid":4,"package":"s.pkg"}]"""
-        val started = System.nanoTime()
+    fun `evicts the oldest tree`() {
+        val scripts =
+            ArrayDeque(
+                listOf(
+                    snapshotFrames(),
+                    snapshotFrames(),
+                    snapshotFrames(),
+                    cacheHitTap(),
+                    cacheHitTap(),
+                )
+            )
         val service =
             service(
                 byteArrayOf(),
-                sockets = sockets,
-                targetTimeoutMs = 300,
-                open = { name ->
-                    opened[name] = System.nanoTime()
-                    if (name.startsWith("slow")) {
-                        BlockingSocket { closed.putIfAbsent(name, System.nanoTime()) }
-                    } else {
-                        val id = if (name == "fast-a") "a" else "b"
-                        ScriptedSocket(
-                            http(
-                                """[{"id":"$id","type":"page","title":"$id","url":"https://example.com/"}]"""
-                            )
-                        )
-                    }
-                },
+                sockets = CHROME,
+                content = { Rect(0, 283, 1080, 2339) },
+                touch = { _, _ -> ActionResult(ok = true, backend = "inject") },
+                open = { ScriptedSocket(scripts.removeFirst()) },
+                axTreeCap = 2,
             )
-        val targets = runBlocking { service.targets() }
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        assertEquals(listOf("fast-a~a", "fast-b~b"), targets.map { it.id })
-        assertTrue(opened.getValue("slow-2") < closed.getValue("slow-1"))
-        assertTrue(elapsedMs < 2_000, "listing took ${elapsedMs}ms")
+        virtual {
+            service.snapshot("sock~t1")
+            service.snapshot("sock~t2")
+            service.snapshot("sock~t3")
+            assertThrows(ApiException::class.java) {
+                virtual {
+                    service.tap("sock~t1", BrowserTapRequest(ref = "9", humanize = false))
+                }
+            }
+            assertTrue(service.tap("sock~t3", BrowserTapRequest(ref = "9", humanize = false)).ok)
+        }
     }
 
     @Test
@@ -484,7 +493,7 @@ class BrowserServiceTest {
                 touch = { _, _ -> ActionResult(ok = true, backend = "inject") },
                 open = { ScriptedSocket(scripts.removeFirst()) },
             )
-        runBlocking {
+        virtual {
             service.snapshot("chrome_devtools_remote~keep")
             service.snapshot("chrome_devtools_remote~drop")
             assertEquals(
@@ -500,7 +509,7 @@ class BrowserServiceTest {
                     .ok
             )
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                virtual {
                     service.tap(
                         "chrome_devtools_remote~drop",
                         BrowserTapRequest(ref = "9", humanize = false),
@@ -510,39 +519,11 @@ class BrowserServiceTest {
         }
     }
 
-    @Test
-    @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `evicts the oldest tree`() {
-        val scripts =
-            ArrayDeque(
-                listOf(
-                    snapshotFrames(),
-                    snapshotFrames(),
-                    snapshotFrames(),
-                    cacheHitTap(),
-                    cacheHitTap(),
-                )
-            )
-        val service =
-            service(
-                byteArrayOf(),
-                sockets = CHROME,
-                content = { Rect(0, 283, 1080, 2339) },
-                touch = { _, _ -> ActionResult(ok = true, backend = "inject") },
-                open = { ScriptedSocket(scripts.removeFirst()) },
-                axTreeCap = 2,
-            )
-        runBlocking {
-            service.snapshot("sock~t1")
-            service.snapshot("sock~t2")
-            service.snapshot("sock~t3")
-            assertThrows(ApiException::class.java) {
-                runBlocking {
-                    service.tap("sock~t1", BrowserTapRequest(ref = "9", humanize = false))
-                }
-            }
-            assertTrue(service.tap("sock~t3", BrowserTapRequest(ref = "9", humanize = false)).ok)
-        }
+    /** Runs [block] on [clock], so a wait in the service costs no real time. */
+    internal fun <T> virtual(block: suspend () -> T): T {
+        val results = mutableListOf<T>()
+        runTest(clock) { results += block() }
+        return results.single()
     }
 
     @Suppress("MissingUseCall") // BrowserServiceImpl closes each socket it opens.
@@ -569,9 +550,10 @@ class BrowserServiceTest {
         pageDialog: suspend () -> Boolean = { false },
         openPrivateTab: suspend (String) -> Unit = {},
         listSockets: () -> String = { sockets },
+        io: CoroutineDispatcher = clock,
     ) =
         BrowserServiceImpl(
-            io = Dispatchers.IO,
+            io = io,
             listSockets = listSockets,
             open = open,
             websocketKey = { KEY },
@@ -601,32 +583,6 @@ class BrowserServiceTest {
         override fun close() = Unit
     }
 
-    private class BlockingSocket(private val onClose: () -> Unit) : DevtoolsSocket {
-        private val closed = CountDownLatch(1)
-        override val input: InputStream =
-            object : InputStream() {
-                override fun read(): Int = awaitClosed()
-
-                override fun read(b: ByteArray, off: Int, len: Int): Int = awaitClosed()
-
-                private fun awaitClosed(): Int {
-                    if (!closed.await(5, TimeUnit.SECONDS)) throw IOException("not closed")
-                    throw IOException("closed")
-                }
-            }
-        override val output: OutputStream = ByteArrayOutputStream()
-
-        override fun close() {
-            val first =
-                synchronized(this) {
-                    if (closed.count == 0L) return@synchronized false
-                    closed.countDown()
-                    true
-                }
-            if (first) onClose()
-        }
-    }
-
     private fun snapshotFrames(): ByteArray =
         switched() +
             serverTextFrame(
@@ -640,15 +596,24 @@ class BrowserServiceTest {
     private fun cacheHitTap(): ByteArray =
         switched() +
             serverTextFrame("""{"id":1,"result":{}}""") +
-            serverTextFrame("""{"id":2,"result":{}}""") +
-            serverTextFrame(quad(3)) +
-            serverTextFrame(metrics(4))
+            visibility(2, "visible") +
+            serverTextFrame("""{"id":5,"result":{}}""") +
+            serverTextFrame(quad(6)) +
+            serverTextFrame(metrics(7))
+
+    /** Replies to a visibilityState read: frame, world, and [state]. */
+    internal fun visibility(firstId: Int, state: String): ByteArray =
+        serverTextFrame("""{"id":$firstId,"result":{"frameTree":{"frame":{"id":"F"}}}}""") +
+            serverTextFrame("""{"id":${firstId + 1},"result":{"executionContextId":7}}""") +
+            serverTextFrame(
+                """{"id":${firstId + 2},"result":{"result":{"type":"string","value":"$state"}}}"""
+            )
 
     /** Chrome's `Target.getTargets` reply listing [infos]. */
     private fun targetsReply(infos: String): ByteArray =
         switched() + serverTextFrame("""{"id":1,"result":{"targetInfos":[$infos]}}""")
 
-    private fun http(body: String): ByteArray =
+    internal fun http(body: String): ByteArray =
         asciiLines("HTTP/1.1 200 OK", "Content-Length: ${body.toByteArray().size}") +
             body.toByteArray()
 

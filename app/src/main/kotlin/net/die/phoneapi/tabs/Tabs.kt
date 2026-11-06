@@ -8,7 +8,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.die.phoneapi.browser.CHROME_PACKAGE
 import net.die.phoneapi.browser.CHROME_SOCKET
+import net.die.phoneapi.browser.FRONT_MS
 import net.die.phoneapi.browser.parseBrowserTargetId
+import net.die.phoneapi.browser.settled
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.lease.Holder
@@ -373,8 +375,7 @@ class Tabs(
         if (others.none { base.showing(it) }) return true
         val view = front ?: placeholderTab()
         base.activate(view)
-        delay(SELECT_MS)
-        return base.showing(view)
+        return settled(FRONT_MS) { base.showing(view) }
     }
 
     /** The placeholder, opened again if it was closed. */
@@ -519,9 +520,6 @@ class Tabs(
             "Another session has incognito tabs open, and Chrome has one incognito profile, so " +
                 "this tab shares their cookies and site data until they close. A site can tie " +
                 "the two sessions' visits together."
-
-        /** How long Chrome takes to switch tabs before this checks. */
-        private const val SELECT_MS = 200L
 
         /** When to look for a tab Chrome opened for an intent, each after the last. */
         private val CLAIM_CHECKS_MS = listOf(0L, 500L, 1_500L)

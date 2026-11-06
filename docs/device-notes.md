@@ -13,6 +13,7 @@ The emulators run Android 16 and Android 10 with Chrome 133. The emulator's Chro
 - A popup from a tab not on screen becomes the tab Chrome shows while Chrome is in front, with no change of foreground app, on the emulator and on the phone.
 - `/json/list` does not report `openerId`. On the emulator `Target.getTargets` reported it for `window.open` and `target=_blank` popups, with the opener on screen, behind another tab, and with Chrome in the background. The phone reported it too.
 - Page commands work on each page's own DevTools endpoint. On the phone, attaching through the browser connection got no answers.
+- `Page.bringToFront` answers before the switch is done, and nothing announces the end of it, so PhoneAPI polls `document.visibilityState`. On the Android 10 and Android 16 emulators, on 2026-11-05, a `touch` tap on a hidden tab took 70 to 100 ms longer than one on the tab already showing.
 - On the Android 16 emulator, a tab opened while Chrome is in the background becomes Chrome's selected tab. Chrome selects it as it comes forward, even over a `Page.bringToFront` sent just before, which is why `show` checks that its tab is still showing and tries again. Opening the tab did not bring Chrome forward.
 
 ### Launching apps from a tab
@@ -203,6 +204,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 
 ## Still to check on the phone
 
+- How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
 - That audio still starts on Android 11 with the helper's `getAttributionSource` override in place. Android 11 has no such method, so it is never called there.
 - That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
 - Whether a tab opened while Chrome is in the background becomes Chrome's selected tab, as it does on the Android 16 emulator.

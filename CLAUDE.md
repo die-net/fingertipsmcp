@@ -56,6 +56,7 @@ The agent is meant to use the phone the way its owner would. Many apps and sites
 
 - Fix the general cause, in the parser, the service, or the shared helper, rather than special-casing the one input, page, or device that broke.
 - An `if`, flag, retry, delay, or fallback added only to make one failure go away is not a fix. Find why it fails and fix that. If the root fix is out of reach (an OEM bug, a Chrome behavior), say so in the PR and in a comment at the workaround.
+- Never sleep a fixed time and assume something finished. After an action, wait for its event if there is one. If there is none, poll a real check up to a deadline, and handle the deadline passing. A fixed delay is fine only when the delay is itself the behavior, such as humanized input timing, retry backoff, or a poll interval.
 - A failing check is never made to pass by weakening it: no new `@Disabled`, `assumeTrue`, deleted or loosened assertion, raised timeout or threshold, caught-and-ignored exception, `@Suppress`, or detekt baseline entry, unless the owner agreed to that specific change.
 - For a detekt or lint finding, change the code. A `@Suppress` is for code that is correct as written. It names the rule and carries a trailing comment saying why, as the `MissingUseCall` ones do ("The caller closes the socket.").
 - A new field, flag, setting, route, or MCP tool is added only when no existing one can carry it. Prefer deleting or generalizing code to adding it.

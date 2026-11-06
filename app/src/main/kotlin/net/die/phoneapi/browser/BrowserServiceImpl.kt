@@ -596,8 +596,7 @@ internal class BrowserServiceImpl(
                 var front = pkg == null || inFront(pkg)
                 if (!front) {
                     showPackage(pkg.orEmpty())
-                    delay(APPEAR_MS)
-                    front = inFront(pkg.orEmpty())
+                    front = settled(APPEAR_MS) { inFront(pkg.orEmpty()) }
                 }
                 // With the app behind, visibility says nothing, so there is no point trying again.
                 bringForward(cdp, attempts = if (front) SHOW_ATTEMPTS else 1)
@@ -698,7 +697,7 @@ internal class BrowserServiceImpl(
         } catch (e: ApiException) {
             if (e.error != "content_unavailable" || pkg.isNullOrEmpty()) throw e
             showPackage(pkg)
-            delay(APPEAR_MS)
+            settled(APPEAR_MS) { hasContent { contentBounds(pkg) } }
             return contentBounds(pkg)
         }
     }
@@ -757,7 +756,7 @@ internal class BrowserServiceImpl(
         const val TARGET_LIST_MS = MAX_CONSOLE_MS
         const val PAGE_ATTEMPTS = 4
         const val PAGE_RETRY_MS = 200L
-        const val APPEAR_MS = 500L
+        const val APPEAR_MS = 5_000L
         const val SHOWING_MS = 2_000L
         const val SHOW_ATTEMPTS = 3
         const val ERROR_SNIPPET = 80
@@ -881,3 +880,13 @@ internal data class FrameInfo(
     val parentId: String? = null,
     val loaderId: String? = null,
 )
+
+/** Whether [bounds] finds the app's content, which is missing until its window is up. */
+private suspend fun hasContent(bounds: suspend () -> Rect): Boolean =
+    try {
+        bounds()
+        true
+    } catch (e: ApiException) {
+        if (e.error != "content_unavailable") throw e
+        false
+    }
