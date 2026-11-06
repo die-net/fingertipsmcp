@@ -75,7 +75,7 @@ class TextTyper(
         val typed = typeKeyboard(request, points)
         if (typed != null) return typed
         if (request.mode == TextMode.KEYBOARD) {
-            throw ApiException(409, "no_keyboard", "No on-screen keyboard keys were found")
+            throw noKeyboard()
         }
         return tree
             .setText(request.text, request.clear, request.submit)
@@ -118,29 +118,7 @@ class TextTyper(
     }
 
     private suspend fun typeKey(c: Char, points: MutableList<Point>) {
-        val tried = HashSet<String>()
-        repeat(MAX_KEY_ATTEMPTS) {
-            val keys = keys()
-            val key =
-                when (c) {
-                    ' ' -> KeyMatcher.space(keys)
-                    '\n' -> KeyMatcher.action(keys)
-                    else -> KeyMatcher.forChar(keys, c)
-                }
-            if (key != null) {
-                tapKey(key, points)
-                return
-            }
-            val modifier =
-                KeyMatcher.modifierFor(keys, c, tried) ?: throw unsupportedChars(setOf(c))
-            tried += modifier.label
-            tapKey(modifier, points)
-            // A keyboard that never redraws is left to the next attempt, which tries another key.
-            awaitSteadyKeys(::keys, KEYBOARD_WAIT_MS) { now ->
-                KeyMatcher.redrawn(keys, now, modifier, c)
-            }
-        }
-        throw unsupportedChars(setOf(c))
+        pressKeyFor(c, ::keys) { tapKey(it, points) }
     }
 
     private suspend fun clearWithKeyboard(points: MutableList<Point>) {
@@ -202,21 +180,11 @@ class TextTyper(
     private fun gestureCancelled() =
         ApiException(409, "gesture_cancelled", "The system cancelled the touch")
 
-    private fun unsupportedChars(chars: Set<Char>) =
-        ApiException(
-            422,
-            "unsupported_char",
-            "Can't type ${chars.joinToString(" ") { "'$it'" }} on the on-screen keyboard; " +
-                "try mode=setText or mode=keyevent",
-        )
-
     private fun TreeKey.asKey() = ImeKey(label, id, bounds)
 
     private companion object {
         const val MAX_TEXT = 10_000
         const val MAX_DELAY_MS = 5_000L
-        const val MAX_KEY_ATTEMPTS = 5
-        const val KEYBOARD_WAIT_MS = 1_000L
         const val POLL_MS = 50L
         const val FOCUS_WAIT_MS = 1_000L
         const val IME_WAIT_MS = 1_500L
@@ -224,15 +192,74 @@ class TextTyper(
 }
 
 /**
+ * Taps the key for [c], pressing shift or a page key first when it doesn't show. A read can find no
+ * keys while the keyboard is still up, because Android can drop its window from the accessibility
+ * list for a moment. So [c] is refused only once the keys have held still without it.
+ */
+internal suspend fun pressKeyFor(
+    c: Char,
+    read: () -> List<ImeKey>,
+    tap: suspend (ImeKey) -> Unit,
+) {
+    val tried = HashSet<String>()
+    repeat(MAX_KEY_ATTEMPTS) {
+        val keys = read()
+        val key = keyFor(keys, c)
+        if (key != null) {
+            tap(key)
+            return
+        }
+        val modifier = KeyMatcher.modifierFor(keys, c, tried)
+        if (modifier == null) {
+            awaitOtherKeys(keys, c, read)
+        } else {
+            tried += modifier.label
+            tap(modifier)
+            // A keyboard that never redraws is left to the next attempt, which tries another key.
+            awaitSteadyKeys(read, KEYBOARD_WAIT_MS) { now ->
+                KeyMatcher.redrawn(keys, now, modifier, c)
+            }
+        }
+    }
+    throw unsupportedChars(setOf(c))
+}
+
+private fun keyFor(keys: List<ImeKey>, c: Char): ImeKey? =
+    when (c) {
+        ' ' -> KeyMatcher.space(keys)
+        '\n' -> KeyMatcher.action(keys)
+        else -> KeyMatcher.forChar(keys, c)
+    }
+
+/** Waits for keys other than [keys], and refuses [c] if they hold still instead. */
+private suspend fun awaitOtherKeys(keys: List<ImeKey>, c: Char, read: () -> List<ImeKey>) {
+    val waitMs = if (keys.isEmpty()) KEYS_BACK_WAIT_MS else KEYBOARD_WAIT_MS
+    if (!awaitSteadyKeys(read, waitMs) { now -> now != keys }) {
+        throw if (keys.isEmpty()) noKeyboard() else unsupportedChars(setOf(c))
+    }
+}
+
+private fun noKeyboard() = ApiException(409, "no_keyboard", "No on-screen keyboard keys were found")
+
+private fun unsupportedChars(chars: Set<Char>) =
+    ApiException(
+        422,
+        "unsupported_char",
+        "Can't type ${chars.joinToString(" ") { "'$it'" }} on the on-screen keyboard; " +
+            "try mode=setText or mode=keyevent",
+    )
+
+/**
  * Selects the focused field's text and deletes it until the field is empty. The keyboard hears of a
  * selection when it hears of it, so a delete can take only one character. What counts is that the
- * field ends up empty, which [select] reports. False if it never does.
+ * field ends up empty, which [select] reports. It gives null while it can't see the field, which
+ * says nothing about the text. False if the field never empties.
  */
-internal suspend fun clearField(select: () -> Int, delete: suspend () -> Unit): Boolean =
+internal suspend fun clearField(select: () -> Int?, delete: suspend () -> Unit): Boolean =
     settled(CLEAR_WAIT_MS) {
-        val empty = select() == 0
-        if (!empty) delete()
-        empty
+        val left = select()
+        if (left != null && left > 0) delete()
+        left == 0
     }
 
 /**
@@ -272,3 +299,6 @@ internal suspend fun awaitSteadyKeys(
 }
 
 private const val CLEAR_WAIT_MS = 3_000L
+private const val KEYBOARD_WAIT_MS = 1_000L
+private const val KEYS_BACK_WAIT_MS = 5_000L
+private const val MAX_KEY_ATTEMPTS = 5

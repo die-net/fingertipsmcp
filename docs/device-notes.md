@@ -193,8 +193,8 @@ Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web fie
 - On Android 10, labels change before the redraw ends. Tapping as soon as they changed lost or swapped a letter in 2 of 8 runs. Waiting until they hold still for one poll lost none in 16.
 - Read just after a letter, the keys can still show the shift that letter ended. Pressing shift then turns it back on, and pressing it again recovers. This happened in 1 of 8 runs on Android 16.
 - `findFocus(FOCUS_INPUT)` in Chrome returns a `FrameLayout`, not the web field. The field is a focused, editable node below it.
-- Final build: Android 10 typed wrong 0 of 8 and cleared wrong 0 of 8. Android 16 typed wrong 0 of 12, cleared wrong 1 of 12, and typed `ABCD` right 4 of 4. The old build on Android 16 typed wrong 5 of 6 and cleared wrong 2 of 6.
-- The one bad clear on Android 16 refused `n` with `unsupported_char` after the field had emptied. The cause wasn't found.
+- On Android 16, the keyboard's window can drop out of UiAutomation's window list for over a second while Gboard stays up, and `ImeTracker` logs no hide. It was seen about once in 15 clears, after a tap on the field that already had focus, with `CONTROLS_CHANGED` in the log. A shorter gap of about 0.4 s followed a `Delete`. In the gap, reads find no keys and no focused field. Treating that as an empty field skipped the clear.
+- Final build: Android 10 typed wrong 0 of 8 and cleared wrong 0 of 8. Android 16 typed wrong 0 of 8 and cleared wrong 0 of 8, and cleared wrong 0 of 32 in a loop that read the text back. The same loop was wrong 2 of 12 before the gaps were handled. The old build on Android 16 typed wrong 5 of 6 and cleared wrong 2 of 6.
 - On Android 16, `ui/find` still showed a web field's old text a second after `setText`, though the field had the new text. Android 10 showed the new text.
 - On Android 16, after the helper starts, `ui/find` stops finding a field on the first page once it is typed into, until the next page loads. The old build does this too.
 
