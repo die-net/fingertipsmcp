@@ -24,12 +24,11 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.SerializationException
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.model.ApiError
 import net.die.phoneapi.model.Scope
+import net.die.phoneapi.model.SessionArg
 import net.die.phoneapi.server.ServerServices
 import net.die.phoneapi.server.token
 
@@ -257,7 +256,12 @@ private suspend fun callTool(
     tool: McpTool,
     asked: CallToolRequest,
 ): CallToolResult {
-    val named = sessionArgument(tool, asked) ?: return tool.call(own, scopes, asked)
+    val named =
+        try {
+            sessionArgument(tool, asked) ?: return tool.call(own, scopes, asked)
+        } catch (e: SerializationException) {
+            return badArguments(e)
+        }
     val control = checkNotNull(own.sessions)
     val holder =
         if (named.isEmpty()) {
@@ -266,8 +270,8 @@ private suspend fun callTool(
             control.resolve(named) ?: return unknownSession()
         }
     val services = if (holder == own.holder) own else shared.forHolder(holder, control)
-    val request =
-        resolveInput(tool.name, withoutSession(asked), services.lease.holds(holder), scopes)
+    // The tool's own types ignore the session argument, as they ignore each other's fields.
+    val request = resolveInput(tool.name, asked, services.lease.holds(holder), scopes)
     val arguments = request.params.arguments
     val (screen, brief) = screenUse(tool.screen, arguments, services.browser)
     val current = services.lease.state.value.holder as? Holder.Session
@@ -293,16 +297,14 @@ private suspend fun callTool(
  */
 private fun sessionArgument(tool: McpTool, asked: CallToolRequest): String? {
     if (tool.name in SESSION_TOOLS) return null
-    val value = asked.params.arguments?.get(SESSION_ARGUMENT) as? JsonPrimitive
-    return value?.contentOrNull.orEmpty()
+    return asked.args<SessionArg>().session.orEmpty()
 }
 
-private fun withoutSession(asked: CallToolRequest): CallToolRequest {
-    val arguments = asked.params.arguments ?: return asked
-    if (SESSION_ARGUMENT !in arguments) return asked
-    val params = asked.params.copy(arguments = JsonObject(arguments - SESSION_ARGUMENT))
-    return asked.copy(params = params)
-}
+private fun badArguments(e: SerializationException) =
+    CallToolResult(
+        content = listOf(TextContent(text = "bad_request: ${e.message.orEmpty()}")),
+        isError = true,
+    )
 
 private fun sessionConflict(message: String) =
     CallToolResult(

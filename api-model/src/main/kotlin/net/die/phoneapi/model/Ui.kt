@@ -108,9 +108,12 @@ public data class NodeSelector(
 @Serializable
 public data class FindRequest(
     val selector: NodeSelector,
-    val limit: Int = 20,
-    val includeInvisible: Boolean = false,
+    @Doc("Most matches to return. Defaults to 20.") val limit: Int = 20,
+    @Doc("Also match nodes that are off screen or hidden.") val includeInvisible: Boolean = false,
     /** Mask secrets in the matches as [SnapshotOptions.redact] does, and count them. */
+    @Doc(
+        "Mask the text of password and one-time-code fields, and card numbers, as a snapshot does. redacted counts them. Defaults to true."
+    )
     val redact: Boolean = true,
 )
 

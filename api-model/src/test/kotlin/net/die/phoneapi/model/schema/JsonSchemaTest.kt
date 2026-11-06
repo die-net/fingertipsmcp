@@ -114,6 +114,27 @@ class JsonSchemaTest {
     }
 
     @Test
+    fun `merged classes share one object`() {
+        val schemas = JsonSchemas()
+        val schema =
+            schemas.merged(listOf(serializer<Named>().descriptor, serializer<Nest>().descriptor))
+        assertEquals(listOf("name", "box"), schema.properties().keys.toList())
+        assertEquals(listOf("name", "box"), schema.required())
+        assertEquals(
+            "What it is called.",
+            schema.properties()["name"]!!.jsonObject["description"]!!.jsonPrimitive.content,
+        )
+        assertTrue("Box" in schemas.definitions)
+        // One object holds both, and each decodes the fields it names.
+        val both = json.parseToJsonElement("""{"name":"n","box":{"color":"red"}}""")
+        assertEquals("n", json.decodeFromJsonElement(serializer<Named>(), both).name)
+        assertEquals(Color.RED, json.decodeFromJsonElement(serializer<Nest>(), both).box.color)
+        assertThrows<IllegalStateException> {
+            schemas.merged(listOf(serializer<Color>().descriptor))
+        }
+    }
+
+    @Test
     fun `lenient enums fold case`() {
         assertEquals(
             NodeState.PRESENT,
