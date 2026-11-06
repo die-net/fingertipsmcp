@@ -140,13 +140,13 @@ internal class CaptureLog(private val mainFrame: String) {
  * Records the JSON responses of tabs that asked for it, for `scope data`. Each capture holds a
  * DevTools session on its tab with the Network domain on, and Chrome buffers the bodies in the
  * page's renderer, within [TOTAL_BUFFER]. A capture ends when it is stopped, when its tab closes,
- * or after [idleMs] without a start or read, so a forgotten one does not keep costing the phone.
+ * or after [IDLE_MS] without a start or read, so a forgotten one does not keep costing the phone.
  */
 internal class NetworkCapture(
     private val scope: CoroutineScope,
     /** Opens a session on the tab with this id. */
     private val connect: suspend (String) -> PageLink,
-    private val idleMs: Long = IDLE_MS,
+    /** The time in ms, on the clock [scope]'s waits run on. */
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private class Capture(val link: PageLink, val log: CaptureLog) {
@@ -266,7 +266,7 @@ internal class NetworkCapture(
                     }
                 var open = true
                 while (open) {
-                    val left = capture.used + idleMs - now()
+                    val left = capture.used + IDLE_MS - now()
                     open =
                         left > 0 &&
                             withTimeoutOrNull(left) { capture.link.cdp.awaitClosed() } == null

@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import java.io.ByteArrayOutputStream
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.BrowserInput
 import net.die.phoneapi.model.BrowserKeyRequest
@@ -13,7 +12,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Whether reads and snapshots say a tab was drawn, and how show brings one forward. */
-@Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class BrowserShownTest {
     private val harness = BrowserServiceTest()
 
@@ -91,9 +89,8 @@ class BrowserShownTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `show brings the tab forward`() {
-        val shown = BrowserServiceTest.ScriptedSocket(harness.switched() + settled(firstId = 1))
-        val sockets =
-            ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(readFrames("visible"))))
+        val shown = harness.socket(harness.switched() + settled(firstId = 1))
+        val sockets = ArrayDeque(listOf(shown, harness.socket(readFrames("visible"))))
         var woke: Boolean? = null
         var launched = ""
         val service =
@@ -112,7 +109,7 @@ class BrowserShownTest {
         assertEquals("", launched)
         // Replies are queued before the commands, so the socket can close before the last
         // commands are written. bringToFront is the first, so it is always there.
-        val sent = sentMethods(shown)
+        val sent = shown.methods()
         assertEquals("Page.bringToFront", sent.first())
         assertEquals(1, sent.count { it == "Page.bringToFront" })
         assertEquals(true, result.shown)
@@ -121,9 +118,8 @@ class BrowserShownTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `show launches chrome`() {
-        val shown = BrowserServiceTest.ScriptedSocket(harness.switched() + settled(firstId = 1))
-        val sockets =
-            ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(snapshotFrames(null))))
+        val shown = harness.socket(harness.switched() + settled(firstId = 1))
+        val sockets = ArrayDeque(listOf(shown, harness.socket(snapshotFrames(null))))
         var asks = 0
         var launched = ""
         val service =
@@ -136,18 +132,15 @@ class BrowserShownTest {
             )
         harness.virtual { service.snapshot(TAB, BrowserSnapshotOptions(show = true)) }
         assertEquals("com.android.chrome", launched)
-        assertEquals("Page.bringToFront", sentMethods(shown).first())
+        assertEquals("Page.bringToFront", shown.methods().first())
     }
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `touch input shows the tab`() {
         // Chrome is behind another app, as after cleanup: touch launches it before the key.
-        val shown = BrowserServiceTest.ScriptedSocket(harness.switched() + settled(firstId = 1))
-        val keyed =
-            BrowserServiceTest.ScriptedSocket(
-                harness.switched() + empty(1) + harness.visibility(2, "visible")
-            )
+        val shown = harness.socket(harness.switched() + settled(firstId = 1))
+        val keyed = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
         val sockets = ArrayDeque(listOf(shown, keyed))
         var asks = 0
         val order = mutableListOf<String>()
@@ -167,14 +160,14 @@ class BrowserShownTest {
             service.key(TAB, BrowserKeyRequest(key = "ENTER", input = BrowserInput.TOUCH))
         }
         assertEquals(listOf("launch com.android.chrome", "key"), order)
-        assertEquals("Page.bringToFront", sentMethods(shown).first())
+        assertEquals("Page.bringToFront", shown.methods().first())
     }
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `show waits for a slow switch`() {
         val shown =
-            BrowserServiceTest.ScriptedSocket(
+            harness.socket(
                 harness.switched() +
                     empty(1) +
                     harness.visibility(firstId = 2, "hidden") +
@@ -183,8 +176,7 @@ class BrowserShownTest {
                     growthFrames(11) +
                     harness.visibility(firstId = 14, "visible")
             )
-        val sockets =
-            ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(readFrames("visible"))))
+        val sockets = ArrayDeque(listOf(shown, harness.socket(readFrames("visible"))))
         val service =
             harness.service(
                 byteArrayOf(),
@@ -193,7 +185,7 @@ class BrowserShownTest {
             )
         val result = harness.virtual { service.read(TAB, BrowserReadRequest(show = true)) }
         assertEquals(true, result.shown)
-        assertEquals(1, sentMethods(shown).count { it == "Page.bringToFront" })
+        assertEquals(1, shown.methods().count { it == "Page.bringToFront" })
     }
 
     @Test
@@ -201,7 +193,7 @@ class BrowserShownTest {
     fun `show tries again`() {
         // Chrome came forward showing another tab, so the first pick did not hold.
         val shown =
-            BrowserServiceTest.ScriptedSocket(
+            harness.socket(
                 harness.switched() +
                     empty(1) +
                     harness.visibility(firstId = 2, "visible") +
@@ -209,8 +201,7 @@ class BrowserShownTest {
                     harness.visibility(firstId = 8, "hidden") +
                     settled(firstId = 11)
             )
-        val sockets =
-            ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(readFrames("visible"))))
+        val sockets = ArrayDeque(listOf(shown, harness.socket(readFrames("visible"))))
         val service =
             harness.service(
                 byteArrayOf(),
@@ -272,36 +263,7 @@ class BrowserShownTest {
 
     private fun empty(id: Int): ByteArray = harness.serverTextFrame("""{"id":$id,"result":{}}""")
 
-    /** CDP methods the service sent on [socket], unmasking its WebSocket frames. */
-    private fun sentMethods(socket: BrowserServiceTest.ScriptedSocket): List<String> {
-        val bytes = (socket.output as ByteArrayOutputStream).toByteArray()
-        var at = String(bytes, Charsets.ISO_8859_1).indexOf("\r\n\r\n") + HEADER_END.length
-        val methods = mutableListOf<String>()
-        while (at + 2 <= bytes.size) {
-            var length = bytes[at + 1].toInt() and LENGTH_BITS
-            var header = 2
-            if (length == LENGTH_16) {
-                length = (bytes[at + 2].toUByte().toInt() shl 8) or bytes[at + 3].toUByte().toInt()
-                header = 4
-            }
-            val mask = bytes.copyOfRange(at + header, at + header + MASK_BYTES)
-            val start = at + header + MASK_BYTES
-            val payload =
-                ByteArray(length) { i ->
-                    (bytes[start + i].toInt() xor mask[i % MASK_BYTES].toInt()).toByte()
-                }
-            METHOD.find(payload.decodeToString())?.let { methods += it.groupValues[1] }
-            at = start + length
-        }
-        return methods
-    }
-
     private companion object {
         const val TAB = "chrome_devtools_remote~abc"
-        const val HEADER_END = "\r\n\r\n"
-        const val LENGTH_BITS = 0x7F
-        const val LENGTH_16 = 126
-        const val MASK_BYTES = 4
-        val METHOD = Regex(""""method":"([^"]+)"""")
     }
 }

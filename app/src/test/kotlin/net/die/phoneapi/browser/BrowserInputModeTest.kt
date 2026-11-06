@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Which input modes reach a page while Chrome is hidden, and how a stalled socket is reported. */
-@Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class BrowserInputModeTest {
     private val harness = BrowserServiceTest()
 
@@ -30,7 +29,7 @@ class BrowserInputModeTest {
                 sockets = BrowserServiceTest.CHROME,
                 open = {
                     opens++
-                    BrowserServiceTest.ScriptedSocket(byteArrayOf())
+                    harness.socket(byteArrayOf())
                 },
                 inFront = { pkg ->
                     asked = pkg
@@ -116,7 +115,7 @@ class BrowserInputModeTest {
                 sockets = BrowserServiceTest.CHROME,
                 open = {
                     opens++
-                    BrowserServiceTest.ScriptedSocket(byteArrayOf())
+                    harness.socket(byteArrayOf())
                 },
             )
         val error =
@@ -142,7 +141,7 @@ class BrowserInputModeTest {
             harness.service(
                 byteArrayOf(),
                 sockets = BrowserServiceTest.CHROME,
-                open = { BrowserServiceTest.ScriptedSocket(harness.switched(), timedOut = true) },
+                open = { harness.socket(harness.switched(), timedOut = true) },
             )
         val error =
             assertThrows(ApiException::class.java) {
@@ -163,7 +162,7 @@ class BrowserInputModeTest {
                 sockets = BrowserServiceTest.CHROME,
                 open = {
                     opens++
-                    BrowserServiceTest.ScriptedSocket(harness.switched(), timedOut = true)
+                    harness.socket(harness.switched(), timedOut = true)
                 },
                 pageDialog = { true },
             )

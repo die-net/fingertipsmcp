@@ -14,9 +14,13 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-@Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class PageInputTest {
     private val harness = BrowserServiceTest()
+
+    private companion object {
+        /** The read of visibilityState before a cdp touch. */
+        val SHOWING = listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate")
+    }
 
     @Test
     @Suppress("MissingUseCall") // The service closes the socket it opens.
@@ -29,6 +33,7 @@ class PageInputTest {
                 harness.serverTextFrame("""{"id":6,"result":{}}""") +
                 harness.serverTextFrame("""{"id":7,"result":{}}""")
         var swiped = false
+        val page = harness.socket(frames)
         val service =
             harness.service(
                 frames,
@@ -37,6 +42,7 @@ class PageInputTest {
                     swiped = true
                     ActionResult(ok = false, backend = "inject")
                 },
+                open = { page },
             )
         val result = harness.virtual {
             service.swipe(
@@ -55,6 +61,16 @@ class PageInputTest {
         assertFalse(swiped)
         assertEquals(100f, result.points.first().x, 0.01f)
         assertEquals(300f, result.points.last().x, 0.01f)
+        assertEquals(
+            SHOWING +
+                listOf(
+                    "Page.getLayoutMetrics",
+                    "Input.dispatchTouchEvent",
+                    "Input.dispatchTouchEvent",
+                    "Input.dispatchTouchEvent",
+                ),
+            page.methods(),
+        )
     }
 
     @Test
@@ -144,6 +160,7 @@ class PageInputTest {
                 harness.serverTextFrame("""{"id":1,"result":{}}""") +
                 harness.serverTextFrame("""{"id":2,"result":{}}""")
         var pressed = false
+        val page = harness.socket(frames)
         val service =
             harness.service(
                 frames,
@@ -152,6 +169,7 @@ class PageInputTest {
                     pressed = true
                     ActionResult(ok = false, backend = "inject")
                 },
+                open = { page },
             )
         val result = harness.virtual {
             service.key(
@@ -162,6 +180,7 @@ class PageInputTest {
         assertTrue(result.ok)
         assertEquals("cdp", result.backend)
         assertFalse(pressed)
+        assertEquals(listOf("Input.dispatchKeyEvent", "Input.dispatchKeyEvent"), page.methods())
     }
 
     @Test
@@ -184,6 +203,7 @@ class PageInputTest {
     fun `cdp text stays in the back`() {
         val frames = harness.switched() + harness.serverTextFrame("""{"id":1,"result":{}}""")
         var typed = false
+        val page = harness.socket(frames)
         val service =
             harness.service(
                 frames,
@@ -192,6 +212,7 @@ class PageInputTest {
                     typed = true
                     ActionResult(ok = false, backend = "inject")
                 },
+                open = { page },
             )
         val result = harness.virtual {
             service.text(
@@ -202,5 +223,6 @@ class PageInputTest {
         assertTrue(result.ok)
         assertEquals("cdp", result.backend)
         assertFalse(typed)
+        assertEquals(listOf("Input.insertText"), page.methods())
     }
 }

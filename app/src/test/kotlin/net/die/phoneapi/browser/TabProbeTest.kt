@@ -1,7 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -9,56 +7,62 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** How the probe tells an answering tab from an unloaded one and a frozen Chrome. */
-// Scripted sockets are read on a real dispatcher, and onPage closes each page socket.
-@Suppress("InjectDispatcher", "MissingUseCall")
+@Suppress("MissingUseCall") // onPage closes each page socket, and the probe its own.
 class TabProbeTest {
     private val harness = BrowserServiceTest()
+    private val clock = harness.clock
     private var browserReplies = true
 
     private fun probe() =
         TabProbe(
-            Dispatchers.IO,
+            clock,
             open = {
                 val reply = harness.serverTextFrame("""{"id":1,"result":{}}""")
-                StallingSocket(harness.switched() + if (browserReplies) reply else byteArrayOf())
+                harness.socket(harness.switched() + if (browserReplies) reply else byteArrayOf())
             },
             websocketKey = { BrowserServiceTest.KEY },
-            probeMs = 200,
-            reloadMs = 2_000,
         )
 
     @Test
     fun `live tab is left alone`() {
-        val page = StallingSocket(harness.switched() + empty(1))
+        val page = harness.socket(harness.switched() + empty(1))
         val reloaded = onPage(page) { probe().revive(it, CHROME_SOCKET, reading = true) }
         assertFalse(reloaded)
-        // The reply is queued ahead, so the call can finish and the session close before Ktor's
-        // writer sends Inspector.enable; check only that nothing else, such as a reload, went out.
-        assertTrue(page.methods().all { it == "Inspector.enable" }, page.methods().toString())
+        assertEquals(listOf("Inspector.enable"), page.methods())
     }
 
     @Test
     fun `unloaded tab reloads on read`() {
         // Chrome reports the crash before answering, then the reload, the isolated world, and the
-        // fresh readyState read in it. Replies are queued ahead, so later commands may not be
-        // written yet.
+        // fresh readyState read in it.
         val page =
-            StallingSocket(harness.switched() + crashed() + world(3) + value(5, "\"complete\""))
+            harness.socket(harness.switched() + crashed() + world(3) + value(5, "\"complete\""))
         val reloaded = onPage(page) { probe().revive(it, CHROME_SOCKET, reading = true) }
         assertTrue(reloaded)
+        assertEquals(
+            listOf(
+                "Inspector.enable",
+                "Page.reload",
+                "Page.getFrameTree",
+                "Page.createIsolatedWorld",
+                "Runtime.evaluate",
+            ),
+            page.methods(),
+        )
     }
 
     @Test
     fun `unloaded tab refuses input`() {
-        val page = StallingSocket(harness.switched() + crashed())
+        val page = harness.socket(harness.switched() + crashed())
         val error = onPage(page) { failure { probe().revive(it, CHROME_SOCKET, reading = false) } }
         assertEquals("tab_reloaded", error)
+        assertEquals(listOf("Inspector.enable", "Page.reload"), page.methods())
     }
 
     @Test
     fun `silent page with live browser`() {
         // The page does not answer, but Chrome does: not a crash, so the call goes ahead.
-        val page = StallingSocket(harness.switched())
+        val page = harness.socket(harness.switched())
         val reloaded = onPage(page) { probe().revive(it, CHROME_SOCKET, reading = true) }
         assertFalse(reloaded)
     }
@@ -66,7 +70,7 @@ class TabProbeTest {
     @Test
     fun `silent browser is frozen`() {
         browserReplies = false
-        val page = StallingSocket(harness.switched())
+        val page = harness.socket(harness.switched())
         val error = onPage(page) { failure { probe().revive(it, CHROME_SOCKET, reading = true) } }
         assertEquals("browser_frozen", error)
         assertFalse("Page.reload" in page.methods())
@@ -75,7 +79,7 @@ class TabProbeTest {
     @Test
     fun `running tab takes input`() {
         // The frame, an isolated world, then the page's message arriving.
-        val page = StallingSocket(harness.switched() + world() + value(3, "true"))
+        val page = harness.socket(harness.switched() + world() + value(3, "true"))
         assertEquals(
             "no error",
             onPage(page) { failure { probe().requireRunning(it, CHROME_SOCKET) } },
@@ -85,7 +89,7 @@ class TabProbeTest {
     @Test
     fun `frozen tab refuses input`() {
         // DevTools script runs in the isolated world, but the page's own message never arrives.
-        val page = StallingSocket(harness.switched() + world())
+        val page = harness.socket(harness.switched() + world())
         assertEquals(
             "tab_frozen",
             onPage(page) { failure { probe().requireRunning(it, CHROME_SOCKET) } },
@@ -95,7 +99,7 @@ class TabProbeTest {
     @Test
     fun `busy tab takes input`() {
         // A busy main thread answers no script at all, which is not a pause.
-        val page = StallingSocket(harness.switched())
+        val page = harness.socket(harness.switched())
         assertEquals(
             "no error",
             onPage(page) { failure { probe().requireRunning(it, CHROME_SOCKET) } },
@@ -104,24 +108,23 @@ class TabProbeTest {
 
     @Test
     fun `webviews are not probed`() {
-        val page = StallingSocket(harness.switched())
+        val page = harness.socket(harness.switched())
         val reloaded = onPage(page) { probe().revive(it, "webview_devtools_remote_1", true) }
         assertFalse(reloaded)
         assertEquals(emptyList<String>(), page.methods())
     }
 
-    private fun <T> onPage(page: StallingSocket, block: suspend (CdpSession) -> T): T =
-        runBlocking {
-            try {
-                CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
-                    .use { cdp ->
-                        cdp.open("/devtools/page/t")
-                        block(cdp)
-                    }
-            } finally {
-                page.close()
-            }
+    private fun <T> onPage(page: StallingSocket, block: suspend (CdpSession) -> T): T = clock.run {
+        try {
+            CdpSession(page.input, page.output, clock) { BrowserServiceTest.KEY }
+                .use { cdp ->
+                    cdp.open("/devtools/page/t")
+                    block(cdp)
+                }
+        } finally {
+            page.close()
         }
+    }
 
     private suspend fun failure(block: suspend () -> Unit): String =
         try {

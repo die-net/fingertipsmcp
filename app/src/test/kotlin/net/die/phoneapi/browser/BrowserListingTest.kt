@@ -11,7 +11,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -42,7 +41,7 @@ class BrowserListingTest {
                                 .also(held::add)
                         } else {
                             val id = if (name == "fast-a") "a" else "b"
-                            BrowserServiceTest.ScriptedSocket(
+                            harness.socket(
                                 harness.http(
                                     """[{"id":"$id","type":"page","title":"$id","url":"https://example.com/"}]"""
                                 )
@@ -62,28 +61,34 @@ class BrowserListingTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `stuck socket is closed in time`() =
-        runTest(harness.clock) {
-            val closed = AtomicBoolean(false)
-            val sockets = """[{"name":"stuck","pid":1,"package":"s.pkg"}]"""
-            val service =
-                harness.service(
-                    byteArrayOf(),
-                    sockets = sockets,
-                    io = Dispatchers.IO,
-                    open = { BlockingSocket { closed.set(true) } },
-                )
-            // Only the timeout can end this read, and virtual time brings it at once.
-            val error =
-                try {
-                    service.targets()
-                    null
-                } catch (e: ApiException) {
-                    e
-                }
-            assertEquals("DevTools did not answer in time", error?.message)
-            assertTrue(closed.get())
-        }
+    fun `stuck socket is closed in time`() = harness.virtual {
+        val closed = AtomicBoolean(false)
+        val sockets = """[{"name":"stuck","pid":1,"package":"s.pkg"}]"""
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = sockets,
+                open = {
+                    // A peer that never answers the request.
+                    object : StallingSocket(byteArrayOf(), harness.clock) {
+                        override fun close() {
+                            closed.set(true)
+                            super.close()
+                        }
+                    }
+                },
+            )
+        // Only the timeout can end this read, and virtual time brings it at once.
+        val error =
+            try {
+                service.targets()
+                null
+            } catch (e: ApiException) {
+                e
+            }
+        assertEquals("DevTools did not answer in time", error?.message)
+        assertTrue(closed.get())
+    }
 
     private class BlockingSocket(private val onClose: () -> Unit) : DevtoolsSocket {
         private val closed = CountDownLatch(1)

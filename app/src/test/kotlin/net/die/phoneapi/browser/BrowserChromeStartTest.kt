@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -8,7 +7,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Opening a tab while Chrome is not running starts it first. */
-@Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class BrowserChromeStartTest {
     private val harness = BrowserServiceTest()
 
@@ -33,21 +31,19 @@ class BrowserChromeStartTest {
     }
 
     @Test
-    fun `chrome that never opens fails`() =
-        runTest(harness.clock) {
-            val shown = mutableListOf<String>()
-            val service =
-                harness.service(byteArrayOf(), sockets = "[]", showPackage = { shown += it })
-            // Virtual time runs the ten seconds of polls.
-            val error =
-                try {
-                    service.openTab("https://example.com/")
-                    null
-                } catch (e: ApiException) {
-                    e
-                }
-            assertEquals("browser_unavailable", error?.error)
-            assertTrue(error?.message.orEmpty().contains("within 10 s of starting"), error?.message)
-            assertEquals(listOf("com.android.chrome"), shown)
-        }
+    fun `chrome that never opens fails`() = harness.virtual {
+        val shown = mutableListOf<String>()
+        val service = harness.service(byteArrayOf(), sockets = "[]", showPackage = { shown += it })
+        // Virtual time runs the ten seconds of polls.
+        val error =
+            try {
+                service.openTab("https://example.com/")
+                null
+            } catch (e: ApiException) {
+                e
+            }
+        assertEquals("browser_unavailable", error?.error)
+        assertTrue(error?.message.orEmpty().contains("within 10 s of starting"), error?.message)
+        assertEquals(listOf("com.android.chrome"), shown)
+    }
 }

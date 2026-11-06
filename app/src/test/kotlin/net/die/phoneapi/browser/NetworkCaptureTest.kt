@@ -2,22 +2,17 @@ package net.die.phoneapi.browser
 
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
-import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Recording a tab's JSON responses for scope data. */
-// Scripted sockets are read on a real dispatcher, and each capture closes its own socket.
-@Suppress("InjectDispatcher", "MissingUseCall")
+@Suppress("MissingUseCall") // Each capture closes its own socket.
 class NetworkCaptureTest {
     private val harness = BrowserServiceTest()
 
@@ -97,155 +92,152 @@ class NetworkCaptureTest {
     }
 
     @Test
-    fun `reads recorded bodies`() = runBlocking {
-        val encoded = Base64.getEncoder().encodeToString("""{"b":2}""".toByteArray())
-        val page =
-            StallingSocket(
-                harness.switched() +
-                    reply(1, "{}") +
-                    frame(received("r1", "https://a.test/one", "application/json")) +
-                    frame(finished("r1")) +
-                    frame(received("r2", "https://a.test/two", "application/json", status = 404)) +
-                    frame(finished("r2")) +
-                    frame(received("r3", "https://a.test/bad", "application/json")) +
-                    frame(finished("r3")) +
-                    frame(received("r4", "https://a.test/gone", "application/json")) +
-                    frame(finished("r4")) +
-                    reply(2, """{"body":"{\"a\":1}","base64Encoded":false}""") +
-                    reply(3, """{"body":"$encoded","base64Encoded":true}""") +
-                    reply(4, """{"body":"<html>","base64Encoded":false}""") +
-                    harness.serverTextFrame(
-                        """{"id":5,"error":{"message":"No resource with given identifier found"}}"""
-                    )
+    fun `reads recorded bodies`() =
+        harness.clock.run {
+            val encoded = Base64.getEncoder().encodeToString("""{"b":2}""".toByteArray())
+            val page =
+                harness.socket(
+                    harness.switched() +
+                        reply(1, "{}") +
+                        frame(received("r1", "https://a.test/one", "application/json")) +
+                        frame(finished("r1")) +
+                        frame(
+                            received("r2", "https://a.test/two", "application/json", status = 404)
+                        ) +
+                        frame(finished("r2")) +
+                        frame(received("r3", "https://a.test/bad", "application/json")) +
+                        frame(finished("r3")) +
+                        frame(received("r4", "https://a.test/gone", "application/json")) +
+                        frame(finished("r4")) +
+                        reply(2, """{"body":"{\"a\":1}","base64Encoded":false}""") +
+                        reply(3, """{"body":"$encoded","base64Encoded":true}""") +
+                        reply(4, """{"body":"<html>","base64Encoded":false}""") +
+                        harness.serverTextFrame(
+                            """{"id":5,"error":{"message":"No resource with given identifier found"}}"""
+                        )
+                )
+            val capture = capture(page)
+            assertEquals(0, capture.start(TAB))
+            withTimeout(WAIT_MS) { while (capture.listed(TAB).size < 4) delay(10) }
+            assertEquals(4, capture.start(TAB))
+            val listed = capture.listed(TAB)
+            assertEquals("https://a.test/two (http 404)", listed[1].source)
+            val blobs = capture.blobs(TAB, null, DATA_BUDGET)
+            assertEquals("""{"a":1}""", blobs[0].text)
+            assertEquals("""{"b":2}""", blobs[1].text)
+            assertTrue(blobs[2].missing.orEmpty().startsWith("response-3 does not parse as JSON"))
+            assertTrue(blobs[3].missing.orEmpty().startsWith("Chrome no longer has the body"))
+            assertEquals(
+                listOf("Network.enable") + List(4) { "Network.getResponseBody" },
+                page.methods(),
             )
-        val capture = capture(page)
-        assertEquals(0, capture.start(TAB))
-        withTimeout(WAIT_MS) { while (capture.listed(TAB).size < 4) delay(10) }
-        assertEquals(4, capture.start(TAB))
-        val listed = capture.listed(TAB)
-        assertEquals("https://a.test/two (http 404)", listed[1].source)
-        val blobs = capture.blobs(TAB, null, DATA_BUDGET)
-        assertEquals("""{"a":1}""", blobs[0].text)
-        assertEquals("""{"b":2}""", blobs[1].text)
-        assertTrue(blobs[2].missing.orEmpty().startsWith("response-3 does not parse as JSON"))
-        assertTrue(blobs[3].missing.orEmpty().startsWith("Chrome no longer has the body"))
-        // Scripted replies can arrive before a command is written, so wait for the writes.
-        withTimeout(WAIT_MS) {
-            while (page.methods().count { it == "Network.getResponseBody" } < 4) delay(10)
+            capture.stop(TAB)
+            assertEquals(emptyList<Any>(), capture.listed(TAB))
         }
-        assertEquals("Network.enable", page.methods().first())
-        capture.stop(TAB)
-        assertEquals(emptyList<Any>(), capture.listed(TAB))
-    }
 
     @Test
-    fun `reads wanted bodies in budget`() = runBlocking {
-        val page =
-            StallingSocket(
-                harness.switched() +
-                    reply(1, "{}") +
-                    frame(received("r1", "https://a.test/one", "application/json")) +
-                    frame(event("Network.dataReceived", """{"requestId":"r1","dataLength":7}""")) +
-                    frame(finished("r1")) +
-                    frame(received("r2", "https://a.test/two", "application/json")) +
-                    frame(event("Network.dataReceived", """{"requestId":"r2","dataLength":7}""")) +
-                    frame(finished("r2")) +
-                    reply(2, """{"body":"{\"b\":2}","base64Encoded":false}""")
-            )
-        val capture = capture(page)
-        capture.start(TAB)
-        withTimeout(WAIT_MS) { while (capture.listed(TAB).size < 2) delay(10) }
-        val wanted = capture.blobs(TAB, listOf("response-2"), DATA_BUDGET)
-        assertNull(wanted[0].text)
-        assertEquals("""{"b":2}""", wanted[1].text)
-        // Nothing answers a second body request, so fetching one here would fail the test.
-        val tight = capture.blobs(TAB, null, 6)
-        assertTrue(tight.all { it.omitted })
-        capture.stop(TAB)
-    }
-
-    @Test
-    fun `ends when the tab closes`() = runBlocking {
-        // The page answers, then its socket ends, as when the tab closes. Its session has closed
-        // before start sees it, so the watch ends at once, before start has finished.
-        val ended = BrowserServiceTest.ScriptedSocket(harness.switched() + reply(1, "{}"))
-        val pages = sockets(ended, fresh(), closeFirst = ended)
-        val capture = NetworkCapture(CoroutineScope(Dispatchers.IO), pages::next)
-        // The watch can close the session before Network.enable is sent, which fails that start.
-        val first =
-            try {
-                capture.start(TAB).toString()
-            } catch (e: ApiException) {
-                e.error
-            }
-        assertTrue(first == "0" || first == "cdp_error", first)
-        // A start while one records opens nothing; once it has ended, a start opens a new one.
-        withTimeout(WAIT_MS) {
-            while (pages.opened < 2) {
-                capture.start(TAB)
-                delay(10)
-            }
+    fun `reads wanted bodies in budget`() =
+        harness.clock.run {
+            val page =
+                harness.socket(
+                    harness.switched() +
+                        reply(1, "{}") +
+                        frame(received("r1", "https://a.test/one", "application/json")) +
+                        frame(
+                            event("Network.dataReceived", """{"requestId":"r1","dataLength":7}""")
+                        ) +
+                        frame(finished("r1")) +
+                        frame(received("r2", "https://a.test/two", "application/json")) +
+                        frame(
+                            event("Network.dataReceived", """{"requestId":"r2","dataLength":7}""")
+                        ) +
+                        frame(finished("r2")) +
+                        reply(2, """{"body":"{\"b\":2}","base64Encoded":false}""")
+                )
+            val capture = capture(page)
+            capture.start(TAB)
+            withTimeout(WAIT_MS) { while (capture.listed(TAB).size < 2) delay(10) }
+            val wanted = capture.blobs(TAB, listOf("response-2"), DATA_BUDGET)
+            assertNull(wanted[0].text)
+            assertEquals("""{"b":2}""", wanted[1].text)
+            // Nothing answers a second body request, so fetching one here would fail the test.
+            val tight = capture.blobs(TAB, null, 6)
+            assertTrue(tight.all { it.omitted })
+            capture.stop(TAB)
         }
-        capture.stop(TAB)
-    }
 
     @Test
-    fun `ends when unused`() = runBlocking {
-        val pages = sockets(fresh(), fresh())
-        val capture = NetworkCapture(CoroutineScope(Dispatchers.IO), pages::next, idleMs = 100)
-        capture.start(TAB)
-        capture.start(TAB)
-        assertEquals(1, pages.opened)
-        delay(400)
-        capture.start(TAB)
-        assertEquals(2, pages.opened)
-        capture.stop(TAB)
-    }
+    fun `ends when the tab closes`() =
+        harness.clock.run {
+            // The page answers Network.enable, then its socket ends, as when the tab closes.
+            val ended = harness.socket(harness.switched() + reply(1, "{}") + harness.closeFrame())
+            val pages = sockets(ended, fresh())
+            val capture = NetworkCapture(CoroutineScope(harness.clock), pages::next)
+            assertEquals(0, capture.start(TAB))
+            assertEquals(listOf("Network.enable"), ended.methods())
+            // Time moves only once the close has been handled, which ends the capture.
+            delay(1)
+            // So a start opens a new session, and one while that records opens nothing.
+            assertEquals(0, capture.start(TAB))
+            assertEquals(0, capture.start(TAB))
+            assertEquals(2, pages.opened)
+            capture.stop(TAB)
+        }
 
     @Test
-    fun `a refused start leaves nothing`() = runBlocking {
-        val refused =
-            StallingSocket(
-                harness.switched() +
-                    harness.serverTextFrame("""{"id":1,"error":{"message":"Not allowed"}}""")
-            )
-        val pages = sockets(refused, fresh())
-        val capture = NetworkCapture(CoroutineScope(Dispatchers.IO), pages::next)
-        assertThrows(ApiException::class.java) { runBlocking { capture.start(TAB) } }
-        assertEquals(0, capture.start(TAB))
-        assertEquals(2, pages.opened)
-        capture.stop(TAB)
-    }
+    fun `ends when unused`() =
+        harness.clock.run {
+            val pages = sockets(fresh(), fresh())
+            val capture =
+                NetworkCapture(CoroutineScope(harness.clock), pages::next) { harness.clock.now }
+            capture.start(TAB)
+            delay(NetworkCapture.IDLE_MS - 1)
+            capture.start(TAB)
+            assertEquals(1, pages.opened)
+            delay(NetworkCapture.IDLE_MS + 1)
+            capture.start(TAB)
+            assertEquals(2, pages.opened)
+            capture.stop(TAB)
+        }
 
-    /**
-     * Hands out [list] in order, one per capture opened, counting them. The link on [closeFirst] is
-     * handed out only once its session has closed.
-     */
-    private inner class Sockets(
-        private val list: List<DevtoolsSocket>,
-        private val closeFirst: DevtoolsSocket?,
-    ) {
+    @Test
+    fun `a refused start leaves nothing`() =
+        harness.clock.run {
+            val refused =
+                harness.socket(
+                    harness.switched() +
+                        harness.serverTextFrame("""{"id":1,"error":{"message":"Not allowed"}}""")
+                )
+            val pages = sockets(refused, fresh())
+            val capture = NetworkCapture(CoroutineScope(harness.clock), pages::next)
+            assertEquals("cdp_error", harness.failure { capture.start(TAB) })
+            assertEquals(0, capture.start(TAB))
+            assertEquals(2, pages.opened)
+            capture.stop(TAB)
+        }
+
+    /** Hands out [list] in order, one per capture opened, counting them. */
+    private inner class Sockets(private val list: List<DevtoolsSocket>) {
         var opened = 0
             private set
 
-        suspend fun next(id: String): PageLink {
+        fun next(id: String): PageLink {
             check(id == TAB)
             val page = list[opened++]
-            return link(page).also { if (page === closeFirst) it.cdp.awaitClosed() }
+            return link(page)
         }
     }
 
-    private fun sockets(vararg list: DevtoolsSocket, closeFirst: DevtoolsSocket? = null) =
-        Sockets(list.toList(), closeFirst)
+    private fun sockets(vararg list: DevtoolsSocket) = Sockets(list.toList())
 
     /** A page that answers Network.enable, then sends nothing more. */
-    private fun fresh() = StallingSocket(harness.switched() + reply(1, "{}"))
+    private fun fresh() = harness.socket(harness.switched() + reply(1, "{}"))
 
     private fun capture(page: DevtoolsSocket) =
-        NetworkCapture(CoroutineScope(Dispatchers.IO), { link(page) })
+        NetworkCapture(CoroutineScope(harness.clock), { link(page) })
 
     private fun link(page: DevtoolsSocket): PageLink {
-        val cdp = CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
+        val cdp = CdpSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
         cdp.open("/devtools/page/t")
         return PageLink(cdp, page)
     }
