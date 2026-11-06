@@ -199,8 +199,18 @@ class Tabs(
             return tab
         }
         // Chrome switches to a new tab while it is in front, which must not show this session's
-        // page to whoever holds the screen.
-        if (!putBack()) {
+        // page to whoever holds the screen. While it is in the background there is nothing to fix.
+        if (!chromeInFront()) return tab.copy(tookScreen = false)
+        val shown =
+            try {
+                putBack()
+            } catch (e: ApiException) {
+                // Whether Chrome shows the new tab is not known, so it goes.
+                closeQuietly(tab.id)
+                closed(tab.id)
+                throw e
+            }
+        if (!shown) {
             closeQuietly(tab.id)
             closed(tab.id)
             throw ApiException(
@@ -369,13 +379,20 @@ class Tabs(
         base.activate(placeholderTab())
     }
 
-    /** Between screen calls, puts Chrome back on the screen holder's tab. False if it would not. */
+    /**
+     * Between screen calls, puts Chrome back on the screen holder's tab. False if it would not.
+     * Fails with `tab_stuck` when the holder's calls keep running, and with Chrome's own error when
+     * it does not answer, since then what it shows is not known.
+     */
     private suspend fun putBack(): Boolean =
-        try {
-            lease.betweenCalls { showFor(lease.state.value.holder) }
-        } catch (_: ApiException) {
-            false
-        }
+        lease.betweenCalls { showFor(lease.state.value.holder) }
+            ?: throw ApiException(
+                409,
+                "tab_stuck",
+                "Chrome is in front, and the screen holder's calls kept running for " +
+                    "${ScreenLease.BETWEEN_WAIT_MS / MS_PER_S} s, so PhoneAPI could not check " +
+                    "which tab Chrome shows. Try again.",
+            )
 
     /**
      * With Chrome in front, selects [holder]'s tab, or the placeholder, if Chrome shows another
@@ -532,6 +549,7 @@ class Tabs(
     companion object {
         const val PER_SESSION = 4
         const val TOTAL = 8
+        private const val MS_PER_S = 1_000
         private const val BLANK = "about:blank"
         private const val SHARED_INCOGNITO =
             "Another session has incognito tabs open, and Chrome has one incognito profile, so " +

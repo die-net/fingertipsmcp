@@ -1,9 +1,13 @@
 package net.die.phoneapi.tabs
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.core.BrowserService
@@ -41,6 +45,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 @Suppress("InjectDispatcher") // The lease's cleanup scope needs no real dispatcher here.
+@OptIn(ExperimentalCoroutinesApi::class)
 class TabsTest {
     private var front = "com.app"
     private val browser = RecordingBrowser { front == CHROME }
@@ -366,6 +371,35 @@ class TabsTest {
     }
 
     @Test
+    fun `a hidden Chrome needs no turn`() = runTest {
+        // With Chrome in the background, a new tab cannot show, so the holder's long call does not
+        // hold up another session's open.
+        val tabs = tabs()
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://example.com/")
+        val going = CompletableDeferred<Unit>()
+        val call = async { lease.withScreen(a) { going.await() } }
+        runCurrent()
+        val theirs = tabs.browserFor(b).openTab("https://example.com/")
+        assertEquals(false, theirs.tookScreen)
+        assertEquals(1, tabs.count(b))
+        going.complete(Unit)
+        call.await()
+    }
+
+    @Test
+    fun `a Chrome that stops answering is said so`() = runTest {
+        val tabs = tabs()
+        front = CHROME
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://example.com/")
+        browser.failShowing = true
+        assertEquals("cdp_timeout", error { tabs.browserFor(b).openTab("https://example.com/") })
+        assertEquals(0, tabs.count(b))
+        assertEquals(1, browser.closed.size)
+    }
+
+    @Test
     fun `slow switches still land`() = runTest {
         val tabs = tabs()
         front = CHROME
@@ -504,7 +538,11 @@ class TabsTest {
             }
         }
 
+        /** DevTools stops answering, as when Chrome hangs. */
+        var failShowing = false
+
         override suspend fun showing(id: String): Boolean {
+            if (failShowing) throw ApiException.unavailable("cdp_timeout", "no answer")
             pending?.let {
                 if (++checks >= switchAfter) {
                     shown = it
