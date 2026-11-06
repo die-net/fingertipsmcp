@@ -2,6 +2,7 @@ package net.die.phoneapi.helper.tree
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
+import android.os.Build
 import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
@@ -64,6 +65,10 @@ internal class UiAutomationSession(
         runCatching { ShellUiAutomation.disconnect(current) }
         onConnection(false)
     }
+
+    /** Drops cached nodes so the next read is current. False before Android 14, which can't. */
+    fun clearNodeCache(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && use { it.clearCache() }
 
     private fun <T> use(block: (UiAutomation) -> T): T {
         val current = connect()

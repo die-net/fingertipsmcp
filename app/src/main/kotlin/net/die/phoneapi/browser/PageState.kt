@@ -1,7 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -9,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.model.ApiException
 
 /** What the snapshot's page check returns. */
@@ -70,16 +69,6 @@ internal suspend fun requireShowing(cdp: CdpSession) {
 }
 
 /**
- * Polls [done] until it holds or [timeoutMs] is up, and says whether it held. Chrome and Android
- * give no signal when a switch finishes, and how long it takes depends on the phone.
- */
-internal suspend fun settled(timeoutMs: Long, done: suspend () -> Boolean): Boolean =
-    withTimeoutOrNull(timeoutMs) {
-        while (!done()) delay(SETTLE_POLL_MS)
-        true
-    } == true
-
-/**
  * Selects the tab, then waits for its text to hold still. Chrome coming forward can select another
  * tab after this one, so the tab has to still be showing at the end, or this tries again, up to
  * [attempts] times. True when it held.
@@ -102,7 +91,6 @@ internal suspend fun awaitTextStill(cdp: CdpSession) {
 
 /** How long Chrome may take to select a tab. */
 internal const val FRONT_MS = 2_000L
-private const val SETTLE_POLL_MS = 50L
 private const val GROWTH_TICK_MS = 250
 private const val GROWTH_QUIET_TICKS = 3
 private const val GROWTH_MAX_MS = 5_000

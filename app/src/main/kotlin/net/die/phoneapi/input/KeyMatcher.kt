@@ -51,9 +51,15 @@ object KeyMatcher {
             '^' to setOf("caret"),
         )
 
+    /**
+     * The key that types [c]. Gboard lists its suggestions with its keys, and a suggestion can be a
+     * single letter. Tapping one enters a word and a space, so a real key comes first.
+     */
     fun forChar(keys: List<ImeKey>, c: Char): ImeKey? {
         val literal = c.toString()
-        return keys.firstOrNull { it.label == literal }
+        val matches = keys.filter { it.label == literal }
+        return matches.firstOrNull { it.id?.contains("key_pos_") == true }
+            ?: matches.firstOrNull()
             ?: SPOKEN[c]?.let { names -> keys.firstOrNull { it.label.lowercase() in names } }
     }
 
@@ -95,6 +101,27 @@ object KeyMatcher {
         val l = k.label.lowercase()
         l == "abc" || l == "letter keyboard" || l == "letters"
     }
+
+    /**
+     * The shift or page key to press so that [c] shows up, or null when every page in [tried] has
+     * been pressed. Shift can always be pressed again: read just after a letter, the keys may still
+     * show a shift that is about to end, and a press then turns it back on.
+     */
+    fun modifierFor(keys: List<ImeKey>, c: Char, tried: Set<String>): ImeKey? {
+        if (otherCase(keys, c) != null) return shift(keys)
+        val pages =
+            if (c.isLetter()) listOfNotNull(lettersPage(keys))
+            else listOfNotNull(symbolsPage(keys), moreSymbolsPage(keys))
+        return pages.firstOrNull { it.label !in tried }
+    }
+
+    /**
+     * Whether a keyboard showing [before] has finished reacting to a tap on [modifier], made to
+     * reach [c]. Gboard relabels the shift key before its letters, so after shift only [c] itself
+     * says the letters are done. A page key may need another key after it, so any change will do.
+     */
+    fun redrawn(before: List<ImeKey>, now: List<ImeKey>, modifier: ImeKey, c: Char): Boolean =
+        if (modifier == shift(before)) forChar(now, c) != null else now != before
 
     /** Whether [keys] look like a text keyboard at all (rather than, say, a voice panel). */
     fun looksLikeKeyboard(keys: List<ImeKey>): Boolean =

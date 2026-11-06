@@ -121,7 +121,10 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 val request = json.decodeFromString(serializer<FindRequest>(), body)
                 json.encodeToString(runBlocking { snapshots.find(request) })
             }
-            "keyboard" -> json.encodeToString(withWindows { ImeKeyboard.scan(it) })
+            "keyboard" -> {
+                val cleared = session.clearNodeCache()
+                json.encodeToString(withWindows { ImeKeyboard.scan(it, refresh = !cleared) })
+            }
             "pinpad" -> json.encodeToString(withWindows { PinPad.keys(it) })
             "contentBounds" -> {
                 val call = json.decodeFromString(serializer<TreePackageCall>(), body)
@@ -232,7 +235,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
 
     private fun setText(call: TreeSetTextCall): ActionResult {
         val node =
-            session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+            focusedField()?.takeIf { it.isEditable }
                 ?: throw ApiException(409, "no_editor", "No text field is focused")
         try {
             val current =
@@ -268,8 +271,35 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
         }
     }
 
+    /**
+     * The node with input focus. Chrome reports that as its whole view, with the page's field
+     * further down, so a node that can't be edited is searched for a focused field that can. If
+     * there is none, this is the node itself, or null when nothing has focus.
+     */
+    private fun focusedField(): AccessibilityNodeInfo? {
+        val focused = session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
+        if (focused.isEditable) return focused
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        for (i in 0 until focused.childCount) focused.getChild(i)?.let(stack::add)
+        var visited = 0
+        var field: AccessibilityNodeInfo? = null
+        while (field == null && stack.isNotEmpty() && visited++ < MAX_FIELD_SEARCH) {
+            val node = stack.removeLast()
+            if (node.isFocused && node.isEditable) {
+                field = node
+            } else {
+                for (i in 0 until node.childCount) node.getChild(i)?.let(stack::add)
+                NodeCompat.recycle(node)
+            }
+        }
+        stack.forEach(NodeCompat::recycle)
+        if (field == null) return focused
+        NodeCompat.recycle(focused)
+        return field
+    }
+
     private fun selectFocused(): TreeFocusedText {
-        val node = session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return TreeFocusedText(0)
+        val node = focusedField() ?: return TreeFocusedText(0)
         try {
             val length = if (node.isShowingHintText) 0 else node.text?.length ?: 0
             if (length == 0) return TreeFocusedText(0)
@@ -287,7 +317,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
 
     private fun imeEnter(): ActionResult {
         val node =
-            session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            focusedField()
                 ?: return ActionResult(ok = false, message = "No focused field to submit")
         try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -311,8 +341,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     private fun focus(selector: NodeSelector?): ActionResult {
         val node =
             if (selector == null || !selector.targetsNode()) {
-                session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?: throw ApiException.badRequest("No editable field is focused")
+                focusedField() ?: throw ApiException.badRequest("No editable field is focused")
             } else {
                 runBlocking { snapshots.resolve(selector) }
             }
@@ -377,3 +406,6 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
         const val TAG = "PhoneApiHelper"
     }
 }
+
+/** How many nodes [TreeHost] looks through for a field, which bounds a very large page. */
+private const val MAX_FIELD_SEARCH = 5_000

@@ -1,5 +1,6 @@
 package net.die.phoneapi.core
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
@@ -22,3 +23,16 @@ suspend fun awaitDeviceState(
     val changes: Flow<Any> = merge(state.state, bus.events)
     return withTimeoutOrNull(timeoutMs) { changes.first { predicate(state.refresh()) } } != null
 }
+
+/**
+ * Polls [done] until it holds or [timeoutMs] is up, and says whether it held. This is for a result
+ * nothing announces, such as a tab switch or a keyboard redrawing, which takes as long as the phone
+ * takes.
+ */
+internal suspend fun settled(timeoutMs: Long, done: suspend () -> Boolean): Boolean =
+    withTimeoutOrNull(timeoutMs) {
+        while (!done()) delay(SETTLE_POLL_MS)
+        true
+    } == true
+
+private const val SETTLE_POLL_MS = 50L
