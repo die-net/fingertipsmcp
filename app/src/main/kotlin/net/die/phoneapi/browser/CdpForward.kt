@@ -28,9 +28,9 @@ import net.die.phoneapi.model.ApiException
 internal class CdpForward(
     private val context: Context,
     private val keys: KeystorePrivateKeyStore,
+    private val finder: AdbEndpointFinder,
     private val io: CoroutineDispatcher,
 ) {
-    private val finder = AdbEndpointFinder(context, io)
     private val secure = SecureSettings(context.contentResolver)
     private val idle = CoroutineScope(SupervisorJob() + io)
     private val state = Any()
@@ -202,8 +202,9 @@ internal class CdpForward(
         return finder.connectPort()
             ?: throw ApiException.unavailable(
                 "cdp_error",
-                "Wireless debugging isn't listening. Check that the phone is on Wi-Fi and answer " +
-                    "any prompt to allow this network, then retry.",
+                "PhoneAPI can't find wireless debugging's port. Turn wireless debugging off and " +
+                    "on, check that the phone is on Wi-Fi, and answer any prompt to allow this " +
+                    "network, then retry.",
             )
     }
 

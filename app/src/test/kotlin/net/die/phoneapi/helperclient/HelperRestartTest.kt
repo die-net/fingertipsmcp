@@ -32,14 +32,27 @@ class HelperRestartTest {
     }
 
     @Test
-    fun `invalid ports are ignored`() {
-        assertNull(parseAdbPort(null))
-        assertNull(parseAdbPort(""))
-        assertNull(parseAdbPort("0"))
-        assertNull(parseAdbPort("65536"))
-        assertNull(parseAdbPort("abc"))
-        assertEquals(1, parseAdbPort("1"))
-        assertEquals(5555, parseAdbPort(" 5555\n"))
-        assertEquals(65_535, parseAdbPort("65535"))
+    fun `only real ports are kept`() {
+        assertNull(validAdbPort(-1))
+        assertNull(validAdbPort(0))
+        assertNull(validAdbPort(65_536))
+        assertEquals(1, validAdbPort(1))
+        assertEquals(41_609, validAdbPort(41_609))
+        assertEquals(65_535, validAdbPort(65_535))
+    }
+
+    @Test
+    fun `a stale setting is cycled`() {
+        assertTrue(shouldCycleWireless(wasOn = true, canWrite = true))
+    }
+
+    @Test
+    fun `an attempt that turned it on`() {
+        assertFalse(shouldCycleWireless(wasOn = false, canWrite = true))
+    }
+
+    @Test
+    fun `no grant cannot cycle it`() {
+        assertFalse(shouldCycleWireless(wasOn = true, canWrite = false))
     }
 }

@@ -6,6 +6,5 @@ internal fun restartDelayMs(attempt: Int): Long {
     return (1_000L shl shift).coerceAtMost(30_000L)
 }
 
-/** Parses an adbd TLS port. Empty, zero, and out-of-range values are ignored. */
-internal fun parseAdbPort(raw: String?): Int? =
-    raw?.trim()?.toIntOrNull()?.takeIf { it in 1..65_535 }
+/** An adbd TLS port from the adb service. Zero and below mean it has none. */
+internal fun validAdbPort(port: Int): Int? = port.takeIf { it in 1..65_535 }

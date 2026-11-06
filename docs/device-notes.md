@@ -250,8 +250,17 @@ Android turns wireless debugging off when the access point changes. On the Andro
 
 On the Android 13 emulator that day, with the helper down on an unapproved network, the app's retries put that prompt up every 15 seconds without end, because each change to the setting reset the failure count. Now only turning the setting on starts over. Six tries, then it stops, and tapping Allow brought the helper back.
 
+On the Android 12 test phone on 2026-11-06, browser calls found no wireless debugging port while adbd was listening. The setting was 1, `/proc/net/tcp6` showed a socket owned by uid 2000 on the port mDNS had returned earlier, and mDNS searches found nothing for their full 15 s. In the log, a search found the service only after a toggle, when `mdnssd start-service` failed with `Service already running`. NsdService ran `mdnssd stop-service` 10 s after each search, and every later search started the daemon itself and found nothing, so adbd's registration seems to end with that stop.
+
+SELinux keeps `service.adb.tls.port` from the app on that phone, and from the shell on the Android 11 test phone: it reads as empty, with an `avc: denied` for `adbd_prop`. It read as empty from the shell on the Android 12 test phone too, with adbd listening. So an empty value from `adb shell getprop` says nothing about the port.
+
+The Android 13 emulator showed the same thing on 2026-11-06. After one search, `mdnsd` stopped by itself, `getAdbWirelessPort` still gave the port, and the next search found nothing for 15 s. Turning the setting off, then on a second later, made adbd register again, and the next search found it. Stopping `mdnsd` with `ctl.stop` is not the same: searches then find nothing even after adbd registers. On the Android 16 and 17 emulators, mDNS doesn't use `mdnsd`. Android 17 still found the port with it stopped.
+
+`IAdbManager.getAdbWirelessPort()` does give it. `adb shell service call adb 10` on the Android 12 test phone returned 41609 while mDNS found nothing. It needs `MANAGE_DEBUGGING`, which the Shell package holds on Android 11, 12, and 13. The helper reached it on the Android 13, 16, and 17 emulators.
+
 ## Still to check on the phone
 
+- That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
 - What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
 - That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
