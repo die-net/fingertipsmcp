@@ -22,12 +22,13 @@ import net.die.phoneapi.model.UiSnapshot
 import net.die.phoneapi.model.UiWindow
 
 /** Builds snapshots and runs node queries over the live accessibility tree. */
-class SnapshotEngine(
+internal class SnapshotEngine(
     private val windows: () -> List<AccessibilityWindowInfo>,
     private val io: CoroutineDispatcher,
     private val seq: StateFlow<Long>,
     private val imePackage: () -> String?,
     private val nodes: NodeRegistry,
+    private val nodeCache: NodeCacheAge,
     private val screenRect: () -> Rect,
 ) {
     private data class Built(
@@ -41,9 +42,10 @@ class SnapshotEngine(
     private val mutex = Mutex()
     @Volatile private var cache: Built? = null
 
-    /** Drops the cached snapshot; called after every action. */
+    /** Drops the cached snapshot and nodes; called after every action. */
     fun invalidate() {
         cache = null
+        nodeCache.expire()
     }
 
     suspend fun snapshot(options: SnapshotOptions, summary: DeviceStateSummary): UiSnapshot {
@@ -64,7 +66,7 @@ class SnapshotEngine(
                         it.options == key &&
                             it.seq == seq &&
                             SystemClock.uptimeMillis() - it.atMs < CACHE_MS
-                    } ?: build(windows(), key, seq).also { cache = it }
+                    } ?: nodeCache.read { build(windows(), key, seq) }.also { cache = it }
                 }
             }
         val redactor = Redactor()
@@ -106,7 +108,9 @@ class SnapshotEngine(
                     val wanted =
                         selector.index?.let { it + 1 } ?: request.limit.coerceIn(1, MAX_FIND)
                     val matches = mutex.withLock {
-                        search(windows(), matcher, wanted, request.includeInvisible)
+                        nodeCache.read {
+                            search(windows(), matcher, wanted, request.includeInvisible)
+                        }
                     }
                     selector.index?.let { i -> listOfNotNull(matches.getOrNull(i)) } ?: matches
                 }

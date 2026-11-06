@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.RemoteException
+import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -47,6 +48,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     private val holds = AtomicInteger()
     private val session: UiAutomationSession
     private val tracker: UiChangeTracker
+    private val nodeCache: NodeCacheAge
     private val snapshots: SnapshotEngine
     private val targeting = NodeTargeting { Rect(screen) }
 
@@ -69,6 +71,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 dispatcher = Dispatchers.IO,
             )
         created = tracker
+        nodeCache = NodeCacheAge(session::clearNodeCache, SystemClock::uptimeMillis)
         snapshots =
             SnapshotEngine(
                 windows = { session.windows() },
@@ -76,6 +79,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 seq = tracker.seq,
                 imePackage = { imePackage },
                 nodes = nodes,
+                nodeCache = nodeCache,
                 screenRect = { Rect(screen) },
             )
     }
@@ -122,7 +126,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 json.encodeToString(runBlocking { snapshots.find(request) })
             }
             "keyboard" -> {
-                val cleared = session.clearNodeCache()
+                val cleared = nodeCache.clear()
                 json.encodeToString(withWindows { ImeKeyboard.scan(it, refresh = !cleared) })
             }
             "pinpad" -> json.encodeToString(withWindows { PinPad.keys(it) })
@@ -276,7 +280,9 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
      * further down, so a node that can't be edited is searched for a focused field that can. If
      * there is none, this is the node itself, or null when nothing has focus.
      */
-    private fun focusedField(): AccessibilityNodeInfo? {
+    private fun focusedField(): AccessibilityNodeInfo? = nodeCache.read { findFocusedField() }
+
+    private fun findFocusedField(): AccessibilityNodeInfo? {
         val focused = session.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
         if (focused.isEditable) return focused
         val stack = ArrayDeque<AccessibilityNodeInfo>()

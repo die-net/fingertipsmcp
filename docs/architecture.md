@@ -63,7 +63,7 @@ Status reported on `/v1/device`: `running`, `starting`, `needs_pairing`, `needs_
 
 Primary vision is a compact tree, not a pixel dump. Format for agents looks like `[e12] button "Sign in"` with bounds and state.
 
-- **Android UI:** helper UiAutomation (`SnapshotEngine`, refs, find, node actions).
+- **Android UI:** helper UiAutomation (`SnapshotEngine`, refs, find, node actions). Reads trust UiAutomation's node cache for at most 500 ms, and an action ends that at once, because an app can change a node without sending an event (`NodeCacheAge`).
 - **Chrome:** CDP Accessibility domain (`Accessibility.getFullAXTree`), not the DOM. The DOM is used for scroll-into-view, quads, and similar action plumbing.
 - Prefer tree → find → act / tap over screenshots.
 - Screenshot is helper `screencap -p`, marked as a last resort for agents.

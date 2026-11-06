@@ -2,7 +2,6 @@ package net.die.phoneapi.helper.tree
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
-import android.os.Build
 import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
@@ -66,9 +65,8 @@ internal class UiAutomationSession(
         onConnection(false)
     }
 
-    /** Drops cached nodes so the next read is current. False before Android 14, which can't. */
-    fun clearNodeCache(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && use { it.clearCache() }
+    /** Drops cached nodes so the next read is current. False on a release that can't. */
+    fun clearNodeCache(): Boolean = use(ShellUiAutomation::clearCache)
 
     private fun <T> use(block: (UiAutomation) -> T): T {
         val current = connect()
