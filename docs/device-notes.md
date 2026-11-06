@@ -183,11 +183,21 @@ Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encod
 
 On the phone on 2026-10-22, "UiAutomationService already registered" came from two calls connecting UiAutomation at once in one helper. Connecting is now serialized, and two `ui_snapshot` calls at once then connected once. The first snapshot right after connecting saw 0 nodes and 0 windows; the next, 9 seconds later, saw 30 nodes.
 
+Measured on the emulators on 2026-11-05, reading a web field in Chrome through `ui/find`.
+
+- Chrome 133 on Android 16 sent UiAutomation no `TYPE_VIEW_TEXT_CHANGED` for a web field, across every typing and `setText` run. Chrome 91 on Android 10 and Chrome 145 on Android 17 sent one for each change. UiAutomation's node cache keeps a node until an event names it, so Chrome 133 left it stale.
+- `setText` into a field whose keyboard had settled read the old text from the cache for over 3 seconds, while `refresh()` on the same node gave the new text. Without clearing the cache, reads looked fresh only when the keyboard opening made Chrome's view send `TYPE_WINDOW_CONTENT_CHANGED` with the subtree flag. Clearing before each read gave the new text at once.
+- Chrome 133 and 145 both log an empty list of accessibility services while UiAutomation is connected, and on Android 16 `dumpsys accessibility` shows no bound services. Chrome 133's source drops events no listed service asks for, and starts a 5 second timer to turn accessibility off. Chrome 145's filter reads the same yet its events arrive, so why 133 sends none isn't settled. Idling 8 seconds before typing changed nothing.
+- A selector call straight after a page changed matched the old page's field from the cache and got `stale_ref` in 4 of 4 rounds. With reads limited to 500 ms of cache age it was 2 of 5, with the other 3 an honest `not_found` for a page still loading. A navigation that doesn't go through the tree can still land inside that 500 ms.
+- The first read of a page Chrome has not built an accessibility tree for finds only Chrome's own views. The next read, a second later, found the field.
+- The report that `ui/find` lost a field after typing until the next page load was not reproduced as described, in 5 fresh-helper trials and 47 rounds of clearing and typing before the cache age was added. The `stale_ref` above is the closest failure found. Once the keyboard had opened, no window was missing from any list `ui/find` read in those rounds. Keyboard reads weren't logged, so this says nothing about a window dropping out during one.
+- Clearing the cache before every read took a 3,000-element page from about 25 ms to 900 ms for `ui/find` on Android 17, and a small page from 9 ms to 46 ms. With the 500 ms limit, polling that large page every 50 ms on Android 16 had a median of 9 ms and a 90th percentile of 691 ms. A snapshot past its own cache took about 700 ms there, and 19 ms on a small page. Android 10 took the same shape through the hidden `clearCache`: a 90th percentile of 590 ms and snapshots of about 570 ms, so that call does clear the cache there.
+
 ## The on-screen keyboard
 
 Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web field in Chrome through Gboard (15.1 on Android 16).
 
-- On Android 16, Gboard relabels its letters without an event that reaches UiAutomation's node cache. After a shift tap the shift key read "Shift enabled" while the cached letters stayed lowercase for over a second. Both `AccessibilityNodeInfo.refresh()` on each node and `UiAutomation.clearCache()` gave the new labels at once. Typing 10 mixed characters took about 5.0 s from the cache, 5.5 s with `clearCache`, and 7.4 s with `refresh` on each node. `clearCache` needs Android 14, so older releases refresh each node.
+- On Android 16, Gboard relabels its letters without an event that reaches UiAutomation's node cache. After a shift tap the shift key read "Shift enabled" while the cached letters stayed lowercase for over a second. Both `AccessibilityNodeInfo.refresh()` on each node and `UiAutomation.clearCache()` gave the new labels at once. Typing 10 mixed characters took about 5.0 s from the cache, 5.5 s with `clearCache`, and 7.4 s with `refresh` on each node. `clearCache` needs Android 14. Older releases use a hidden call, and refresh each node only if that fails.
 - Gboard lists its suggestions among its keys. A suggestion can be one letter, and it has no view id, where a real key's id holds `key_pos_`. Tapping one enters the letter and a space.
 - A keyboard still sliding up reports keys that aren't where it ends up. Tapping then lost the first letter in 3 of 6 runs on Android 16 on the old build.
 - On Android 10, labels change before the redraw ends. Tapping as soon as they changed lost or swapped a letter in 2 of 8 runs. Waiting until they hold still for one poll lost none in 16.
@@ -195,8 +205,6 @@ Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web fie
 - `findFocus(FOCUS_INPUT)` in Chrome returns a `FrameLayout`, not the web field. The field is a focused, editable node below it.
 - On Android 16, the keyboard's window can drop out of UiAutomation's window list for over a second while Gboard stays up, and `ImeTracker` logs no hide. It was seen about once in 15 clears, after a tap on the field that already had focus, with `CONTROLS_CHANGED` in the log. A shorter gap of about 0.4 s followed a `Delete`. In the gap, reads find no keys and no focused field. Treating that as an empty field skipped the clear.
 - Final build: Android 10 typed wrong 0 of 8 and cleared wrong 0 of 8. Android 16 typed wrong 0 of 8 and cleared wrong 0 of 8, and cleared wrong 0 of 32 in a loop that read the text back. The same loop was wrong 2 of 12 before the gaps were handled. The old build on Android 16 typed wrong 5 of 6 and cleared wrong 2 of 6.
-- On Android 16, `ui/find` still showed a web field's old text a second after `setText`, though the field had the new text. Android 10 showed the new text.
-- On Android 16, after the helper starts, `ui/find` stops finding a field on the first page once it is typed into, until the next page loads. The old build does this too.
 
 ## MCP SDK
 
@@ -219,6 +227,8 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 
 ## Still to check on the phone
 
+- That clearing UiAutomation's node cache works on Android 13, whose hidden `clearCache` takes a connection id. No emulator here runs it, so that path has never run. When it fails, reads fall back to the cache, and the keyboard refreshes each node.
+- How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That typing with mixed case and symbols, `clear`, and PIN unlock work on the phone, which has only run them on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
 - That audio still starts on Android 11 with the helper's `getAttributionSource` override in place. Android 11 has no such method, so it is never called there.
