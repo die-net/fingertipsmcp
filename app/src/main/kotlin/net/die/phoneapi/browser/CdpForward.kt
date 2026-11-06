@@ -202,8 +202,8 @@ internal class CdpForward(
         return finder.connectPort()
             ?: throw ApiException.unavailable(
                 "cdp_error",
-                "Wireless debugging did not publish a TLS port. Turn on Developer options and " +
-                    "wireless debugging, then retry.",
+                "Wireless debugging isn't listening. Check that the phone is on Wi-Fi and answer " +
+                    "any prompt to allow this network, then retry.",
             )
     }
 
