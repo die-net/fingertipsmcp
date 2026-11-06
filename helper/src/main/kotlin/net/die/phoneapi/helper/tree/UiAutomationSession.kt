@@ -18,7 +18,7 @@ import net.die.phoneapi.helper.compat.ShellUiAutomation
 internal class UiAutomationSession(
     private val onEvent: (AccessibilityEvent) -> Unit,
     private val onConnection: (Boolean) -> Unit,
-    private val busy: () -> Boolean,
+    busy: () -> Boolean,
 ) {
     private val lock = Any()
     // Held while connecting. Android registers one UiAutomation per process, so two calls that
@@ -26,8 +26,18 @@ internal class UiAutomationSession(
     // registered".
     private val connecting = Any()
     private var automation: UiAutomation? = null
-    private var lastUseMs = 0L
-    private var generation = 0
+    private val handler by lazy { Handler(HelperDaemon.looper()) }
+    private val idle =
+        IdleTimer(
+            idleMs = IDLE_MS,
+            now = SystemClock::uptimeMillis,
+            post = { check, delayMs -> handler.postDelayed(check, delayMs) },
+            busy = busy,
+            onIdle = {
+                Log.i(TAG, "UiAutomation idle; disconnecting")
+                disconnect()
+            },
+        )
 
     /** When the current UiAutomation connected, so [windows] can wait for its first windows. */
     @Volatile private var connectedAtMs = 0L
@@ -47,10 +57,7 @@ internal class UiAutomationSession(
 
     /** Restarts the idle timer without connecting. */
     fun poke() {
-        synchronized(lock) {
-            if (automation == null) return
-        }
-        armIdle()
+        idle.touch()
     }
 
     fun disconnect() {
@@ -58,10 +65,9 @@ internal class UiAutomationSession(
         synchronized(lock) {
             current = automation ?: return
             automation = null
-            generation++
         }
-        runCatching { current.setOnAccessibilityEventListener(null) }
-        runCatching { ShellUiAutomation.disconnect(current) }
+        idle.stop()
+        release(current)
         onConnection(false)
     }
 
@@ -70,7 +76,7 @@ internal class UiAutomationSession(
 
     private fun <T> use(block: (UiAutomation) -> T): T {
         val current = connect()
-        armIdle()
+        idle.touch()
         return block(current)
     }
 
@@ -89,7 +95,7 @@ internal class UiAutomationSession(
             val created = open()
             synchronized(lock) { automation = created }
             onConnection(true)
-            armIdle()
+            idle.start()
             return created
         }
     }
@@ -100,42 +106,38 @@ internal class UiAutomationSession(
                 HelperDaemon.looper(),
                 UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
             )
-        val info = ui.serviceInfo ?: AccessibilityServiceInfo()
-        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-        ui.setServiceInfo(info)
-        ui.setOnAccessibilityEventListener { event ->
-            onEvent(event)
-            armIdle()
+        // Connected but not yet handed out, so nothing else would disconnect it if setup fails.
+        var ready = false
+        try {
+            val info = ui.serviceInfo ?: AccessibilityServiceInfo()
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            ui.setServiceInfo(info)
+            ui.setOnAccessibilityEventListener { event ->
+                onEvent(event)
+                idle.touch()
+            }
+            ready = true
+        } finally {
+            if (!ready) release(ui)
         }
         connectedAtMs = SystemClock.uptimeMillis()
         Log.i(TAG, "UiAutomation connected")
         return ui
     }
 
-    private fun armIdle() {
-        val gen: Int
-        synchronized(lock) {
-            lastUseMs = SystemClock.uptimeMillis()
-            generation++
-            gen = generation
-        }
-        Handler(HelperDaemon.looper()).postDelayed({ onIdle(gen) }, IDLE_MS)
-    }
-
-    private fun onIdle(gen: Int) {
-        val drop: Boolean
-        val stillBusy: Boolean
-        synchronized(lock) {
-            val current = automation != null && generation == gen
-            val idleFor = SystemClock.uptimeMillis() - lastUseMs >= IDLE_MS
-            stillBusy = current && busy()
-            drop = current && idleFor && !stillBusy
-        }
-        if (drop) {
-            Log.i(TAG, "UiAutomation idle; disconnecting")
-            disconnect()
-        } else if (stillBusy) {
-            Handler(HelperDaemon.looper()).postDelayed({ onIdle(gen) }, IDLE_MS)
+    /**
+     * Ends [ui]'s registration with the system. One left behind makes every later connect fail
+     * "already registered" until the helper restarts, so a failure is logged.
+     */
+    @Suppress(
+        "TooGenericExceptionCaught"
+    ) // disconnect reports a Binder failure as RuntimeException.
+    private fun release(ui: UiAutomation) {
+        ui.setOnAccessibilityEventListener(null)
+        try {
+            ShellUiAutomation.disconnect(ui)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "UiAutomation did not disconnect; the next connect may fail", e)
         }
     }
 
