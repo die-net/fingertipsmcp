@@ -1,7 +1,6 @@
 package net.die.phoneapi.browser
 
 import java.io.ByteArrayOutputStream
-import kotlinx.coroutines.runBlocking
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.BrowserInput
 import net.die.phoneapi.model.BrowserKeyRequest
@@ -30,7 +29,7 @@ class BrowserShownTest {
                     true
                 },
             )
-        val result = runBlocking { service.read(TAB, BrowserReadRequest()) }
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest()) }
         assertEquals(true, result.shown)
         assertEquals("com.android.chrome", asked)
     }
@@ -47,7 +46,7 @@ class BrowserShownTest {
                     true
                 },
             )
-        val result = runBlocking { service.read(TAB, BrowserReadRequest()) }
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest()) }
         assertEquals(false, result.shown)
         assertEquals(listOf("busy region"), result.pending)
         assertFalse(asked)
@@ -62,7 +61,7 @@ class BrowserShownTest {
                 sockets = BrowserServiceTest.CHROME,
                 inFront = { false },
             )
-        val result = runBlocking { service.read(TAB, BrowserReadRequest()) }
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest()) }
         assertEquals(false, result.shown)
     }
 
@@ -73,7 +72,7 @@ class BrowserShownTest {
                 snapshotFrames("""{"visibility":"hidden","pending":["2 loading placeholders"]}"""),
                 sockets = BrowserServiceTest.CHROME,
             )
-        val snapshot = runBlocking { service.snapshot(TAB) }
+        val snapshot = harness.virtual { service.snapshot(TAB) }
         assertEquals(false, snapshot.shown)
         assertEquals(listOf("2 loading placeholders"), snapshot.pending)
         assertTrue(snapshot.compact.contains("RootWebArea"))
@@ -83,7 +82,7 @@ class BrowserShownTest {
     fun `snapshot without page state`() {
         // DevTools hangs up after the tree, before the page check.
         val service = harness.service(snapshotFrames(null), sockets = BrowserServiceTest.CHROME)
-        val snapshot = runBlocking { service.snapshot(TAB) }
+        val snapshot = harness.virtual { service.snapshot(TAB) }
         assertNull(snapshot.shown)
         assertEquals(emptyList<String>(), snapshot.pending)
         assertTrue(snapshot.compact.contains("RootWebArea"))
@@ -108,11 +107,11 @@ class BrowserShownTest {
                 },
                 showPackage = { pkg -> launched = pkg },
             )
-        val result = runBlocking { service.read(TAB, BrowserReadRequest(show = true)) }
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest(show = true)) }
         assertEquals(true, woke)
         assertEquals("", launched)
         // Replies are queued before the commands, so the socket can close before the last
-        // commands are written. bringToFront goes out before a pause, so it is always there.
+        // commands are written. bringToFront is the first, so it is always there.
         val sent = sentMethods(shown)
         assertEquals("Page.bringToFront", sent.first())
         assertEquals(1, sent.count { it == "Page.bringToFront" })
@@ -135,7 +134,7 @@ class BrowserShownTest {
                 inFront = { asks++ > 0 },
                 showPackage = { pkg -> launched = pkg },
             )
-        runBlocking { service.snapshot(TAB, BrowserSnapshotOptions(show = true)) }
+        harness.virtual { service.snapshot(TAB, BrowserSnapshotOptions(show = true)) }
         assertEquals("com.android.chrome", launched)
         assertEquals("Page.bringToFront", sentMethods(shown).first())
     }
@@ -145,7 +144,10 @@ class BrowserShownTest {
     fun `touch input shows the tab`() {
         // Chrome is behind another app, as after cleanup: touch launches it before the key.
         val shown = BrowserServiceTest.ScriptedSocket(harness.switched() + settled(firstId = 1))
-        val keyed = BrowserServiceTest.ScriptedSocket(harness.switched() + empty(1))
+        val keyed =
+            BrowserServiceTest.ScriptedSocket(
+                harness.switched() + empty(1) + harness.visibility(2, "visible")
+            )
         val sockets = ArrayDeque(listOf(shown, keyed))
         var asks = 0
         val order = mutableListOf<String>()
@@ -161,11 +163,37 @@ class BrowserShownTest {
                     ActionResult(ok = true, backend = "inject")
                 },
             )
-        runBlocking {
+        harness.virtual {
             service.key(TAB, BrowserKeyRequest(key = "ENTER", input = BrowserInput.TOUCH))
         }
         assertEquals(listOf("launch com.android.chrome", "key"), order)
         assertEquals("Page.bringToFront", sentMethods(shown).first())
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `show waits for a slow switch`() {
+        val shown =
+            BrowserServiceTest.ScriptedSocket(
+                harness.switched() +
+                    empty(1) +
+                    harness.visibility(firstId = 2, "hidden") +
+                    harness.visibility(firstId = 5, "hidden") +
+                    harness.visibility(firstId = 8, "visible") +
+                    growthFrames(11) +
+                    harness.visibility(firstId = 14, "visible")
+            )
+        val sockets =
+            ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(readFrames("visible"))))
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { sockets.removeFirst() },
+            )
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest(show = true)) }
+        assertEquals(true, result.shown)
+        assertEquals(1, sentMethods(shown).count { it == "Page.bringToFront" })
     }
 
     @Test
@@ -176,8 +204,10 @@ class BrowserShownTest {
             BrowserServiceTest.ScriptedSocket(
                 harness.switched() +
                     empty(1) +
-                    visibility(firstId = 2, "hidden") +
-                    settled(firstId = 5)
+                    harness.visibility(firstId = 2, "visible") +
+                    growthFrames(5) +
+                    harness.visibility(firstId = 8, "hidden") +
+                    settled(firstId = 11)
             )
         val sockets =
             ArrayDeque(listOf(shown, BrowserServiceTest.ScriptedSocket(readFrames("visible"))))
@@ -187,8 +217,8 @@ class BrowserShownTest {
                 sockets = BrowserServiceTest.CHROME,
                 open = { sockets.removeFirst() },
             )
-        val result = runBlocking { service.read(TAB, BrowserReadRequest(show = true)) }
-        assertEquals(2, sentMethods(shown).count { it == "Page.bringToFront" })
+        val result = harness.virtual { service.read(TAB, BrowserReadRequest(show = true)) }
+        // Only a second try reaches the replies that end with the tab showing.
         assertEquals(true, result.shown)
     }
 
@@ -228,17 +258,9 @@ class BrowserShownTest {
      */
     private fun settled(firstId: Int): ByteArray =
         empty(firstId) +
-            visibility(firstId + 1, "visible") +
+            harness.visibility(firstId + 1, "visible") +
             growthFrames(firstId + 4) +
-            visibility(firstId + 7, "visible")
-
-    /** Replies to a visibilityState read: frame, world, and [state]. */
-    private fun visibility(firstId: Int, state: String): ByteArray =
-        harness.serverTextFrame("""{"id":$firstId,"result":{"frameTree":{"frame":{"id":"F"}}}}""") +
-            harness.serverTextFrame("""{"id":${firstId + 1},"result":{"executionContextId":7}}""") +
-            harness.serverTextFrame(
-                """{"id":${firstId + 2},"result":{"result":{"type":"string","value":"$state"}}}"""
-            )
+            harness.visibility(firstId + 7, "visible")
 
     /** Replies to the wait for the page's text to stop growing. */
     private fun growthFrames(firstId: Int): ByteArray =

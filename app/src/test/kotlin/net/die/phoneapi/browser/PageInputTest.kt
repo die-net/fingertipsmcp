@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.runBlocking
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserInput
@@ -39,7 +38,7 @@ class PageInputTest {
                     ActionResult(ok = false, backend = "inject")
                 },
             )
-        val result = runBlocking {
+        val result = harness.virtual {
             service.swipe(
                 "chrome_devtools_remote~abc",
                 BrowserSwipeRequest(
@@ -64,7 +63,8 @@ class PageInputTest {
         val frames =
             harness.switched() +
                 harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                harness.serverTextFrame(harness.metrics(2))
+                harness.visibility(2, "visible") +
+                harness.serverTextFrame(harness.metrics(5))
         var from = Point(0f, 0f)
         var to = Point(0f, 0f)
         var area: Rect? = null
@@ -80,7 +80,7 @@ class PageInputTest {
                     ActionResult(ok = true, backend = "inject", points = listOf(start, end))
                 },
             )
-        val result = runBlocking {
+        val result = harness.virtual {
             service.swipe(
                 "chrome_devtools_remote~abc",
                 BrowserSwipeRequest(
@@ -105,7 +105,8 @@ class PageInputTest {
         val frames =
             harness.switched() +
                 harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                harness.serverTextFrame(harness.metrics(2))
+                harness.visibility(2, "visible") +
+                harness.serverTextFrame(harness.metrics(5))
         var swiped = false
         val service =
             harness.service(
@@ -120,7 +121,7 @@ class PageInputTest {
         // From the page's top edge up past it, onto Chrome's toolbar and the status bar.
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.swipe(
                         "chrome_devtools_remote~abc",
                         BrowserSwipeRequest(
@@ -152,7 +153,7 @@ class PageInputTest {
                     ActionResult(ok = false, backend = "inject")
                 },
             )
-        val result = runBlocking {
+        val result = harness.virtual {
             service.key(
                 "chrome_devtools_remote~abc",
                 BrowserKeyRequest(key = "ENTER", input = BrowserInput.CDP),
@@ -168,7 +169,7 @@ class PageInputTest {
         val service = harness.service(byteArrayOf(), sockets = BrowserServiceTest.CHROME)
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.key(
                         "chrome_devtools_remote~abc",
                         BrowserKeyRequest(key = "HOME", input = BrowserInput.CDP),
@@ -192,7 +193,7 @@ class PageInputTest {
                     ActionResult(ok = false, backend = "inject")
                 },
             )
-        val result = runBlocking {
+        val result = harness.virtual {
             service.text(
                 "chrome_devtools_remote~abc",
                 BrowserTextRequest(text = "hi", input = BrowserInput.CDP),

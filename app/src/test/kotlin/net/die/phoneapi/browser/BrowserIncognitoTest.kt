@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -41,11 +40,11 @@ class BrowserIncognitoTest {
                 open = { BrowserServiceTest.ScriptedSocket(replies.removeFirst()) },
                 openPrivateTab = { started += it },
             )
-        val target = runBlocking { service.openTab("https://example.com/", incognito = true) }
+        val target = harness.virtual { service.openTab("https://example.com/", incognito = true) }
         assertEquals("chrome_devtools_remote~inc", target.id)
         assertEquals("https://example.com/", target.url)
         assertEquals(true, target.tookScreen)
-        val again = runBlocking { service.openTab("https://example.com/", incognito = true) }
+        val again = harness.virtual { service.openTab("https://example.com/", incognito = true) }
         assertEquals("chrome_devtools_remote~inc2", again.id)
         assertEquals(listOf("com.android.chrome", "com.android.chrome"), started)
         assertTrue(replies.isEmpty())
@@ -53,38 +52,40 @@ class BrowserIncognitoTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `refuses a normal tab`() = runTest {
-        // Chrome answers the shortcut with a tab in the normal context, as if incognito were off.
-        val replies =
-            ArrayDeque(
-                listOf(
-                    created("blank"),
-                    targets(page("blank", "normal")),
-                    reply("""{"success":true}"""),
-                    targets(),
-                )
-            )
-        val service =
-            harness.service(
-                byteArrayOf(),
-                sockets = BrowserServiceTest.CHROME,
-                open = {
-                    BrowserServiceTest.ScriptedSocket(
-                        replies.removeFirstOrNull() ?: targets(page("new", "normal"))
+    fun `refuses a normal tab`() =
+        runTest(harness.clock) {
+            // Chrome answers the shortcut with a tab in the normal context, as if incognito were
+            // off.
+            val replies =
+                ArrayDeque(
+                    listOf(
+                        created("blank"),
+                        targets(page("blank", "normal")),
+                        reply("""{"success":true}"""),
+                        targets(),
                     )
-                },
-            )
-        // The polls' delays run in virtual time; only the scripted sockets are real.
-        val error =
-            try {
-                service.openTab("https://example.com/", incognito = true)
-                null
-            } catch (e: ApiException) {
-                e
-            }
-        assertEquals("browser_unavailable", error?.error)
-        assertTrue(error?.message.orEmpty().contains("incognito"), error?.message)
-    }
+                )
+            val service =
+                harness.service(
+                    byteArrayOf(),
+                    sockets = BrowserServiceTest.CHROME,
+                    open = {
+                        BrowserServiceTest.ScriptedSocket(
+                            replies.removeFirstOrNull() ?: targets(page("new", "normal"))
+                        )
+                    },
+                )
+            // The polls' delays run in virtual time; only the scripted sockets are real.
+            val error =
+                try {
+                    service.openTab("https://example.com/", incognito = true)
+                    null
+                } catch (e: ApiException) {
+                    e
+                }
+            assertEquals("browser_unavailable", error?.error)
+            assertTrue(error?.message.orEmpty().contains("incognito"), error?.message)
+        }
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
@@ -104,7 +105,10 @@ class BrowserIncognitoTest {
                 sockets = BrowserServiceTest.CHROME,
                 open = { BrowserServiceTest.ScriptedSocket(replies.removeFirst()) },
             )
-        assertEquals(setOf("chrome_devtools_remote~inc"), runBlocking { service.incognitoTabs() })
+        assertEquals(
+            setOf("chrome_devtools_remote~inc"),
+            harness.virtual { service.incognitoTabs() },
+        )
         assertTrue(replies.isEmpty())
     }
 

@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import net.die.phoneapi.helper.TouchscreenInfo
@@ -300,9 +299,11 @@ internal class PageInput(
             fallbackTouchscreen()
         }
 
+    /** Selects the tab, and refuses the input if Chrome won't, so it can't land on another. */
     private suspend fun foreground(cdp: CdpSession) {
         cdp.call("Page.bringToFront")
-        delay(FRONT_SETTLE_MS)
+        if (settled(FRONT_MS) { tabShowing(cdp) }) return
+        throw ApiException(409, "not_visible", "Chrome did not bring this tab forward.")
     }
 
     private fun cdpPoints(pointers: List<List<TimedPoint>>): ActionResult {
@@ -366,7 +367,6 @@ internal class PageInput(
     }
 
     private companion object {
-        const val FRONT_SETTLE_MS = 200L
         const val MIN_SWIPE_MS = 20L
         const val MAX_SWIPE_MS = 10_000L
         const val MAX_GESTURE_POINTS = 10_000

@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.WaitService
@@ -352,7 +353,7 @@ class TabsTest {
     }
 
     @Test
-    fun `stuck tabs close`() = runBlocking {
+    fun `stuck tabs close`() = runTest {
         val tabs = tabs()
         front = CHROME
         browser.stuck = true
@@ -361,6 +362,18 @@ class TabsTest {
         assertEquals("took_screen", error { tabs.browserFor(b).openTab("https://example.com/") })
         assertEquals(0, tabs.count(b))
         assertEquals(1, browser.closed.size)
+    }
+
+    @Test
+    fun `slow switches still land`() = runTest {
+        val tabs = tabs()
+        front = CHROME
+        browser.switchAfter = 3
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://example.com/")
+        // A slow switch to b's tab is no refusal: it lands, and b gets the tab it opened.
+        tabs.browserFor(b).openTab("https://example.com/")
+        assertEquals(1, tabs.count(b))
     }
 
     private suspend fun error(block: suspend () -> Unit): String =
@@ -426,6 +439,11 @@ class TabsTest {
         /** Chrome ignores selecting a tab. */
         var stuck = false
 
+        /** How many `showing` checks a tab switch takes to land. */
+        var switchAfter = 0
+        private var pending: String? = null
+        private var checks = 0
+
         override suspend fun targets(): List<BrowserTarget> = open.toList()
 
         /** Each capture call, as the tab and whether it turned recording on. */
@@ -461,10 +479,25 @@ class TabsTest {
 
         override suspend fun activate(id: String) {
             activated += id
-            if (!stuck) shown = id
+            when {
+                stuck -> Unit
+                switchAfter == 0 -> shown = id
+                else -> {
+                    pending = id
+                    checks = 0
+                }
+            }
         }
 
-        override suspend fun showing(id: String) = shown == id
+        override suspend fun showing(id: String): Boolean {
+            pending?.let {
+                if (++checks >= switchAfter) {
+                    shown = it
+                    pending = null
+                }
+            }
+            return shown == id
+        }
 
         override suspend fun snapshot(id: String, options: BrowserSnapshotOptions) =
             BrowserSnapshot(id = id, compact = "")

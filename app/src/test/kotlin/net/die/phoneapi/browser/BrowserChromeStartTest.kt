@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -25,28 +24,30 @@ class BrowserChromeStartTest {
                 // Chrome opens its socket once something has started it.
                 listSockets = { if (shown.isEmpty()) "[]" else BrowserServiceTest.CHROME },
             )
-        assertTrue(runBlocking { service.chromeStopped() })
-        val target = runBlocking { service.openTab("https://example.com/") }
+        assertTrue(harness.virtual { service.chromeStopped() })
+        val target = harness.virtual { service.openTab("https://example.com/") }
         assertEquals(listOf("com.android.chrome"), shown)
         assertEquals("chrome_devtools_remote~abc", target.id)
         assertEquals(true, target.tookScreen)
-        assertFalse(runBlocking { service.chromeStopped() })
+        assertFalse(harness.virtual { service.chromeStopped() })
     }
 
     @Test
-    fun `chrome that never opens fails`() = runTest {
-        val shown = mutableListOf<String>()
-        val service = harness.service(byteArrayOf(), sockets = "[]", showPackage = { shown += it })
-        // Virtual time runs the ten seconds of polls.
-        val error =
-            try {
-                service.openTab("https://example.com/")
-                null
-            } catch (e: ApiException) {
-                e
-            }
-        assertEquals("browser_unavailable", error?.error)
-        assertTrue(error?.message.orEmpty().contains("within 10 s of starting"), error?.message)
-        assertEquals(listOf("com.android.chrome"), shown)
-    }
+    fun `chrome that never opens fails`() =
+        runTest(harness.clock) {
+            val shown = mutableListOf<String>()
+            val service =
+                harness.service(byteArrayOf(), sockets = "[]", showPackage = { shown += it })
+            // Virtual time runs the ten seconds of polls.
+            val error =
+                try {
+                    service.openTab("https://example.com/")
+                    null
+                } catch (e: ApiException) {
+                    e
+                }
+            assertEquals("browser_unavailable", error?.error)
+            assertTrue(error?.message.orEmpty().contains("within 10 s of starting"), error?.message)
+            assertEquals(listOf("com.android.chrome"), shown)
+        }
 }

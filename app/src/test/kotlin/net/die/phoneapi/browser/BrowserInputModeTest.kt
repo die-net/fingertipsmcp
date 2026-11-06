@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import kotlinx.coroutines.runBlocking
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserInput
@@ -40,7 +39,7 @@ class BrowserInputModeTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.tap(
                         "chrome_devtools_remote~abc",
                         BrowserTapRequest(selector = "a", input = BrowserInput.CDP),
@@ -61,7 +60,7 @@ class BrowserInputModeTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.tap(
                         "chrome_devtools_remote~abc",
                         BrowserTapRequest(selector = "a", input = BrowserInput.CDP),
@@ -95,7 +94,7 @@ class BrowserInputModeTest {
                 },
                 inFront = { false },
             )
-        val result = runBlocking {
+        val result = harness.virtual {
             service.tap(
                 "chrome_devtools_remote~abc",
                 BrowserTapRequest(selector = "a", humanize = false, input = BrowserInput.CDP_MOUSE),
@@ -122,7 +121,7 @@ class BrowserInputModeTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.swipe(
                         "chrome_devtools_remote~abc",
                         BrowserSwipeRequest(
@@ -147,7 +146,7 @@ class BrowserInputModeTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.evaluate("chrome_devtools_remote~abc", EvalRequest("1"))
                 }
             }
@@ -170,7 +169,7 @@ class BrowserInputModeTest {
             )
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking {
+                harness.virtual {
                     service.read("chrome_devtools_remote~abc", BrowserReadRequest())
                 }
             }
