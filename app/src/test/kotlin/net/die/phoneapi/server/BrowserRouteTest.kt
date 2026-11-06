@@ -1,7 +1,6 @@
 package net.die.phoneapi.server
 
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -10,7 +9,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
-import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.delay
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.model.Scope
@@ -22,31 +20,15 @@ import org.junit.jupiter.api.Test
 
 class BrowserRouteTest {
     @Test
-    fun `no raw cdp socket`() = testApplication {
+    fun `no raw cdp socket`() {
         val api = FakeApi()
-        val browser = api.tokens.issue("browser", Scope.entries.toSet())
-        application { phoneApiModule(api.services) }
-        apiClient().use { client ->
+        val auth = "Authorization: Bearer ${api.tokens.issue("browser", Scope.entries.toSet())}"
+        val path = "/v1/browser/targets/chrome_devtools_remote~t/cdp"
+        RawServer(api.services).use { raw ->
             // Raw CDP would bypass tab ownership and the isolated world, so there is none.
-            val refused =
-                try {
-                    client.webSocket(
-                        "/v1/browser/targets/chrome_devtools_remote~t/cdp",
-                        { bearer(browser) },
-                    ) {}
-                    false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: IllegalStateException) {
-                    // The test client reports a refused handshake this way.
-                    true
-                }
-            assertTrue(refused)
-            val plain =
-                client.get("/v1/browser/targets/chrome_devtools_remote~t/cdp") {
-                    bearer(browser)
-                }
-            assertEquals(HttpStatusCode.NotFound, plain.status)
+            assertEquals(RawReply(404, ""), raw.upgrade(path, auth))
+            assertEquals(RawReply(404, ""), raw.get(path, auth))
+            assertEquals(101, raw.upgrade("/v1/events", auth).status)
         }
     }
 

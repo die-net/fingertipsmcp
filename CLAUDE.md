@@ -45,6 +45,7 @@ The agent is meant to use the phone the way its owner would. Many apps and sites
 - Log with `android.util.Log` and a `private const val TAG` that starts with `PhoneApi`.
 - Hidden and reflective framework calls live in `helper/.../compat/`, behind a `Build.VERSION.SDK_INT` check where the API varies by release. When one is missing, the call fails with a clear error and the helper keeps running. minSdk is 29, so there is no check for older releases.
 - Tests use JUnit Jupiter (`org.junit.jupiter.api.Assertions`) and `kotlinx-coroutines-test` for virtual time. Routes are tested through `ServerHarness` with fakes of the `ServerServices` interfaces, not a mocking library.
+- Tests don't sleep, wait out a real timer, or depend on a long timeout. Use virtual time, or wait for the event itself. A wait inside a library or test engine counts too. A test normally finishes well under 1 second. That is how long it should take, not a deadline: a safety timeout that fires only on failure can stay generous, and a tight one only makes the test flaky.
 - Test-only helpers, fakes, and parameters live under `src/test`, not in production classes.
 - A public or internal declaration whose purpose is not obvious from its name has a KDoc. Comments say what a thing is for and why, in full sentences.
 - No `TODO:` or `FIXME:` comments; detekt rejects them.

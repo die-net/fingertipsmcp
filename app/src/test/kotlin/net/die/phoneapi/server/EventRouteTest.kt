@@ -8,7 +8,6 @@ import io.ktor.websocket.readText
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -27,7 +26,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import org.junit.jupiter.api.fail
 
 class EventRouteTest {
     @Test
@@ -88,7 +86,7 @@ class EventRouteTest {
     }
 
     @Test
-    fun `bad query rejects upgrade`() = testApplication {
+    fun `bad query rejects upgrade`() {
         val api = FakeApi()
         val secret = api.tokens.issue("observe", setOf(Scope.OBSERVE))
         val opened = AtomicInteger()
@@ -100,24 +98,14 @@ class EventRouteTest {
                         emptyFlow()
                     }
             )
-        application { phoneApiModule(services) }
-        apiClient().use { client ->
-            // The test engine hides the status of a rejected upgrade, same as a forbidden socket.
-            try {
-                withTimeout(5.seconds) {
-                    client.webSocket(
-                        "/v1/events?types=logcat&logcatLevel=NOPE",
-                        { bearer(secret) },
-                    ) {}
-                }
-                fail("expected the upgrade to be rejected")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: IllegalStateException) {
-                assertTrue(e.message.orEmpty().contains("failed"), e.message)
-            }
+        RawServer(services).use { raw ->
+            val auth = "Authorization: Bearer $secret"
+            val refused = raw.upgrade("/v1/events?types=logcat&logcatLevel=NOPE", auth)
+            assertEquals(400, refused.status)
+            assertTrue(refused.body.contains("bad_request"), refused.body)
+            assertEquals(0, opened.get())
+            assertEquals(101, raw.upgrade("/v1/events?types=logcat", auth).status)
         }
-        assertEquals(0, opened.get())
     }
 }
 

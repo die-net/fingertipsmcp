@@ -9,7 +9,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.model.Scope
@@ -111,30 +110,24 @@ class AuthRoutesTest {
     }
 
     @Test
-    fun `sockets refuse other origins`() = testApplication {
+    fun `sockets refuse other origins`() {
+        val api = FakeApi()
+        val auth = "Authorization: Bearer ${api.tokens.issue("events", setOf(Scope.OBSERVE))}"
+        RawServer(api.services).use { raw ->
+            // A page on the API's own host at another port is what this check is for.
+            val refused = raw.upgrade("/v1/events", auth, "Origin: http://127.0.0.1:9999")
+            assertEquals(RawReply(404, ""), refused)
+            val own = raw.upgrade("/v1/events", auth, "Origin: http://127.0.0.1")
+            assertEquals(101, own.status)
+        }
+    }
+
+    @Test
+    fun `sockets take their own origin`() = testApplication {
         val api = FakeApi()
         val secret = api.tokens.issue("events", setOf(Scope.OBSERVE))
         application { phoneApiModule(api.services) }
         apiClient().use { client ->
-            val refused =
-                try {
-                    client.webSocket(
-                        "/v1/events",
-                        {
-                            bearer(secret)
-                            header(HttpHeaders.Host, "localhost")
-                            header(HttpHeaders.Origin, "http://127.0.0.1:9999")
-                        },
-                    ) {}
-                    false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: IllegalStateException) {
-                    // The test client reports a refused handshake this way.
-                    true
-                }
-            assertTrue(refused)
-
             for (origin in listOf("http://localhost", "http://LOCALHOST:80", null)) {
                 withTimeout(5.seconds) {
                     client.webSocket(
