@@ -192,6 +192,7 @@ Measured on the emulators on 2026-11-05, reading a web field in Chrome through `
 - The first read of a page Chrome has not built an accessibility tree for finds only Chrome's own views. The next read, a second later, found the field.
 - The report that `ui/find` lost a field after typing until the next page load was not reproduced as described, in 5 fresh-helper trials and 47 rounds of clearing and typing before the cache age was added. The `stale_ref` above is the closest failure found. Once the keyboard had opened, no window was missing from any list `ui/find` read in those rounds. Keyboard reads weren't logged, so this says nothing about a window dropping out during one.
 - Clearing the cache before every read took a 3,000-element page from about 25 ms to 900 ms for `ui/find` on Android 17, and a small page from 9 ms to 46 ms. With the 500 ms limit, polling that large page every 50 ms on Android 16 had a median of 9 ms and a 90th percentile of 691 ms. A snapshot past its own cache took about 700 ms there, and 19 ms on a small page. Android 10 took the same shape through the hidden `clearCache`: a 90th percentile of 590 ms and snapshots of about 570 ms, so that call does clear the cache there.
+- Android 13 with Chrome 109, on the emulator on 2026-11-06: the hidden `clearCache` that takes a connection id works. Polling a 3,000-element page every 50 ms had a median of 12 ms and a 90th percentile of about 1,240 ms, and nothing was logged about a failed clear. `setText` read back right away in 6 of 6 tries, and typing then `clear` went wrong 0 of 8. After the last key, a read could show the old text and one about 60 ms later the new text. That is inside the 500 ms limit, so Chrome 109 looks to send the event that Chrome 133 doesn't.
 
 ## The on-screen keyboard
 
@@ -227,7 +228,6 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 
 ## Still to check on the phone
 
-- That clearing UiAutomation's node cache works on Android 13, whose hidden `clearCache` takes a connection id. No emulator here runs it, so that path has never run. When it fails, reads fall back to the cache, and the keyboard refreshes each node.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That typing with mixed case and symbols, `clear`, and PIN unlock work on the phone, which has only run them on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
