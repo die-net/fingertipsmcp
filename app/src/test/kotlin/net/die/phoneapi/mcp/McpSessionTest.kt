@@ -187,6 +187,64 @@ class McpSessionTest {
     }
 
     @Test
+    fun `a request after losing a scope ends it at once`() = testApplication {
+        start()
+        apiClient().use { http ->
+            val id = initialize(http, alice)
+            api.tokens.setScopes(alice, Scope.entries.toSet() - Scope.CONTROL)
+            // No sweep runs: the request itself finds its tools need a scope the token lost.
+            val tap =
+                rpc(
+                    http,
+                    alice,
+                    id,
+                    """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tap",""" +
+                        """"arguments":{"x":1,"y":2}}}""",
+                )
+            assertEquals(HttpStatusCode.NotFound, tap.status)
+            assertEquals(0, api.inputTaps)
+            assertEquals(listOf(id), ended)
+            // A fresh initialize gets a session with the tools the token has now.
+            val again = initialize(http, alice)
+            val listed =
+                rpc(http, alice, again, """{"jsonrpc":"2.0","id":3,"method":"tools/list"}""")
+            assertEquals(HttpStatusCode.OK, listed.status)
+            assertTrue(!listed.bodyAsText().contains("\"tap\""))
+        }
+    }
+
+    @Test
+    fun `one failed end leaves the sweep running`() = testApplication {
+        var failed = false
+        val made =
+            start(
+                scope = {
+                    McpSessions(
+                        api.tokens,
+                        it,
+                        onEnd = { id ->
+                            if (!failed) {
+                                failed = true
+                                error("The tab store could not be saved")
+                            }
+                            ended += id
+                        },
+                        now = { clock },
+                    )
+                }
+            )
+        apiClient().use { http ->
+            initialize(http, alice)
+            initialize(http, bob)
+            clock += McpSessions.IDLE_MS + 1
+            made.sessions.sweep()
+            assertTrue(failed)
+            assertEquals(1, ended.size)
+            assertEquals(emptyList<String>(), made.sessions.list().map { it.token })
+        }
+    }
+
+    @Test
     fun `admins list and end sessions`() = testApplication {
         start()
         apiClient().use { http ->

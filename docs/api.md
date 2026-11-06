@@ -30,7 +30,7 @@ Scopes on a token:
 | `stream` | Viewer page and video/audio WebSockets |
 | `admin` | Token CRUD and stored unlock PIN |
 
-`phoneapi pair` grants every scope unless `--scopes` names some, such as `--scopes observe,stream`. It sends ADB `CREATE_TOKEN`, whose `scopes` extra takes the same list. With an admin token, `POST /v1/tokens` creates a token with the scopes it names, and `PATCH /v1/tokens/{id}` replaces a token's scopes. The token keeps its secret, and REST and WebSocket upgrades check the new scopes on the next request. An MCP session's tools are fixed at `initialize`, so a session whose token loses a scope it started with ends within 30 s; one whose token gains a scope sees the new tools when its client next initializes. The app's settings screen lists each token's scopes.
+`phoneapi pair` grants every scope unless `--scopes` names some, such as `--scopes observe,stream`. It sends ADB `CREATE_TOKEN`, whose `scopes` extra takes the same list. With an admin token, `POST /v1/tokens` creates a token with the scopes it names, and `PATCH /v1/tokens/{id}` replaces a token's scopes. The token keeps its secret, and REST and WebSocket upgrades check the new scopes on the next request. An MCP session's tools are fixed at `initialize`, so a session whose token loses a scope it started with ends at its next request, and within 30 s if it makes none; one whose token gains a scope sees the new tools when its client next initializes. The app's settings screen lists each token's scopes.
 
 ## Conventions
 
@@ -274,7 +274,7 @@ Many pages fetch their data after they load, or when a person taps something. `c
 | --- | --- | --- | --- |
 | `GET` | `/v1/tokens` | admin | `TokenInfo[]` |
 | `POST` | `/v1/tokens` | admin | `CreateTokenRequest` → `CreatedToken` (201; secret once) |
-| `PATCH` | `/v1/tokens/{id}` | admin | `UpdateTokenRequest` → `TokenInfo`: replace the token's scopes. Ends its MCP sessions that used a scope it lost within 30 s |
+| `PATCH` | `/v1/tokens/{id}` | admin | `UpdateTokenRequest` → `TokenInfo`: replace the token's scopes. Ends its MCP sessions that used a scope it lost at their next request, or within 30 s |
 | `DELETE` | `/v1/tokens/{id}` | admin | Revoke → 204. Ends the token's sessions within 30 s |
 | `POST` | `/v1/sessions` | any | Start a session → 201 `SessionStarted` |
 | `DELETE` | `/v1/sessions/current` | any | End the session named in `Mcp-Session-Id` → 204 |
