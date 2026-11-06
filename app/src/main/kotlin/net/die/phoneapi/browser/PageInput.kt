@@ -2,6 +2,7 @@ package net.die.phoneapi.browser
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.helper.TouchscreenInfo
 import net.die.phoneapi.input.FingerMotion
 import net.die.phoneapi.input.Humanizer
@@ -92,7 +93,7 @@ internal class PageInput(
         return when (request.input) {
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
-                foreground(cdp)
+                showTab(cdp, pkg)
                 val ends = swipeEnds(cdp, id, request)
                 val metrics = cdp.call("Page.getLayoutMetrics")
                 val content = contentOnScreen(pkg)
@@ -143,7 +144,7 @@ internal class PageInput(
         when (request.input) {
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
-                foreground(cdp)
+                showTab(cdp, pkg)
                 val metrics = cdp.call("Page.getLayoutMetrics")
                 val content = contentOnScreen(pkg)
                 val mapped =
@@ -243,7 +244,7 @@ internal class PageInput(
         pkg: String?,
         humanize: Boolean,
     ): ActionResult {
-        foreground(cdp)
+        showTab(cdp, pkg)
         val boxes = quads(cdp, id, wanted)
         val hit = screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentOnScreen(pkg))
         return touchAt(hit, humanize)
@@ -298,6 +299,15 @@ internal class PageInput(
         } catch (_: ApiException) {
             fallbackTouchscreen()
         }
+
+    /**
+     * Brings the app up, then selects the tab. In that order, since Chrome coming forward can
+     * select another tab after this one.
+     */
+    private suspend fun showTab(cdp: CdpSession, pkg: String?) {
+        contentOnScreen(pkg)
+        foreground(cdp)
+    }
 
     /** Selects the tab, and refuses the input if Chrome won't, so it can't land on another. */
     private suspend fun foreground(cdp: CdpSession) {

@@ -10,14 +10,20 @@ internal object ImeKeyboard {
     private const val MAX_NODES = 600
     private const val MIN_KEY_PX = 16
 
-    /** The IME's tappable keys, or an empty list if no IME window is showing. Blocking IPC. */
-    fun scan(windows: List<AccessibilityWindowInfo>): List<TreeKey> {
+    /**
+     * The IME's tappable keys, or an empty list if no IME window is showing. Blocking IPC.
+     *
+     * Gboard can relabel its letters without an event that reaches the accessibility cache, so
+     * [refresh] reads each node from the keyboard. A caller that has cleared the cache doesn't need
+     * it, and that costs far fewer calls.
+     */
+    fun scan(windows: List<AccessibilityWindowInfo>, refresh: Boolean): List<TreeKey> {
         val ime = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
         val root = ime?.root ?: return emptyList()
-        return collect(root)
+        return collect(root, refresh)
     }
 
-    private fun collect(root: AccessibilityNodeInfo): List<TreeKey> {
+    private fun collect(root: AccessibilityNodeInfo, refresh: Boolean): List<TreeKey> {
         val keys = ArrayList<TreeKey>()
         val stack = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
         val bounds = Rect()
@@ -25,6 +31,7 @@ internal object ImeKeyboard {
         while (stack.isNotEmpty() && visited < MAX_NODES) {
             val node = stack.removeLast()
             visited++
+            if (refresh) node.refresh()
             if (node.isVisibleToUser) {
                 labelOf(node)?.let { label ->
                     node.getBoundsInScreen(bounds)

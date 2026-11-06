@@ -10,9 +10,9 @@ import net.die.phoneapi.browser.CHROME_PACKAGE
 import net.die.phoneapi.browser.CHROME_SOCKET
 import net.die.phoneapi.browser.FRONT_MS
 import net.die.phoneapi.browser.parseBrowserTargetId
-import net.die.phoneapi.browser.settled
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.WaitService
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.lease.ScreenLease
 import net.die.phoneapi.model.ApiException
@@ -290,11 +290,28 @@ class Tabs(
         // With no other session's tabs, there is nothing Chrome could show by mistake.
         if (owners.values.all { it.holder == holder }) return block()
         val before = chromeInFront()
-        if (before) bestEffort { showFor(holder) }
+        if (before && !shownOrUnknown(holder)) {
+            throw ApiException(
+                409,
+                "tab_stuck",
+                "Chrome would not switch tabs, so this call did not run. Try it again.",
+            )
+        }
         val value = block()
         if (!before && chromeInFront()) bestEffort { showFor(holder) }
         return value
     }
+
+    /**
+     * Whether Chrome shows nothing [holder] must not see. Chrome not answering counts as yes: a
+     * session may need the screen to get away from a hung Chrome, and the next call tries again.
+     */
+    private suspend fun shownOrUnknown(holder: Holder): Boolean =
+        try {
+            showFor(holder)
+        } catch (_: ApiException) {
+            true
+        }
 
     /** The ids of Chrome's tabs now, or null when Chrome is not answering. */
     private suspend fun chromeTabs(): Set<String>? =

@@ -2,6 +2,7 @@ package net.die.phoneapi.input
 
 import net.die.phoneapi.model.Rect
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -59,6 +60,49 @@ class KeyMatcherTest {
         assertEquals("Symbol keyboard", KeyMatcher.symbolsPage(letters)?.label)
         assertEquals("More symbols", KeyMatcher.moreSymbolsPage(symbols)?.label)
         assertEquals("Letter keyboard", KeyMatcher.lettersPage(symbols)?.label)
+    }
+
+    @Test
+    fun `a suggestion is not a key`() {
+        val real = key("q", gboardId + "0_0")
+        assertEquals(real, KeyMatcher.forChar(listOf(key("q"), real), 'q'))
+    }
+
+    @Test
+    fun `a keyboard without ids works`() {
+        assertEquals("q", KeyMatcher.forChar(listOf(key("w"), key("q")), 'q')?.label)
+    }
+
+    @Test
+    fun `shift can be pressed again`() {
+        val upper = listOf(key("Shift"), key("B"))
+        assertEquals("Shift", KeyMatcher.modifierFor(upper, 'b', setOf("Shift"))?.label)
+    }
+
+    @Test
+    fun `a page is pressed only once`() {
+        val pages = listOf(key("Symbol keyboard"), key("q"))
+        assertEquals("Symbol keyboard", KeyMatcher.modifierFor(pages, '-', emptySet())?.label)
+        assertNull(KeyMatcher.modifierFor(pages, '-', setOf("Symbol keyboard")))
+    }
+
+    @Test
+    fun `shift waits for the letter`() {
+        val shift = key("Shift")
+        val before = listOf(shift, key("z"))
+        val relabeled = listOf(key("Shift enabled"), key("z"))
+        assertFalse(KeyMatcher.redrawn(before, relabeled, shift, 'Z'))
+        val done = listOf(key("Shift enabled"), key("Z"))
+        assertTrue(KeyMatcher.redrawn(before, done, shift, 'Z'))
+    }
+
+    @Test
+    fun `any change ends a page wait`() {
+        val page = key("Letter keyboard")
+        val before = listOf(page, key("1"))
+        val letters = listOf(key("Symbol keyboard"), key("z"))
+        assertFalse(KeyMatcher.redrawn(before, before, page, 'Z'))
+        assertTrue(KeyMatcher.redrawn(before, letters, page, 'Z'))
     }
 
     @Test

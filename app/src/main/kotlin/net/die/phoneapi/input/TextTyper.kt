@@ -4,11 +4,14 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import kotlin.random.Random
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import net.die.phoneapi.core.DeviceStateTracker
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
+import net.die.phoneapi.model.DeviceStateSummary
 import net.die.phoneapi.model.FindRequest
 import net.die.phoneapi.model.NodeSelector
 import net.die.phoneapi.model.Point
@@ -47,6 +50,7 @@ class TextTyper(
             tree.find(FindRequest(selector, limit = 1)).matches.firstOrNull()
                 ?: throw ApiException.notFound("No node matches the selector")
         val target = tree.touchTarget(node.ref, force = false)
+        val before = tree.seq.value
         val outcome = touch.tap(target)
         points += outcome.points
         if (!outcome.ok) throw gestureCancelled()
@@ -59,7 +63,7 @@ class TextTyper(
                 }
             }
         } else {
-            delay(NON_EDITABLE_FOCUS_SETTLE_MS)
+            awaitKeyboardAfterTap(tree.seq, before, state.state, FOCUS_WAIT_MS)
         }
     }
 
@@ -86,6 +90,8 @@ class TextTyper(
         val unsupported = request.text.filterNot { it == '\n' || it in ' '..'~' }.toSet()
         if (unsupported.isNotEmpty()) throw unsupportedChars(unsupported)
         withTimeoutOrNull(IME_WAIT_MS) { state.state.first { it.ime.visible } }
+        // A keyboard still sliding up reports keys above where they end up.
+        awaitSteadyKeys(::keys, KEYBOARD_WAIT_MS) { it.isNotEmpty() }
         val keys = keys()
         if (!KeyMatcher.looksLikeKeyboard(keys)) return null
         if (request.clear) clearWithKeyboard(points)
@@ -125,30 +131,30 @@ class TextTyper(
                 tapKey(key, points)
                 return
             }
-            val modifier = modifierFor(keys, c, tried) ?: throw unsupportedChars(setOf(c))
+            val modifier =
+                KeyMatcher.modifierFor(keys, c, tried) ?: throw unsupportedChars(setOf(c))
             tried += modifier.label
             tapKey(modifier, points)
-            delay(MODIFIER_SETTLE_MS)
+            // A keyboard that never redraws is left to the next attempt, which tries another key.
+            awaitSteadyKeys(::keys, KEYBOARD_WAIT_MS) { now ->
+                KeyMatcher.redrawn(keys, now, modifier, c)
+            }
         }
         throw unsupportedChars(setOf(c))
     }
 
-    /** The shift or page key to press so that [c] shows up, or null if we've run out of pages. */
-    private fun modifierFor(keys: List<ImeKey>, c: Char, tried: Set<String>): ImeKey? {
-        val candidates =
-            if (c.isLetter()) {
-                if (KeyMatcher.otherCase(keys, c) != null) listOfNotNull(KeyMatcher.shift(keys))
-                else listOfNotNull(KeyMatcher.lettersPage(keys))
-            } else {
-                listOfNotNull(KeyMatcher.symbolsPage(keys), KeyMatcher.moreSymbolsPage(keys))
-            }
-        return candidates.firstOrNull { it.label !in tried }
-    }
-
     private suspend fun clearWithKeyboard(points: MutableList<Point>) {
-        if (tree.selectFocused() == 0) return
-        delay(MODIFIER_SETTLE_MS)
-        KeyMatcher.delete(keys())?.let { tapKey(it, points) }
+        val cleared =
+            clearField(tree::selectFocused) {
+                KeyMatcher.delete(keys())?.let { tapKey(it, points) }
+            }
+        if (!cleared) {
+            throw ApiException(
+                409,
+                "text_not_cleared",
+                "The field would not clear, so nothing was typed",
+            )
+        }
     }
 
     private suspend fun tapKey(key: ImeKey, points: MutableList<Point>) {
@@ -210,10 +216,59 @@ class TextTyper(
         const val MAX_TEXT = 10_000
         const val MAX_DELAY_MS = 5_000L
         const val MAX_KEY_ATTEMPTS = 5
-        const val MODIFIER_SETTLE_MS = 120L
+        const val KEYBOARD_WAIT_MS = 1_000L
         const val POLL_MS = 50L
         const val FOCUS_WAIT_MS = 1_000L
-        const val NON_EDITABLE_FOCUS_SETTLE_MS = 400L
         const val IME_WAIT_MS = 1_500L
     }
 }
+
+/**
+ * Selects the focused field's text and deletes it until the field is empty. The keyboard hears of a
+ * selection when it hears of it, so a delete can take only one character. What counts is that the
+ * field ends up empty, which [select] reports. False if it never does.
+ */
+internal suspend fun clearField(select: () -> Int, delete: suspend () -> Unit): Boolean =
+    settled(CLEAR_WAIT_MS) {
+        val empty = select() == 0
+        if (!empty) delete()
+        empty
+    }
+
+/**
+ * Waits for the keyboard after a tap on something that isn't a field, which may open one. The
+ * screen has to react first, or a keyboard already up for another field would look like the answer.
+ * A tap that opens nothing runs out [timeoutMs], and the caller carries on as it would anyway.
+ */
+internal suspend fun awaitKeyboardAfterTap(
+    seq: Flow<Long>,
+    before: Long,
+    state: Flow<DeviceStateSummary>,
+    timeoutMs: Long,
+) {
+    withTimeoutOrNull(timeoutMs) {
+        seq.first { it != before }
+        state.first { it.ime.visible }
+    }
+}
+
+/**
+ * Waits until the keyboard's keys meet [wanted] and read the same twice running. A key's label
+ * changes before the keyboard has finished redrawing, and a tap in that gap is lost or lands on the
+ * wrong key, so a change alone is not enough. True when they held still.
+ */
+internal suspend fun awaitSteadyKeys(
+    read: () -> List<ImeKey>,
+    timeoutMs: Long,
+    wanted: (List<ImeKey>) -> Boolean,
+): Boolean {
+    var last: List<ImeKey>? = null
+    return settled(timeoutMs) {
+        val now = read()
+        val steady = now == last && wanted(now)
+        last = now
+        steady
+    }
+}
+
+private const val CLEAR_WAIT_MS = 3_000L

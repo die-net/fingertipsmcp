@@ -8,16 +8,15 @@ import kotlin.random.Random
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import net.die.phoneapi.core.DeviceStateTracker
 import net.die.phoneapi.core.EventBus
 import net.die.phoneapi.core.PowerService
 import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.awaitDeviceState
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.failureMessage
 import net.die.phoneapi.input.SwipeSpec
@@ -195,7 +194,10 @@ class PowerServiceImpl(
         if (!keypad.covers(pin)) {
             // On most devices the keypad sits behind the lock screen until it is swiped away.
             revealBouncer()
-            keypad = scanKeypad()
+            settled(BOUNCER_WAIT_MS) {
+                keypad = scanKeypad()
+                keypad.covers(pin)
+            }
         }
         if (!keypad.covers(pin)) {
             return Attempt(ok = false, message = NO_KEYPAD)
@@ -221,15 +223,8 @@ class PowerServiceImpl(
 
     /** Brings up the credential prompt. */
     private suspend fun revealBouncer() {
-        if (shell.isAvailable) {
-            val result = shell.exec(listOf("wm", "dismiss-keyguard"))
-            if (result.ok) {
-                awaitUiChange()
-                return
-            }
-        }
+        if (shell.isAvailable && shell.exec(listOf("wm", "dismiss-keyguard")).ok) return
         swipeUp()
-        awaitUiChange()
     }
 
     private suspend fun swipeUp() {
@@ -238,13 +233,6 @@ class PowerServiceImpl(
         val from = Point(x, screen.heightPx * SWIPE_FROM)
         val to = Point(x, screen.heightPx * SWIPE_TO)
         touch.swipe(from, to, SwipeSpec(durationMs = SWIPE_MS, fling = true))
-    }
-
-    /** Lets the bouncer's window settle before reading the tree again. */
-    private suspend fun awaitUiChange() {
-        val before = seq.value
-        withTimeoutOrNull(BOUNCER_WAIT_MS) { seq.first { it != before } }
-        delay(BOUNCER_SETTLE_MS)
     }
 
     private fun wakeFailed() =
@@ -274,7 +262,6 @@ class PowerServiceImpl(
         const val UNLOCK_WAIT_MS = 3_000L
         const val LOCK_WAIT_MS = 2_000L
         const val BOUNCER_WAIT_MS = 1_500L
-        const val BOUNCER_SETTLE_MS = 150L
         const val MIN_DIGIT_GAP_MS = 110L
         const val MAX_DIGIT_GAP_MS = 240L
         const val SWIPE_MS = 220L

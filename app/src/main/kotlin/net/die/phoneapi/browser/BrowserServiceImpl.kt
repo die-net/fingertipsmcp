@@ -24,6 +24,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.core.BrowserService
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.helper.TouchscreenInfo
 import net.die.phoneapi.input.SwipeSpec
 import net.die.phoneapi.input.fallbackTouchscreen

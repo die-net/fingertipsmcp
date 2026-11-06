@@ -35,6 +35,7 @@ import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.model.WaitRequest
 import net.die.phoneapi.model.WaitResult
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -374,6 +375,20 @@ class TabsTest {
         // A slow switch to b's tab is no refusal: it lands, and b gets the tab it opened.
         tabs.browserFor(b).openTab("https://example.com/")
         assertEquals(1, tabs.count(b))
+    }
+
+    @Test
+    fun `a stuck switch stops the call`() = runTest {
+        val tabs = tabs()
+        front = CHROME
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://example.com/")
+        val theirs = tabs.browserFor(b).openTab("https://example.com/")
+        browser.shown = theirs.id
+        browser.stuck = true
+        var ran = false
+        assertEquals("tab_stuck", error { tabs.screenCall(a) { ran = true } })
+        assertFalse(ran)
     }
 
     private suspend fun error(block: suspend () -> Unit): String =

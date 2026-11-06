@@ -183,6 +183,21 @@ Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encod
 
 On the phone on 2026-10-22, "UiAutomationService already registered" came from two calls connecting UiAutomation at once in one helper. Connecting is now serialized, and two `ui_snapshot` calls at once then connected once. The first snapshot right after connecting saw 0 nodes and 0 windows; the next, 9 seconds later, saw 30 nodes.
 
+## The on-screen keyboard
+
+Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web field in Chrome through Gboard (15.1 on Android 16).
+
+- On Android 16, Gboard relabels its letters without an event that reaches UiAutomation's node cache. After a shift tap the shift key read "Shift enabled" while the cached letters stayed lowercase for over a second. Both `AccessibilityNodeInfo.refresh()` on each node and `UiAutomation.clearCache()` gave the new labels at once. Typing 10 mixed characters took about 5.0 s from the cache, 5.5 s with `clearCache`, and 7.4 s with `refresh` on each node. `clearCache` needs Android 14, so older releases refresh each node.
+- Gboard lists its suggestions among its keys. A suggestion can be one letter, and it has no view id, where a real key's id holds `key_pos_`. Tapping one enters the letter and a space.
+- A keyboard still sliding up reports keys that aren't where it ends up. Tapping then lost the first letter in 5 of 6 runs on Android 16 on the old build.
+- On Android 10, labels change before the redraw ends. Tapping as soon as they changed lost or swapped a letter in 2 of 8 runs. Waiting until they hold still for one poll lost none in 16.
+- Read just after a letter, the keys can still show the shift that letter ended. Pressing shift then turns it back on, and pressing it again recovers. This happened in 1 of 8 runs on Android 16.
+- `findFocus(FOCUS_INPUT)` in Chrome returns a `FrameLayout`, not the web field. The field is a focused, editable node below it.
+- Final build: Android 10 typed wrong 0 of 8 and cleared wrong 0 of 8. Android 16 typed wrong 0 of 12, cleared wrong 1 of 12, and typed `ABCD` right 4 of 4. The old build on Android 16 typed wrong 5 of 6 and cleared wrong 2 of 6.
+- The one bad clear on Android 16 refused `n` with `unsupported_char` after the field had emptied. The cause wasn't found.
+- On Android 16, `ui/find` still showed a web field's old text a second after `setText`, though the field had the new text. Android 10 showed the new text.
+- On Android 16, after the helper starts, `ui/find` stops finding a field on the first page once it is typed into, until the next page loads. The old build does this too.
+
 ## MCP SDK
 
 PhoneAPI uses the Kotlin MCP SDK 0.16.0. A prototype with 0.15.0 on the Android 16 emulator showed, on 2026-10-20:
@@ -204,6 +219,7 @@ MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need
 
 ## Still to check on the phone
 
+- That typing with mixed case and symbols, `clear`, and PIN unlock work on the phone, which has only run them on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
 - That audio still starts on Android 11 with the helper's `getAttributionSource` override in place. Android 11 has no such method, so it is never called there.
 - That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
