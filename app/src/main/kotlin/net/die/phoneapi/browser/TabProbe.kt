@@ -17,12 +17,9 @@ import net.die.phoneapi.model.ApiException
  */
 internal class TabProbe(
     private val io: CoroutineContext,
-    /** Opens a DevTools socket that gives up reading after about [probeMs]. */
+    /** Opens a DevTools socket that gives up reading after about [PROBE_MS]. */
     private val open: suspend (String) -> DevtoolsSocket,
     private val websocketKey: () -> String,
-    private val probeMs: Long = PROBE_MS,
-    private val reloadMs: Long = RELOAD_MS,
-    private val frozenMs: Long = FROZEN_MS,
 ) {
     /** Whether [socket] is Chrome's and its browser endpoint does not answer. */
     suspend fun frozen(socket: String): Boolean = socket == CHROME_SOCKET && !browserAnswers(socket)
@@ -35,7 +32,7 @@ internal class TabProbe(
                     devtools.withStreams { input, output ->
                         CdpSession(input, output, io, websocketKey).use { cdp ->
                             cdp.open("/devtools/browser")
-                            withTimeoutOrNull(probeMs) { cdp.call("Browser.getVersion") } != null
+                            withTimeoutOrNull(PROBE_MS) { cdp.call("Browser.getVersion") } != null
                         }
                     }
                 }
@@ -82,8 +79,8 @@ internal class TabProbe(
         if (socket != CHROME_SOCKET) return
         // In an isolated world, so the page can neither see the check nor fool it by replacing
         // MessageChannel. A page busy running script answers nothing here, and is let through.
-        val world = withTimeoutOrNull(probeMs) { isolatedWorld(cdp) } ?: return
-        val ran = withTimeoutOrNull(frozenMs) { evaluateInWorld(cdp, world, SELF_MESSAGE, true) }
+        val world = withTimeoutOrNull(PROBE_MS) { isolatedWorld(cdp) } ?: return
+        val ran = withTimeoutOrNull(FROZEN_MS) { evaluateInWorld(cdp, world, SELF_MESSAGE, true) }
         if (ran != null) return
         throw ApiException(
             409,
@@ -102,20 +99,20 @@ internal class TabProbe(
      * as a script probe with a timeout would.
      */
     private suspend fun unloaded(cdp: CdpSession, socket: String): Boolean {
-        if (withTimeoutOrNull(probeMs) { cdp.call("Inspector.enable") } == null) {
+        if (withTimeoutOrNull(PROBE_MS) { cdp.call("Inspector.enable") } == null) {
             if (!browserAnswers(socket)) throw browserFrozen()
             return false
         }
         return cdp.seen("Inspector.targetCrashed")
     }
 
-    /** Waits, up to [reloadMs], until the reloaded page has its document. */
+    /** Waits, up to [RELOAD_MS], until the reloaded page has its document. */
     private suspend fun awaitLoaded(cdp: CdpSession) {
-        withTimeoutOrNull(reloadMs) {
+        withTimeoutOrNull(RELOAD_MS) {
             while (true) {
                 // In an isolated world, like all page script, so the page cannot see the read.
                 val state =
-                    withTimeoutOrNull(probeMs) {
+                    withTimeoutOrNull(PROBE_MS) {
                         evaluateIn(cdp, "document.readyState", awaitPromise = false).value
                     }
                 val text = (state as? JsonPrimitive)?.contentOrNull

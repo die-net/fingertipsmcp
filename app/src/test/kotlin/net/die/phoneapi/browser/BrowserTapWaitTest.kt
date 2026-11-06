@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** A tap on a CSS selector waits for its element to appear, for up to waitMs. */
-@Suppress("InjectDispatcher") // Scripted sockets are read on a real dispatcher.
 class BrowserTapWaitTest {
     private val harness = BrowserServiceTest()
 
