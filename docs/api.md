@@ -116,7 +116,7 @@ Authenticated errors are JSON:
 | 404 | *(empty body)* | Missing/invalid Bearer |
 | 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, or the PIN was rejected |
 | 409 | `no_keyboard` | `mode` `keyboard` and no on-screen keyboard keys were found, or the keyboard went away during typing and stayed away |
-| 409 | `no_editor` | Setting text with no text field focused |
+| 409 | `no_editor` | Setting text with no text field focused, or a `selector` field that did not take focus after the tap, so nothing was typed |
 | 409 | `wake_failed` | The screen did not turn on |
 | 409 | `lock_failed` | The helper could not lock the screen |
 | 409 | `key_failed` | The helper did not deliver the key |
