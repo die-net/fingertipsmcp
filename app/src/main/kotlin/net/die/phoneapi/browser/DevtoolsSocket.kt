@@ -9,7 +9,9 @@ internal interface DevtoolsSocket : Closeable {
     val input: InputStream
     val output: OutputStream
 
-    /** True once a read timeout, rather than the peer, closed the socket. */
+    /**
+     * True once a timeout waiting for the peer to answer, rather than the peer, closed the socket.
+     */
     val timedOut: Boolean
         get() = false
 }

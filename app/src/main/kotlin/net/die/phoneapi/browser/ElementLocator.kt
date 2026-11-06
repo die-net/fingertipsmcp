@@ -1,6 +1,7 @@
 package net.die.phoneapi.browser
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -26,18 +27,31 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
             is TapTarget.Css -> cssQuads(cdp, target)
         }
 
-    /** Polls until [target] matches an element with a box, or its wait is up. */
+    /**
+     * Polls until [target] matches an element with a box, or its wait is up. Then the last reason
+     * it did not, no match or no box, is the failure.
+     */
     private suspend fun cssQuads(cdp: CdpSession, target: TapTarget.Css): JsonArray {
-        val deadline = System.currentTimeMillis() + target.waitMs
-        while (true) {
+        var why: ApiException? = null
+        suspend fun attempt(): JsonArray? =
             try {
-                return boxed(cdp, cssNode(cdp, target.selector))
+                boxed(cdp, cssNode(cdp, target.selector))
             } catch (e: ApiException) {
-                val missing = e.error == "not_found" || e.error == "offscreen"
-                if (!missing || System.currentTimeMillis() + ELEMENT_POLL_MS > deadline) throw e
+                if (e.error != "not_found" && e.error != "offscreen") throw e
+                why = e
+                null
             }
-            delay(ELEMENT_POLL_MS)
+        attempt()?.let {
+            return it
         }
+        return withTimeoutOrNull(target.waitMs) {
+            var quads: JsonArray? = null
+            while (quads == null) {
+                delay(ELEMENT_POLL_MS)
+                quads = attempt()
+            }
+            quads
+        } ?: throw checkNotNull(why)
     }
 
     private suspend fun refQuads(cdp: CdpSession, targetId: String, ref: String): JsonArray {
