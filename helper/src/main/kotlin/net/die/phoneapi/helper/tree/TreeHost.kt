@@ -175,7 +175,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 val call = json.decodeFromString(serializer<TreeTouchCall>(), body)
                 val rect = runBlocking {
                     nodes.withNode(call.ref) { node ->
-                        targeting.touchTarget(node, session.windows(), call.force)
+                        targeting.touchTarget(node, session::windows, call.force)
                     }
                 }
                 json.encodeToString(rect)
