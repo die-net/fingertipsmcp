@@ -36,6 +36,7 @@ import net.die.phoneapi.model.TreeFocusCall
 import net.die.phoneapi.model.TreeFocusedText
 import net.die.phoneapi.model.TreeFound
 import net.die.phoneapi.model.TreeGlobalCall
+import net.die.phoneapi.model.TreeHoldCall
 import net.die.phoneapi.model.TreeKey
 import net.die.phoneapi.model.TreePackageCall
 import net.die.phoneapi.model.TreeResult
@@ -71,25 +72,27 @@ class TreeSession(
     var lastChangeMs: Long = SystemClock.uptimeMillis()
         private set
 
-    @Volatile private var listening = false
+    private val hold =
+        HoldSync<IHelper>(
+            send = { proxy, held -> call(proxy, "setHold", encode(TreeHoldCall(held))) },
+            onFailure = { held, e ->
+                Log.w(
+                    TAG,
+                    "Could not set the UI hold to $held; resending when the helper attaches",
+                    e,
+                )
+            },
+        )
 
     /** Keeps the helper's UiAutomation connection up while something is collecting events. */
     fun start(scope: CoroutineScope) {
-        scope.launch {
-            bus.subscribers.collect { count ->
-                val want = count > 0
-                if (want == listening) return@collect
-                listening = want
-                if (want) runCatching { rpc("hold", "{}") }
-                else runCatching { rpc("release", "{}") }
-            }
-        }
+        scope.launch { bus.subscribers.collect { count -> hold.want(count > 0, helper::require) } }
     }
 
     /** Called once a helper binder is accepted, so events have somewhere to land. */
     fun attach(proxy: IHelper) {
         proxy.setTreeClient(this)
-        if (listening) runCatching { proxy.tree("hold", envelope("{}")) }
+        hold.attached(proxy)
     }
 
     fun snapshot(options: SnapshotOptions): UiSnapshot {
@@ -182,8 +185,9 @@ class TreeSession(
         onSession(connected)
     }
 
-    private fun rpc(op: String, body: String): String {
-        val proxy = helper.require()
+    private fun rpc(op: String, body: String): String = call(helper.require(), op, body)
+
+    private fun call(proxy: IHelper, op: String, body: String): String {
         val raw =
             try {
                 proxy.tree(op, envelope(body))
