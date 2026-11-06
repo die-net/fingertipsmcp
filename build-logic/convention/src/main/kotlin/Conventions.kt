@@ -38,9 +38,11 @@ internal fun Project.configureDetekt() {
     extensions.configure<DetektExtension> {
         buildUponDefaultConfig.set(true)
         allRules.set(true)
-        // Parallel analysis races in the Kotlin compiler (KT-88461) and now and then fails a run
-        // with an ArrayIndexOutOfBoundsException while analyzing some file. detekt/detekt#9121
-        // recommends leaving it off until that is fixed.
+        // Parallel analysis shares the Kotlin compiler's KotlinCliJavaFileManagerImpl, which is not
+        // thread-safe (KT-88461), so a run now and then fails with an
+        // ArrayIndexOutOfBoundsException while analyzing some file. detekt/detekt#9121 is blocked
+        // on that issue and recommends leaving parallel off. Both were still open for detekt
+        // 2.0.0-alpha.6, so check them again before turning it on.
         parallel.set(false)
         debug.set(providers.gradleProperty("detektDebug").isPresent)
         config.setFrom(rootProject.file("config/detekt.yml"))
