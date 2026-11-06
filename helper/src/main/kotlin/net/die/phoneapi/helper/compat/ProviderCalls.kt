@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Process
-import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 
 /**
@@ -20,18 +19,21 @@ internal object ProviderCalls {
     private const val MODERN_CALL_ARITY = 5
     private const val TAGGED_CALL_ARITY = 6
 
-    fun call(authority: String, method: String, extras: Bundle): Bundle? {
-        val activityManager = activityManager()
-        val token = Binder()
-        val get = externalGet(activityManager)
-        val holder = invoke(get, activityManager, fill(get, authority, token)) ?: return null
-        try {
-            return invokeCall(provider(holder), authority, method, extras)
-        } finally {
-            val remove = externalRemove(activityManager)
-            invoke(remove, activityManager, fill(remove, authority, token))
+    /** Calls [method] on the provider at [authority]. Every failure is a runtime exception. */
+    fun call(authority: String, method: String, extras: Bundle): Bundle? =
+        reflective("Content provider call") {
+            val activityManager = activityManager()
+            val token = Binder()
+            val get = externalGet(activityManager)
+            val holder =
+                invoke(get, activityManager, fill(get, authority, token)) ?: return@reflective null
+            try {
+                invokeCall(provider(holder), authority, method, extras)
+            } finally {
+                val remove = externalRemove(activityManager)
+                invoke(remove, activityManager, fill(remove, authority, token))
+            }
         }
-    }
 
     private fun activityManager(): Any {
         val manager = Class.forName("android.app.ActivityManager")
@@ -99,9 +101,5 @@ internal object ProviderCalls {
 
     @Suppress("SpreadOperator") // The argument list is the call itself, a few values.
     private fun invoke(method: Method, target: Any?, args: Array<Any?>): Any? =
-        try {
-            method.invoke(target, *args)
-        } catch (e: InvocationTargetException) {
-            throw e.cause ?: e
-        }
+        method.invoke(target, *args)
 }

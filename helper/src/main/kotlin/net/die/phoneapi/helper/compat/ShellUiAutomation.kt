@@ -4,7 +4,6 @@ import android.app.UiAutomation
 import android.os.Build
 import android.os.Looper
 import android.util.Log
-import java.lang.reflect.InvocationTargetException
 
 /**
  * Connects a shell [UiAutomation]. `UiAutomationConnection` and `connect` are hidden, so the
@@ -13,30 +12,29 @@ import java.lang.reflect.InvocationTargetException
 internal object ShellUiAutomation {
     private const val TAG = "PhoneApiHelper"
 
-    fun connect(looper: Looper, flags: Int): UiAutomation {
-        val connection =
-            Class.forName("android.app.UiAutomationConnection")
-                .getDeclaredConstructor()
-                .newInstance()
-        val type = Class.forName("android.app.IUiAutomationConnection")
-        val ui =
-            UiAutomation::class
-                .java
-                .getConstructor(Looper::class.java, type)
-                .newInstance(looper, connection) as UiAutomation
-        try {
+    fun connect(looper: Looper, flags: Int): UiAutomation =
+        reflective("UiAutomation connect") {
+            val connection =
+                Class.forName("android.app.UiAutomationConnection")
+                    .getDeclaredConstructor()
+                    .newInstance()
+            val type = Class.forName("android.app.IUiAutomationConnection")
+            val ui =
+                UiAutomation::class
+                    .java
+                    .getConstructor(Looper::class.java, type)
+                    .newInstance(looper, connection) as UiAutomation
             UiAutomation::class
                 .java
                 .getMethod("connect", Int::class.javaPrimitiveType)
                 .invoke(ui, flags)
-        } catch (e: InvocationTargetException) {
-            throw IllegalStateException(e.cause?.message ?: "UiAutomation connect failed", e)
+            ui
         }
-        return ui
-    }
 
     fun disconnect(ui: UiAutomation) {
-        UiAutomation::class.java.getMethod("disconnect").invoke(ui)
+        reflective("UiAutomation disconnect") {
+            UiAutomation::class.java.getMethod("disconnect").invoke(ui)
+        }
     }
 
     /**

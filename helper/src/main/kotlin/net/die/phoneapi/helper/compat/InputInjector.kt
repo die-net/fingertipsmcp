@@ -17,9 +17,12 @@ internal class InputInjector {
     init {
         val binder =
             serviceBinder("input") ?: error("The input service is not available to this process")
-        val stub = Class.forName("android.hardware.input.IInputManager\$Stub")
-        val asInterface = stub.getMethod("asInterface", IBinder::class.java)
-        manager = checkNotNull(asInterface.invoke(null, binder)) { "IInputManager is null" }
+        manager =
+            reflective("IInputManager") {
+                val stub = Class.forName("android.hardware.input.IInputManager\$Stub")
+                val asInterface = stub.getMethod("asInterface", IBinder::class.java)
+                checkNotNull(asInterface.invoke(null, binder)) { "IInputManager is null" }
+            }
         inject =
             manager.javaClass.methods
                 .filter { method ->
@@ -40,8 +43,10 @@ internal class InputInjector {
         for (i in MIN_ARITY until params.size) {
             args[i] = if (params[i] == Int::class.javaPrimitiveType) 0 else null
         }
-        @Suppress("SpreadOperator") // A handful of trailing zeros; the copy is the call itself.
-        return inject.invoke(manager, *args) as Boolean
+        return reflective("injectInputEvent") {
+            @Suppress("SpreadOperator") // A handful of trailing zeros; the copy is the call itself.
+            inject.invoke(manager, *args) as Boolean
+        }
     }
 
     private companion object {
@@ -50,8 +55,9 @@ internal class InputInjector {
     }
 }
 
-internal fun serviceBinder(name: String): IBinder? {
-    val manager = Class.forName("android.os.ServiceManager")
-    val getService = manager.getMethod("getService", String::class.java)
-    return getService.invoke(null, name) as? IBinder
-}
+internal fun serviceBinder(name: String): IBinder? =
+    reflective("ServiceManager.getService") {
+        val manager = Class.forName("android.os.ServiceManager")
+        val getService = manager.getMethod("getService", String::class.java)
+        getService.invoke(null, name) as? IBinder
+    }

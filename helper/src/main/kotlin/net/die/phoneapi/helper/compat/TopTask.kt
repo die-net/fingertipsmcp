@@ -19,9 +19,12 @@ internal class TopTask {
         val binder =
             serviceBinder("activity_task")
                 ?: error("The activity task service is not available to this process")
-        val stub = Class.forName("android.app.IActivityTaskManager\$Stub")
-        val asInterface = stub.getMethod("asInterface", IBinder::class.java)
-        manager = checkNotNull(asInterface.invoke(null, binder)) { "IActivityTaskManager is null" }
+        manager =
+            reflective("IActivityTaskManager") {
+                val stub = Class.forName("android.app.IActivityTaskManager\$Stub")
+                val asInterface = stub.getMethod("asInterface", IBinder::class.java)
+                checkNotNull(asInterface.invoke(null, binder)) { "IActivityTaskManager is null" }
+            }
         getTasks =
             manager.javaClass.methods
                 .filter { method ->
@@ -47,12 +50,9 @@ internal class TopTask {
                 }
         }
         val tasks =
-            try {
+            reflective("getTasks") {
                 @Suppress("SpreadOperator") // A few trailing defaults; the copy is the call itself.
                 getTasks.invoke(manager, *args) as? List<*>
-            } catch (e: ReflectiveOperationException) {
-                // A Binder call can only report runtime exceptions back to the app.
-                throw IllegalStateException("getTasks failed: ${e.cause ?: e}", e)
             } ?: return null
         val task = tasks.firstOrNull() as? ActivityManager.RunningTaskInfo ?: return null
         return task.topActivity?.packageName

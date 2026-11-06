@@ -124,9 +124,6 @@ private class RegistrationLink(
             }
             Log.i(TAG, "Registered with the app")
             appBinder
-        } catch (e: RemoteException) {
-            Log.w(TAG, "Registration failed: ${e.javaClass.simpleName} ${e.message.orEmpty()}")
-            null
         } catch (e: RuntimeException) {
             // The app process may not be up yet, or may reject the caller. The next check retries.
             Log.w(TAG, "Registration failed: ${e.javaClass.simpleName} ${e.message.orEmpty()}")
