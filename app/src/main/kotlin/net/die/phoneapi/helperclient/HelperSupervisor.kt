@@ -123,7 +123,10 @@ internal class HelperSupervisor(
         val endpoint =
             port
                 ?: finder.pairingPort()
-                ?: return PairOutcome(false, "The pairing dialog closed. Open it again.")
+                ?: return PairOutcome(
+                    false,
+                    "Could not find the pairing dialog. Open it and try again.",
+                )
         return try {
             pairWith(code, endpoint)
             keys.markPaired()

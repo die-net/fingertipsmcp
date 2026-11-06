@@ -13,7 +13,7 @@
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
-    <!-- Granted once over ADB (pm grant); lets the app re-enable Wireless Debugging. -->
+    <!-- The app grants this through the helper; lets it re-enable Wireless Debugging. -->
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />

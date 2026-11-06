@@ -226,8 +226,30 @@ Progress would need one of two things. The session's GET stream already carries 
 
 MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need state across calls mint handles that clients pass as tool arguments, as `session_start` does. SDK 0.16.0 does not speak that revision yet (its latest protocol version is 2025-11-25), so such clients cannot connect, but the tools would carry over.
 
+## Wireless debugging pairing
+
+Checked on the Android 13 emulator on 2026-11-06, through the notification from start to a running helper:
+
+- Pulling down the shade leaves the "Pair device with pairing code" dialog open, and the pairing service stays up. The shade covers the code, though, so it has to be read first.
+- Android folds an app's ungrouped notifications into one group in the shade, where each is a collapsed row. Two were enough. A notification with its own `setGroup` stays out of that group, and at high importance it sits at the top already expanded, even with no group summary, so "Enter code" shows with no expanding.
+- A notification posted silently and then updated without `setOnlyAlertOnce` drops down over the dialog, about 2 to 4 seconds after the dialog opens.
+- After a wrong code the dialog stayed open, and the code it then showed paired.
+- Tapping another notification's row that opens an app closes the dialog.
+
+On the Android 11 test phone on 2026-11-06, the same flow reached a running helper. mDNS found the dialog there, and the code went in through the notification. Android didn't group the notifications, with the listener, status, and pairing ones all up. A silent post updated to an alerting one showed in the shade but did not drop down over the dialog, with Do Not Disturb off. A new post, after cancelling the silent one, did drop down. Android 11's `HeadsUpController.updateHunState` reads as if the update should alert too, so the cause is unknown. PhoneAPI cancels and posts again.
+
+On the Android 12 test phone on 2026-11-06, Do Not Disturb hid the pairing notification. Its policy included `SUPPRESSED_EFFECT_PEEK` and `SUPPRESSED_EFFECT_NOTIFICATION_LIST`, so the notification existed in `dumpsys notification` but showed neither as a banner nor in the shade. With Do Not Disturb off, a new post dropped down over the dialog and pairing finished through it.
+
+The Android 13 emulator cuts a toast off at two lines, about 75 characters on its screen, so the Do Not Disturb warning is kept short.
+
+`createNotificationChannel` on an existing channel changed its name on that phone and left a channel the user had turned off still off.
+
+Turning off the listener's notification channel on the Android 13 emulator on 2026-11-06 removed the notification, and the system posted none in its place. The service stayed `isForeground=true`, the process stayed `fg-service` at `oom_score_adj` 200, and the socket kept answering. The Android 11 and 12 test phones did the same that day: the process stayed `fg-service`, and the system had posted no notification of its own when checked some seconds later.
+
 ## Still to check on the phone
 
+- What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
+- That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That typing with mixed case and symbols, `clear`, and PIN unlock work on the phone, which has only run them on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.

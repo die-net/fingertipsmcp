@@ -128,7 +128,7 @@ The helper calls into framework internals that apps are not supposed to use. On 
 | Input | `ServiceManager.getService("input")`, `IInputManager.injectInputEvent` (arity varies by release) |
 | Display mirror | Hidden `DisplayManager` mirror APIs; fallback `SurfaceControl.createDisplay` / `openTransaction` / `setDisplaySurface` / `destroyDisplay`, plus `DisplayManagerGlobal` |
 | Audio | `REMOTE_SUBMIX` capture (`CAPTURE_AUDIO_OUTPUT`, shell-only) |
-| Privileges | Optional `WRITE_SECURE_SETTINGS` (adb grant) so the app can re-enable Wireless Debugging after reboot; `DUMP` for `CREATE_TOKEN` |
+| Privileges | `WRITE_SECURE_SETTINGS`, which the app grants itself through the helper, so the app can re-enable Wireless Debugging after reboot; `DUMP` for `CREATE_TOKEN` |
 
 Video encoding also uses `MediaFormat.KEY_LOW_LATENCY` where the codec claims support; that key is not equally real on every device.
 

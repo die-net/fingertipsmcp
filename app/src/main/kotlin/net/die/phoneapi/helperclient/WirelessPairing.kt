@@ -33,8 +33,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Android closes the pairing port as soon as its "Pair device with pairing code" dialog goes away,
  * which includes switching to another app, so the code can't be typed into PhoneAPI itself. After
- * [start], this watches mDNS for this phone's pairing service and asks for the code while the
- * dialog is showing.
+ * [start], the notification stays in the shade for the whole search, because mDNS can miss the
+ * dialog and the code would then have nowhere to go. When mDNS does see this phone's pairing
+ * service, the notification drops down over the dialog.
  */
 internal class WirelessPairing(
     private val context: Context,
@@ -78,16 +79,20 @@ internal class WirelessPairing(
                     .distinctUntilChanged()
                     .collect { found ->
                         port = found
-                        if (found == null) {
-                            manager().cancel(NOTIFICATION_ID)
-                        } else {
-                            post(notification(ASK, reply = true))
-                        }
+                        val prompt = codePrompt(found)
+                        // A new post rather than an update: on an Android 11 Moto, a silent
+                        // notification updated to an alerting one stayed in the shade. Android's
+                        // own code reads as if it should drop down, so the cause is unknown.
+                        if (prompt.alert) manager().cancel(NOTIFICATION_ID)
+                        post(prompt(prompt))
                     }
             }
         }
 
-    /** Other phones on the network may be pairing too; only this one's dialog counts. */
+    /**
+     * Other phones on the network may be pairing too; only this one's dialog counts. A miss here
+     * doesn't stop pairing, since [HelperSupervisor.pair] looks for the port again.
+     */
     private fun ownPort(found: List<MdnsEndpoint>): Int? {
         if (found.isEmpty()) return null
         val own = localAddresses()
@@ -101,9 +106,15 @@ internal class WirelessPairing(
                 .setContentTitle("Wireless debugging code")
                 .setContentText(text)
                 .setCategory(Notification.CATEGORY_STATUS)
+                .setGroup(GROUP)
                 .setOnlyAlertOnce(true)
         if (reply) builder.addAction(replyAction())
         return builder
+    }
+
+    private fun prompt(prompt: CodePrompt): NotificationCompat.Builder {
+        val builder = notification(prompt.text, reply = true)
+        return if (prompt.alert) builder else builder.setSilent(true)
     }
 
     private fun replyAction(): NotificationCompat.Action {
@@ -147,11 +158,15 @@ internal class WirelessPairing(
     private companion object {
         const val TAG = "PhoneApiHelper"
         const val CHANNEL = "wireless_pairing"
-        const val NOTIFICATION_ID = 8
+        // A group of its own keeps Android from folding this into a group with PhoneAPI's other
+        // notifications, where the code field takes two expands to reach.
+        const val GROUP = "wireless_pairing"
+        // HelperStatusNotifier uses id 8. Sharing it turns this post into an update of that
+        // notification, and its status changes replace or cancel this one.
+        const val NOTIFICATION_ID = 9
         const val REPLY_REQUEST = 2
         const val SEARCH_MS = 5 * 60_000L
         const val DONE_SHOWN_MS = 5_000L
-        const val ASK = "Type the 6-digit code from the pairing dialog."
 
         fun parse(host: String): InetAddress? =
             try {
@@ -174,3 +189,18 @@ internal class WirelessPairing(
             }
     }
 }
+
+/** What the code notification says, and whether it drops down over the screen. */
+internal data class CodePrompt(val text: String, val alert: Boolean)
+
+/**
+ * The code notification for a search that has found [port], or null if it hasn't found this phone's
+ * dialog. Both ask for the code. Only a found dialog alerts, since nothing else is on screen yet to
+ * read the code from.
+ */
+internal fun codePrompt(port: Int?): CodePrompt =
+    if (port == null) {
+        CodePrompt("Open Pair device with pairing code, then type the 6-digit code.", alert = false)
+    } else {
+        CodePrompt("Type the 6-digit code from the pairing dialog.", alert = true)
+    }

@@ -68,7 +68,7 @@ class HelperStatusNotifier(private val context: Context, private val helper: Hel
         when (status) {
             HelperStatus.NEEDS_USB -> "Start it over USB. The command is in the PhoneAPI app."
             HelperStatus.NEEDS_PAIRING ->
-                "Open PhoneAPI and tap Pair wireless debugging, or start it over USB."
+                "Open PhoneAPI and tap Wireless debugging, or start it over USB."
             HelperStatus.RUNNING,
             HelperStatus.STARTING,
             HelperStatus.STOPPED -> "The command is in the PhoneAPI app."

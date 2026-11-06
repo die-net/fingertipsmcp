@@ -18,9 +18,6 @@
         android:key="wireless_settings"
         android:persistent="false"
         android:title="@string/wireless_switch" />
-    <Preference
-        android:key="pair"
-        android:title="@string/wireless_pair" />
     <PreferenceCategory
         android:key="tokens"
         android:title="@string/tokens_title" />

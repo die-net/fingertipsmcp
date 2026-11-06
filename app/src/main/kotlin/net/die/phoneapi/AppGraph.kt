@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.apps.AppsServiceImpl
@@ -48,6 +49,7 @@ import net.die.phoneapi.helperclient.HelperStatusNotifier
 import net.die.phoneapi.helperclient.HelperSupervisor
 import net.die.phoneapi.helperclient.KeystorePrivateKeyStore
 import net.die.phoneapi.helperclient.WirelessPairing
+import net.die.phoneapi.helperclient.grantSecureSettings
 import net.die.phoneapi.input.ClipboardServiceImpl
 import net.die.phoneapi.input.Humanizer
 import net.die.phoneapi.input.InjectKeyBackend
@@ -472,6 +474,11 @@ class AppGraph(
             helper.status.collect { status ->
                 if (status == HelperStatus.RUNNING) chromeKeeper.hold() else chromeKeeper.drop()
             }
+        }
+        scope.launch {
+            helper.status
+                .filter { it == HelperStatus.RUNNING }
+                .collect { grantSecureSettings(context, shell) }
         }
         HelperStatusNotifier(context, helper).start(scope)
         helperSupervisor.start()
