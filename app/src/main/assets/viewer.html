@@ -148,7 +148,13 @@ function makeDecoder() {
         retryMs = RETRY_MIN_MS;
         status.textContent = canvas.width + "×" + canvas.height;
       },
-      error(e) { if (mine === epoch) status.textContent = String(e); }
+      // A decoder that failed is closed and decodes nothing more, so start the stream over.
+      error(e) {
+        if (mine !== epoch) return;
+        stopVideo();
+        status.textContent = "Video decoder failed: " + e + ". Reconnecting.";
+        retryVideo();
+      }
     });
   } catch (error) {
     reportDecoder(error);
@@ -367,8 +373,13 @@ function stopAudio() {
   nextAt = 0;
 }
 
+// The server closes the audio socket with 1003 (cannot accept) when the phone cannot capture
+// audio at all, as on Android 10. That holds for the page's life, so it does not ask again.
+const AUDIO_REFUSED = 1003;
+let audioRefused = false;
+
 function startAudio() {
-  if (!audioPlayable() || audioSocket) return;
+  if (audioRefused || !audioPlayable() || audioSocket) return;
   const as = socket("/v1/stream/audio");
   audioSocket = as;
   as.binaryType = "arraybuffer";
@@ -383,6 +394,7 @@ function startAudio() {
   as.onclose = (event) => {
     if (audioSocket !== as) return;
     audioSocket = null;
+    if (event.code === AUDIO_REFUSED) audioRefused = true;
     const reason = event.reason ? " " + event.reason : "";
     status.textContent = "Audio socket closed " + event.code + reason;
   };
@@ -522,6 +534,7 @@ function connectPointer() {
     contacts.clear();
     usedSlots.clear();
     gestureT0 = 0;
+    failCopies();
     pointerRetry = setTimeout(connectPointer, 500);
   };
 }
@@ -540,9 +553,14 @@ function gestureMs(timeStamp) {
   return Math.max(0, Math.round(timeStamp - gestureT0));
 }
 
+// Sends a message on the input socket. False, with the status saying so, when it is not open.
 function sendPointer(body) {
-  if (!pointerSocket || pointerSocket.readyState !== WebSocket.OPEN) return;
+  if (!pointerSocket || pointerSocket.readyState !== WebSocket.OPEN) {
+    status.textContent = "Not connected to the phone's input. Reconnecting.";
+    return false;
+  }
   pointerSocket.send(JSON.stringify(body));
+  return true;
 }
 
 function beginContact(event) {
@@ -627,9 +645,10 @@ canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 // Cmd+C or Ctrl+C copies the phone's selection to this computer, or the phone's clipboard when
 // nothing is selected, as text or an image. Cmd+V or Ctrl+V puts this computer's text or image on
 // the phone's clipboard and pastes it into the focused field. Images go as binary frames.
-const COPY_TIMEOUT_MS = 10000;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 let copyId = 0;
+// Copies waiting for the phone. The server answers every one, with the clip or an error, so a copy
+// waits until then, or until the socket it went on closes.
 const copies = new Map();
 // The copy whose image is in the next binary frame.
 let imageCopy = null;
@@ -639,13 +658,11 @@ let phoneHoldsImage = false;
 function phoneClipboard() {
   const id = ++copyId;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    copies.set(id, { id: id, resolve: resolve, reject: reject });
+    if (!sendPointer({ op: "copy", id: id })) {
       copies.delete(id);
-      if (imageCopy && imageCopy.id === id) imageCopy = null;
-      reject(new Error("The phone did not answer the copy. Is the screen yours?"));
-    }, COPY_TIMEOUT_MS);
-    copies.set(id, { id: id, resolve: resolve, reject: reject, timer: timer });
-    sendPointer({ op: "copy", id: id });
+      reject(new Error("Not connected to the phone. Try again in a moment."));
+    }
   });
 }
 
@@ -658,10 +675,17 @@ function settleCopy(message) {
     return true;
   }
   copies.delete(message.id);
-  clearTimeout(pending.timer);
   if (message.op === "clipboard" && typeof message.text === "string") pending.resolve(message);
   else pending.reject(new Error(message.message || "The phone's clipboard has no text or image."));
   return true;
+}
+
+function failCopies() {
+  imageCopy = null;
+  for (const pending of copies.values()) {
+    pending.reject(new Error("The connection to the phone closed before it answered the copy."));
+  }
+  copies.clear();
 }
 
 function onImageFrame(blob) {
@@ -669,7 +693,6 @@ function onImageFrame(blob) {
   imageCopy = null;
   if (!pending || !copies.has(pending.id)) return;
   copies.delete(pending.id);
-  clearTimeout(pending.timer);
   const message = pending.message;
   pending.resolve(Object.assign({}, message, { blob: new Blob([blob], { type: message.image }) }));
 }

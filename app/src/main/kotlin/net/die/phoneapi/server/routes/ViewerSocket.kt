@@ -160,10 +160,17 @@ private class ViewerSocket(
         fingers.forward(frame)
     }
 
-    /** Runs the page's [op] request. A failure is sent back as an error that echoes [id]. */
+    /**
+     * Runs the page's [op] request. A failure is sent back as an error that echoes [id]. A request
+     * dropped because someone else has the screen is answered too when it has an [id], since the
+     * page waits for that answer.
+     */
     private suspend fun act(op: String, id: JsonElement?, block: suspend () -> Any) {
         touched()
-        if (!lease.viewerInput(viewer)) return
+        if (!lease.viewerInput(viewer)) {
+            if (id != null) send(ViewerError(id, "Someone else has the screen. Take over first."))
+            return
+        }
         try {
             block()
         } catch (e: CancellationException) {
