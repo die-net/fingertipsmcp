@@ -135,7 +135,7 @@ internal class BrowserServiceImpl(
             it,
             { id, block ->
                 val (socket, chromeId) = parseBrowserTargetId(id)
-                usePage(socket, chromeId, repeatable = true) { cdp -> block(cdp) }
+                usePage(socket, chromeId) { cdp -> block(cdp) }
             },
         )
     }
@@ -150,8 +150,8 @@ internal class BrowserServiceImpl(
             val (socket, chromeId) = parseBrowserTargetId(id)
             var reloaded = false
             val result =
-                usePage(socket, chromeId, repeatable = true) { cdp ->
-                    reloaded = probe?.revive(cdp, socket, reading = true) == true || reloaded
+                usePage(socket, chromeId) { cdp ->
+                    reloaded = probe?.revive(cdp, socket, reading = true) == true
                     run(cdp)
                 }
             Evaluated(result, reloaded)
@@ -341,7 +341,7 @@ internal class BrowserServiceImpl(
         val pageUrl = webUrl(url)
         val (socket, chromeId) = parseBrowserTargetId(id)
         axTrees.remove(id)
-        usePage(socket, chromeId, repeatable = true) { cdp ->
+        usePage(socket, chromeId) { cdp ->
             val error =
                 cdp.call("Page.navigate", buildJsonObject { put("url", pageUrl) })
                     .decodeCdp<NavigateResult>()
@@ -558,8 +558,8 @@ internal class BrowserServiceImpl(
         if (options.show) show(id)
         var reloaded = false
         val (snapshot, state) =
-            usePage(socket, chromeId, repeatable = true) { cdp ->
-                reloaded = probe?.revive(cdp, socket, reading = true) == true || reloaded
+            usePage(socket, chromeId) { cdp ->
+                reloaded = probe?.revive(cdp, socket, reading = true) == true
                 val loaded = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()
                 val url = loaded?.frameTree?.frame?.url
                 cdp.call("Accessibility.enable")
@@ -635,49 +635,30 @@ internal class BrowserServiceImpl(
     }
 
     /**
-     * Runs [block] on a page, retrying a server error. Once [block] has started, only a
-     * [repeatable] block is retried, so a tap, text, or script never runs twice.
+     * Runs [block] on a page. Nothing is tried again: the one failure known to pass, a stale
+     * wireless-debugging connection, is reconnected where the socket opens ([CdpForward]), and the
+     * rest, such as wireless debugging being off or Chrome refusing a command, would fail the same
+     * way again. A timeout is explained when Chrome shows a dialog or does not answer at all.
      */
     private suspend fun <T> usePage(
         socket: String,
         chromeId: String,
-        repeatable: Boolean = false,
         block: suspend (CdpSession) -> T,
     ): T {
-        var last: ApiException? = null
-        repeat(PAGE_ATTEMPTS) { attempt ->
-            var started = false
-            try {
-                return useCdp(socket, "/devtools/page/$chromeId") { cdp ->
-                    started = true
-                    block(cdp)
-                }
-            } catch (e: ApiException) {
-                if (!started && tabGone(e.message)) {
-                    throw tabClosed(browserTargetId(socket, chromeId))
-                }
-                if (!retryable(e, socket, started, repeatable)) throw e
-                last = e
-                if (attempt < PAGE_ATTEMPTS - 1) delay(PAGE_RETRY_MS)
+        var started = false
+        try {
+            return useCdp(socket, "/devtools/page/$chromeId") { cdp ->
+                started = true
+                block(cdp)
             }
+        } catch (e: ApiException) {
+            if (!started && tabGone(e.message)) throw tabClosed(browserTargetId(socket, chromeId))
+            if (e.error != "cdp_timeout" || socket != CHROME_SOCKET) throw e
+            if (pageDialog()) throw dialogOpen(e)
+            // A page that never answered the handshake: Chrome as a whole may not answer.
+            if (!started && probe?.frozen(socket) == true) throw browserFrozen()
+            throw e
         }
-        throw last ?: ApiException(502, "cdp_error", "DevTools did not answer")
-    }
-
-    private suspend fun retryable(
-        e: ApiException,
-        socket: String,
-        started: Boolean,
-        repeatable: Boolean,
-    ): Boolean {
-        if (e.status < HTTP_SERVER_ERROR || e.error in FINAL_ERRORS) return false
-        if (e.error == "cdp_timeout" && socket == CHROME_SOCKET && pageDialog()) {
-            throw dialogOpen(e)
-        }
-        if (started) return repeatable
-        // A page that never answered: if Chrome as a whole does not, retrying is no use.
-        if (e.error == "cdp_timeout" && probe?.frozen(socket) == true) throw browserFrozen()
-        return true
     }
 
     private suspend fun <T> useCdp(
@@ -748,15 +729,10 @@ internal class BrowserServiceImpl(
 
     private companion object {
         const val BLANK = "about:blank"
-        const val HTTP_SERVER_ERROR = 500
-        /** Server errors that trying again cannot fix. */
-        val FINAL_ERRORS = setOf("helper_unavailable", "browser_frozen")
         const val MAX_EXPRESSION = 20_000
         const val MAX_CONSOLE_MS = 5_000L
         const val MAX_SNAPSHOT_NODES = 5_000
         const val TARGET_LIST_MS = MAX_CONSOLE_MS
-        const val PAGE_ATTEMPTS = 4
-        const val PAGE_RETRY_MS = 200L
         const val APPEAR_MS = 5_000L
         const val SHOWING_MS = 2_000L
         const val SHOW_ATTEMPTS = 3

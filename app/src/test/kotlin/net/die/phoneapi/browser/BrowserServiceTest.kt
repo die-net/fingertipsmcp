@@ -237,22 +237,66 @@ class BrowserServiceTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `retries a broken snapshot`() {
+    fun `a dropped snapshot is not tried again`() {
         val dropped =
             switched() +
                 serverTextFrame(
                     """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/"}}}}"""
-                )
-        val scripts = ArrayDeque(listOf(dropped, snapshotFrames()))
+                ) +
+                closeFrame()
+        var opens = 0
         val service =
             service(
                 byteArrayOf(),
                 sockets = CHROME,
-                open = { socket(scripts.removeFirst()) },
+                open = {
+                    opens++
+                    socket(dropped)
+                },
             )
-        val snapshot = virtual { service.snapshot("chrome_devtools_remote~abc") }
-        assertEquals("https://example.com/", snapshot.url)
-        assertTrue(scripts.isEmpty())
+        assertEquals("cdp_error", virtual { failure { service.snapshot(TAB) } })
+        assertEquals(1, opens)
+    }
+
+    @Test
+    fun `an unreachable devtools is not tried again`() {
+        // As CdpForward fails when wireless debugging is off and PhoneAPI cannot turn it on.
+        var opens = 0
+        val service =
+            service(
+                byteArrayOf(),
+                sockets = CHROME,
+                open = {
+                    opens++
+                    throw ApiException.unavailable("cdp_error", "Wireless debugging is off")
+                },
+            )
+        assertEquals("cdp_error", virtual { failure { service.snapshot(TAB) } })
+        assertEquals(1, opens)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a refused command is not tried again`() {
+        val refused =
+            switched() +
+                serverTextFrame(
+                    """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/"}}}}"""
+                ) +
+                serverTextFrame("""{"id":2,"result":{}}""") +
+                serverTextFrame("""{"id":3,"error":{"code":-32000,"message":"Not now"}}""")
+        var opens = 0
+        val service =
+            service(
+                byteArrayOf(),
+                sockets = CHROME,
+                open = {
+                    opens++
+                    socket(refused)
+                },
+            )
+        assertEquals("cdp_error", virtual { failure { service.snapshot(TAB) } })
+        assertEquals(1, opens)
     }
 
     @Test
@@ -484,6 +528,7 @@ class BrowserServiceTest {
 
     internal companion object {
         const val KEY = "dGhlIHNhbXBsZSBub25jZQ=="
+        const val TAB = "chrome_devtools_remote~abc"
         const val CHROME =
             """[{"name":"chrome_devtools_remote","pid":4,"package":"com.android.chrome"}]"""
     }
