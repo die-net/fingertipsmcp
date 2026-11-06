@@ -19,7 +19,7 @@ Usage: $(basename "$0") <command> [<options>]
     server    - Expose the on-device PhoneAPI server on localhost
     papi      - Call the HTTP/WebSocket API
     session   - Show or end the session papi keeps (session id|end)
-    helper    - Start the listener and shell helper over ADB (helper [package])
+    helper    - Start the listener and shell helper over ADB, and wait until it runs
     setup     - Build, install, pair, and start the helper
     help      - Display this text
 "
@@ -49,8 +49,7 @@ command:setup() {
         ./gradlew assembleDebug -q --console=plain
     fi
 
-    adb wait-for-device
-    until [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]; do sleep 1; done
+    wait_until 180 booted || die "No booted device after 180s: $(adb get-state 2>&1 | tr -d '\r')"
     adb install -r -g app/build/outputs/apk/debug/app-debug.apk >/dev/null
     adb shell pm grant "$PKG" android.permission.WRITE_SECURE_SETTINGS
 
@@ -58,9 +57,17 @@ command:setup() {
     command:pair --name dev-setup
     command:server
 
-    # Shell helper: input injection, screencap, and privileged app commands. It detaches and returns.
-    command:helper "$PKG" || echo "Helper did not start. Snapshots, input, and browser calls need it." >&2
+    # Shell helper: input injection, screencap, and privileged app commands. It detaches, and
+    # command:helper dies unless the app then reports it running.
+    # shellcheck disable=SC2119 # helper reads $# only to refuse arguments, and setup passes none.
+    command:helper
     echo "Ready (pairing in $PAPI_PAIRING; use 'scripts/phoneapi-dev papi')"
+}
+
+# Whether adb has a device online that has finished booting. adb's errors only mean not yet.
+booted() {
+    [[ "$(adb get-state 2>/dev/null)" == device ]] \
+        && [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]
 }
 
 main "$@"

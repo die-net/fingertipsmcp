@@ -11,7 +11,7 @@ Usage: $(basename "$0") <command> [<options>]
     server    - Expose the on-device PhoneAPI server on localhost
     papi      - Call the HTTP/WebSocket API
     session   - Show or end the session papi keeps (session id|end)
-    helper    - Start the listener and shell helper over ADB (helper [package])
+    helper    - Start the listener and shell helper over ADB, and wait until it runs
     help      - Display this text
 "
 
@@ -46,6 +46,7 @@ main() {
 # shellcheck disable=SC2317
 command:pair() {
     needs adb
+    needs jq
 
     local PKG="$PHONEAPI_PKG"
     local RECEIVER="$PKG/net.die.phoneapi.ShellCommandReceiver"
@@ -74,22 +75,24 @@ command:pair() {
         extras+=(--es scopes "$scopes")
     fi
 
-    out="$(adb shell am broadcast -n "$RECEIVER" -a net.die.phoneapi.CREATE_TOKEN "${extras[@]}" | tr -d '\r')"
+    out="$(adb shell am broadcast -n "$RECEIVER" -a net.die.phoneapi.CREATE_TOKEN "${extras[@]}" | tr -d '\r')" \
+        || die "CREATE_TOKEN failed: adb could not reach the phone."
+    # am prints the receiver's result as text, with its data in quotes: the pairing JSON on result
+    # 0 and a message on result 1. Only that line is read as text; the JSON goes to jq.
     json="$(sed -n 's/.*result=0, data="\(.*\)"$/\1/p' <<<"$out")"
     if [[ -z $json ]]; then
         error="$(sed -n 's/.*result=1, data="\(.*\)"$/\1/p' <<<"$out")"
         [[ -z $error ]] || die "CREATE_TOKEN failed: $error"
         die "CREATE_TOKEN failed. Is PhoneAPI installed as $PKG?"
     fi
-    port="$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' <<<"$json")"
-    if [[ -z $port ]]; then
-        die "CREATE_TOKEN returned no port"
-    fi
-
-    json="$(sed -e 's/"host":"[^"]*"/"host":"127.0.0.1"/' -e 's/^{/{"scheme":"http",/' <<<"$json")"
+    json="$(jq -c '.host = "127.0.0.1" | .scheme = "http"' <<<"$json" 2>/dev/null)" \
+        || die "CREATE_TOKEN returned something other than JSON."
+    port="$(jq -r '.port // empty' <<<"$json")"
+    [[ $port =~ ^[0-9]+$ ]] || die "CREATE_TOKEN returned no port."
 
     mkdir -p "$(dirname "$PAPI_PAIRING")"
-    printf '%s\n' "$json" >"$PAPI_PAIRING"
+    # The file holds a bearer token, so only its owner may read it.
+    (umask 077 && printf '%s\n' "$json" >"$PAPI_PAIRING")
     echo "Paired as $name (port $port). Saved to $PAPI_PAIRING. Run '$(basename "$0") server' to expose it." >&2
 }
 
@@ -214,28 +217,71 @@ papi_new_session() {
 # One request: prints the body, then the HTTP status on its own line.
 papi_curl() {
     local method=$1 path=$2 body=$3 session=$4
-    local -a args=(-s -X "$method" -H "Authorization: Bearer $PAIRING_TOKEN" -w '\n%{http_code}\n')
+    local -a args=(-sS -X "$method" -H "Authorization: Bearer $PAIRING_TOKEN" -w '\n%{http_code}\n')
     if [[ -n $session ]]; then args+=(-H "Mcp-Session-Id: $session"); fi
     if [[ -n $body ]]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
     curl "${args[@]}" "$PAIRING_SCHEME://$PAIRING_HOST:$PAIRING_PORT$path"
 }
 
+# Starts the listener and the helper, then waits for GET /v1/device to say the helper runs. Each
+# step checks its own status, since a caller's `||` turns set -e off inside the function.
 # shellcheck disable=SC2317
 command:helper() {
     needs adb
+    needs jq
+    needs curl
 
-    local PKG="${1:-$PHONEAPI_PKG}"
+    [[ $# -eq 0 ]] || usage "helper takes no arguments; set PHONEAPI_PKG for another package"
+    local PKG="$PHONEAPI_PKG"
     local sdk
-    adb shell am start-foreground-service -n "$PKG/net.die.phoneapi.server.ListenerService" >/dev/null
-    adb shell "CLASSPATH=\$(pm path $PKG | tr -d '\r' | sed -e s/^package:// | tr '\n' ':') app_process / net.die.phoneapi.helper.Main --pkg $PKG"
+    # The package goes into a remote shell command line, so it must be a plain package name.
+    [[ $PKG =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] \
+        || die "PHONEAPI_PKG '$PKG' is not a package name."
+    # The check below needs the pairing's token and the API forward.
+    load_pairing
+    forward_api "$PAIRING_PORT" "$PKG" || die "adb could not forward the API for $PKG."
+    adb shell am start-foreground-service -n "$PKG/net.die.phoneapi.server.ListenerService" >/dev/null \
+        || die "Could not start the PhoneAPI listener in $PKG."
+    adb shell "CLASSPATH=\$(pm path $PKG | tr -d '\r' | sed -e s/^package:// | tr '\n' ':') app_process / net.die.phoneapi.helper.Main --pkg $PKG" \
+        || die "The helper did not start. Check logcat for PhoneApiHelper."
     # Android 10 has no wireless-debugging port. The helper connects to this reverse socket;
     # the forward is what actually opens Chrome. Names match USB_DEVTOOLS_SOCKET / PORT.
-    sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
-    if [[ $sdk -lt 30 ]]; then
-        adb forward tcp:9222 localabstract:chrome_devtools_remote >/dev/null
-        adb reverse localabstract:phoneapi_cdp tcp:9222 >/dev/null
+    sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')" \
+        || die "Could not read the phone's Android version."
+    [[ $sdk =~ ^[0-9]+$ ]] || die "The phone reported Android SDK level '$sdk'."
+    if ((sdk < 30)); then
+        adb forward tcp:9222 localabstract:chrome_devtools_remote >/dev/null \
+            || die "Could not forward Chrome DevTools for the Android 10 tunnel."
+        adb reverse localabstract:phoneapi_cdp tcp:9222 >/dev/null \
+            || die "Could not reverse the Android 10 DevTools tunnel."
     fi
-    echo "Helper start command returned. Check logcat for PhoneApiHelper."
+    HELPER_STATUS="no answer"
+    wait_until 30 helper_running \
+        || die "The helper is not running after 30s (last status: $HELPER_STATUS). Check logcat for PhoneApiHelper."
+    echo "The helper is running." >&2
+}
+
+# Whether GET /v1/device says the helper runs; sets HELPER_STATUS to what it saw. A token PhoneAPI
+# does not know, or one without the observe scope, can never see it run, so those end the wait.
+helper_running() {
+    local out status
+    if ! out="$(papi_curl GET /v1/device "" "" 2>/dev/null)"; then
+        HELPER_STATUS="no answer"
+        return 1
+    fi
+    status="${out##*$'\n'}"
+    case "$status" in
+        200) ;;
+        404) die "PhoneAPI does not know the token in $PAIRING_FILE; run pair again." ;;
+        403) die "The token in $PAIRING_FILE lacks the observe scope, so the helper can't be checked." ;;
+        *)
+            HELPER_STATUS="HTTP $status"
+            return 1
+            ;;
+    esac
+    HELPER_STATUS="$(head -n 1 <<<"$out" | jq -r '.helper // "missing"' 2>/dev/null)" \
+        || HELPER_STATUS="unreadable"
+    [[ $HELPER_STATUS == running ]]
 }
 
 # shellcheck disable=SC2317
@@ -245,6 +291,7 @@ command:help() {
 
 # Sets PAIRING_FILE, PAIRING_HOST, PAIRING_PORT, PAIRING_TOKEN, PAIRING_SCHEME.
 load_pairing() {
+    [[ -f $PAPI_PAIRING ]] || die "No pairing file at $PAPI_PAIRING; run pair first."
     PAIRING_FILE="$(realpath "$PAPI_PAIRING")"
     PAIRING_HOST="$(jq -r '.host | select(. != "") // "127.0.0.1"' "$PAIRING_FILE")"
     PAIRING_PORT="$(jq -r .port "$PAIRING_FILE")"
@@ -259,6 +306,18 @@ load_pairing() {
 forward_api() {
     local port=$1 pkg=$2
     adb forward "tcp:$port" "localabstract:$pkg" >/dev/null
+}
+
+# Runs a check every half second until it succeeds, and fails once the seconds pass. A failed check
+# only means not yet.
+wait_until() {
+    local seconds=$1
+    shift
+    local deadline=$((SECONDS + seconds))
+    until "$@"; do
+        ((SECONDS < deadline)) || return 1
+        sleep 0.5
+    done
 }
 
 needs() {
