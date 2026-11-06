@@ -82,6 +82,126 @@ class ScreenLeaseTest {
     }
 
     @Test
+    fun `calls start while between calls waits`() = runTest {
+        // Waiting for a running call must not hold off the holder's next one, which may be the
+        // very call the running one waits for.
+        val lease = lease()
+        val going = CompletableDeferred<Unit>()
+        val call = async { lease.withScreen(a) { going.await() } }
+        runCurrent()
+        val between = async { lease.betweenCalls { "fixed" } }
+        runCurrent()
+        assertEquals("next", lease.withScreen(a) { "next" }.value)
+        going.complete(Unit)
+        call.await()
+        assertEquals("fixed", between.await())
+    }
+
+    @Test
+    fun `between calls gives up`() = runTest {
+        val lease = lease()
+        val going = CompletableDeferred<Unit>()
+        val call = async { lease.withScreen(a) { going.await() } }
+        runCurrent()
+        var ran = false
+        val between = async { lease.betweenCalls { ran = true } }
+        advanceTimeBy(ScreenLease.BETWEEN_WAIT_MS + 1)
+        assertNull(between.await())
+        assertFalse(ran)
+        going.complete(Unit)
+        call.await()
+        // Nothing was left paused.
+        assertEquals("after", lease.withScreen(a) { "after" }.value)
+    }
+
+    @Test
+    fun `calls wait for a between block`() = runTest {
+        val lease = lease()
+        val fixing = CompletableDeferred<Unit>()
+        val between = async { lease.betweenCalls { fixing.await() } }
+        runCurrent()
+        val call = async { lease.withScreen(a) { "ran" } }
+        runCurrent()
+        assertFalse(call.isCompleted)
+        fixing.complete(Unit)
+        between.await()
+        assertEquals("ran", call.await().value)
+    }
+
+    @Test
+    fun `a holder's waiting calls all get the screen`() = runTest {
+        val lease = lease()
+        lease.withScreen(b) {}
+        val first = async { lease.withScreen(a) { "first" } }
+        val second = async { lease.withScreen(a) { "second" } }
+        runCurrent()
+        lease.release(b)
+        runCurrent()
+        assertEquals("first", first.await().value)
+        assertEquals("second", second.await().value)
+        assertTrue(lease.holds(a))
+    }
+
+    @Test
+    fun `one of a holder's waiting calls can leave`() = runTest {
+        val lease = lease()
+        lease.withScreen(b) {}
+        val first = async { lease.withScreen(a) { "first" } }
+        val second = async { lease.withScreen(a) { "second" } }
+        runCurrent()
+        first.cancel()
+        runCurrent()
+        lease.release(b)
+        assertEquals("second", second.await().value)
+        assertTrue(lease.holds(a))
+    }
+
+    @Test
+    fun `an ended session's waiting call fails`() = runTest {
+        val lease = lease()
+        lease.withScreen(b) {}
+        val waiting = async { apiError { lease.withScreen(a) {} } }
+        runCurrent()
+        lease.forget(a)
+        assertEquals("not_found", waiting.await().error)
+        assertTrue(lease.holds(b))
+    }
+
+    @Test
+    fun `take over stops cleanup`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val lease =
+            ScreenLease(
+                scope = backgroundScope,
+                cleanup = { lock ->
+                    locks += lock
+                    gate.await()
+                    if (lock) locked = true
+                    emptyList()
+                },
+                lockedNow = { locked },
+                now = { testScheduler.currentTime },
+            )
+        lease.withScreen(a) { locked = false }
+        lease.release(a)
+        runCurrent()
+        assertEquals(listOf(true), locks)
+        lease.takeOver(person)
+        gate.complete(Unit)
+        runCurrent()
+        // The cleanup was cut off, so it neither locked the phone nor handed the screen on.
+        assertFalse(locked)
+        assertTrue(lease.holds(person))
+        val waiting = async { lease.withScreen(b) { "b" } }
+        runCurrent()
+        assertFalse(waiting.isCompleted)
+        lease.release(person)
+        val next = waiting.await()
+        assertTrue(next.notes.single().contains("A person used the screen"), next.notes.single())
+        assertEquals(listOf(true), locks)
+    }
+
+    @Test
     fun `idle holder yields to waiter`() = runTest {
         val lease = lease()
         lease.withScreen(a) {}

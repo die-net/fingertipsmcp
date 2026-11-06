@@ -68,7 +68,7 @@ class ForegroundWatch(
     }
 
     /** No screen call ran since [calls] was read, so a change is not the holder's. */
-    private suspend fun quiet(calls: Long): Boolean =
+    private fun quiet(calls: Long): Boolean =
         lease.screenCalls == calls &&
             !lease.callRunning() &&
             // A person in the viewer drives the screen without screen calls.

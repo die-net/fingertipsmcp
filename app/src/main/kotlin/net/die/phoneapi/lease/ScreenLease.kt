@@ -1,20 +1,22 @@
 package net.die.phoneapi.lease
 
+import android.util.Log
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,12 +46,14 @@ data class Screened<T>(val value: T, val notes: List<String>)
 
 /**
  * The one exclusive screen lease. A holder keeps it until [release]. Others wait first come, first
- * served for up to [waitMs], then fail with `screen_busy`. Releasing runs [cleanup] before the next
- * holder gets the screen, and the steps that failed reach that holder as notes.
+ * served for up to [waitMs], then fail with `screen_busy`. A holder has one place in the queue,
+ * however many of its calls wait, and they all get the screen together. Releasing runs [cleanup]
+ * before the next holder gets the screen, and the steps that failed reach that holder as notes.
  *
  * A viewer takes a free screen on input with [viewerInput], and an agent's only with [takeOver].
- * Taking over cancels the agent's screen call in progress and makes its next ones fail with
- * `screen_taken` until the viewer lets go, when the screen goes back to it without cleanup.
+ * Taking over cancels the agent's screen call in progress, or a cleanup in progress, and makes the
+ * agent's next calls fail with `screen_taken` until the viewer lets go, when the screen goes back
+ * to it without cleanup.
  *
  * A person's screen is a hand-off, so a viewer letting go runs no cleanup either, and the next
  * holder finds the screen as the person left it, with a note. A session can let the screen go the
@@ -82,18 +86,30 @@ class ScreenLease(
     private val graceMs: Long = GRACE_MS,
     private val ready: suspend () -> List<String> = { emptyList() },
 ) {
-    private data class Waiter(val holder: Holder, val granted: CompletableDeferred<Unit>)
+    /** A holder's place in the queue, which every one of its waiting [calls] shares. */
+    private class Waiter(val holder: Holder) {
+        val granted = CompletableDeferred<Unit>()
+        /**
+         * The calls waiting here, which become the holder's screen calls when it gets the screen.
+         */
+        val calls = LinkedHashSet<Job>()
+    }
+
+    /** How many screen calls are registered, and whether [betweenCalls] holds new ones off. */
+    private data class Activity(val calls: Int = 0, val paused: Boolean = false)
 
     private val mutex = Mutex()
-    private val gate = Mutex()
     /** Held while [ready] runs, so a holder's other screen calls wait for it. */
     private val readying = Mutex()
     private val queue = ArrayDeque<Waiter>()
     private val notes = HashMap<Holder, MutableList<String>>()
     private val running = HashMap<Holder, MutableSet<Job>>()
+    private val activity = MutableStateFlow(Activity())
     private val taken = HashSet<Job>()
     private val started = AtomicLong()
     private var cleaning = false
+    /** The cleanup running now, which a take over cancels. */
+    private var cleanJob: Job? = null
     /**
      * Whether the phone was locked when sessions started using it, and has not been locked again
      * since, so cleanup owes it a lock once no one waits.
@@ -122,9 +138,16 @@ class ScreenLease(
         holder: Holder,
         giveBack: Boolean = false,
         block: suspend () -> T,
-    ): Screened<T> {
+    ): Screened<T> = coroutineScope {
+        // Lazy, so the call is registered as the holder's the moment the screen is granted, with
+        // no gap in which the screen could change hands before it starts.
+        val work =
+            async(start = CoroutineStart.LAZY) {
+                readyFor(holder)
+                block()
+            }
         val asked = now()
-        val had = acquire(holder)
+        val had = acquire(holder, work)
         val waited = now() - asked
         if (waited >= WAITED_NOTE_MS) {
             addNote(
@@ -135,14 +158,14 @@ class ScreenLease(
         }
         val value =
             try {
-                runTracked(holder) {
-                    readyFor(holder)
-                    block()
-                }
+                runTracked(work)
             } finally {
-                if (giveBack && !had) withContext(NonCancellable) { giveBack(holder) }
+                withContext(NonCancellable) {
+                    mutex.withLock { untrack(holder, work) }
+                    if (giveBack && !had) giveBack(holder)
+                }
             }
-        return Screened(value, takeNotes(holder))
+        Screened(value, takeNotes(holder))
     }
 
     /**
@@ -150,25 +173,43 @@ class ScreenLease(
      * another of its screen calls is still running and so still uses it.
      */
     private suspend fun giveBack(holder: Holder) {
-        val clean = mutex.withLock {
-            _state.value.holder == holder &&
-                running[holder].isNullOrEmpty() &&
+        mutex.withLock {
+            if (_state.value.holder == holder && running[holder].isNullOrEmpty()) {
                 letGo(holder, cleanup = true)
+            }
         }
-        if (clean) scope.launch { cleanUp() }
     }
 
     /**
      * Runs [block] between screen calls: once none is running, and with none starting until it
-     * returns. For putting Chrome back on the holder's tab without cutting into a gesture.
+     * returns. For putting Chrome back on the holder's tab without cutting into a gesture. Calls
+     * start as usual while this waits. Null, without running [block], when calls kept running for
+     * [BETWEEN_WAIT_MS].
      */
-    suspend fun <T> betweenCalls(block: suspend () -> T): T = gate.withLock {
-        while (callRunning()) delay(BETWEEN_POLL_MS)
-        block()
+    suspend fun <T : Any> betweenCalls(block: suspend () -> T): T? {
+        val deadline = now() + BETWEEN_WAIT_MS
+        while (!mutex.withLock { pauseIfIdle() }) {
+            val left = deadline - now()
+            if (left <= 0) return null
+            withTimeoutOrNull(left) { activity.first { it.calls == 0 && !it.paused } }
+                ?: return null
+        }
+        try {
+            return block()
+        } finally {
+            activity.update { it.copy(paused = false) }
+        }
+    }
+
+    /** With [mutex] held: holds off new screen calls if none is running. True when it did. */
+    private fun pauseIfIdle(): Boolean {
+        val now = activity.value
+        if (now.calls != 0 || now.paused) return false
+        return activity.compareAndSet(now, now.copy(paused = true))
     }
 
     /** Whether a screen call is running now. */
-    suspend fun callRunning(): Boolean = mutex.withLock { running.values.any { it.isNotEmpty() } }
+    fun callRunning(): Boolean = activity.value.calls > 0
 
     /** How many screen calls have started, to tell whether any ran in a stretch of time. */
     val screenCalls: Long
@@ -204,7 +245,10 @@ class ScreenLease(
         }
     }
 
-    /** Takes the screen for [viewer] at once, from whoever has it. */
+    /**
+     * Takes the screen for [viewer] at once, from whoever has it. A cleanup in progress stops where
+     * it is, so it cannot go on to lock the phone or hand the screen on under the person.
+     */
     suspend fun takeOver(viewer: Holder.Viewer) {
         mutex.withLock {
             val current = _state.value
@@ -220,6 +264,11 @@ class ScreenLease(
                     job.cancel(TakenOver())
                 }
             }
+            if (cleaning) {
+                cleanJob?.cancel()
+                cleanJob = null
+                cleaning = false
+            }
             _state.value = LeaseState(viewer, now(), from)
         }
     }
@@ -227,11 +276,11 @@ class ScreenLease(
     /**
      * Lets the screen go. A viewer that took it over hands it back to that session without cleanup.
      * Another viewer leaves the screen as it is for the next holder. Otherwise [cleanup] runs, when
-     * asked, before the next waiter gets it. A holder that is only waiting leaves the queue.
+     * asked, before the next waiter gets it. Calls of [holder]'s that are waiting for the screen
+     * stay queued, as if they came after the release.
      */
     suspend fun release(holder: Holder, cleanup: Boolean = true) {
-        val clean = mutex.withLock { letGo(holder, cleanup) }
-        if (clean) scope.launch { cleanUp() }
+        mutex.withLock { letGo(holder, cleanup) }
     }
 
     /**
@@ -244,40 +293,47 @@ class ScreenLease(
 
     /**
      * [release] with [mutex] held. [left] is the note the next holder gets when the screen goes as
-     * it is. True when cleanup should run.
+     * it is. Starts cleanup when it should run.
      */
-    private fun letGo(holder: Holder, cleanup: Boolean, left: String? = null): Boolean {
-        queue.removeAll { it.holder == holder }
+    private fun letGo(holder: Holder, cleanup: Boolean, left: String? = null) {
         val current = _state.value
         if (current.takenFrom == holder) _state.value = current.copy(takenFrom = null)
-        if (current.holder != holder) return false
+        if (current.holder != holder) return
         if (holder is Holder.Viewer && current.takenFrom != null) {
             handBack(current, current.takenFrom)
-            return false
+            return
         }
         _state.value = LeaseState()
         val note = if (holder is Holder.Viewer) LEFT_BY_PERSON else left
         val clean = cleanup && note == null
         if (note != null) forNext = note
-        if (!clean) grantNext()
-        cleaning = clean
+        if (!clean) {
+            grantNext()
+            return
+        }
+        cleaning = true
         // A phone that is already locked is locked again, which only turns its screen off.
-        if (clean) locking = queue.isEmpty() && (owesLock || lockedNow())
-        return clean
+        locking = queue.isEmpty() && (owesLock || lockedNow())
+        cleanJob = scope.launch { cleanUp() }
     }
 
-    /** While someone waits, gives the screen up for an idle session holder after [graceMs]. */
+    /**
+     * With [mutex] held: while someone waits, gives the screen up for an idle session holder after
+     * [graceMs]. The watch forgets itself under [mutex] when it stops, so a grant made as it stops
+     * starts a new one.
+     */
     private fun watchIdle() {
         if (idleWatch?.isActive == true) return
         idleWatch = scope.launch {
             while (true) {
-                val left = mutex.withLock { idleLeft() } ?: return@launch
+                val left =
+                    mutex.withLock { idleLeft().also { if (it == null) idleWatch = null } }
+                        ?: return@launch
                 if (left > 0) {
                     delay(left)
                     continue
                 }
-                val clean = mutex.withLock { if (idleLeft() == 0L) yieldIdle() else false }
-                if (clean) cleanUp()
+                mutex.withLock { if (idleLeft() == 0L) yieldIdle() }
             }
         }
     }
@@ -293,8 +349,8 @@ class ScreenLease(
         return (lastCallMs + graceMs - now()).coerceAtLeast(0)
     }
 
-    private fun yieldIdle(): Boolean {
-        val holder = _state.value.holder ?: return false
+    private fun yieldIdle() {
+        val holder = _state.value.holder ?: return
         note(
             holder,
             "The screen went to another client after this session made no screen call for " +
@@ -302,7 +358,7 @@ class ScreenLease(
                 "and home. Your next call that needs the screen waits for it. Check the screen " +
                 "before acting.",
         )
-        return letGo(holder, cleanup = true)
+        letGo(holder, cleanup = true)
     }
 
     private fun handBack(current: LeaseState, back: Holder.Session) {
@@ -332,6 +388,7 @@ class ScreenLease(
             } catch (
                 @Suppress("TooGenericExceptionCaught") // A failed step is reported, not thrown.
                 e: Exception) {
+                Log.w(TAG, "Readying the screen failed", e)
                 listOf(e.message ?: "it failed")
             }
         mutex.withLock {
@@ -367,6 +424,7 @@ class ScreenLease(
         } catch (
             @Suppress("TooGenericExceptionCaught") // A failed step is reported, not thrown.
             e: Exception) {
+            Log.w(TAG, "Cleanup failed", e)
             listOf(e.message ?: "cleanup failed")
         }
 
@@ -377,6 +435,9 @@ class ScreenLease(
     private suspend fun finishCleanup(failed: List<String>, locked: Boolean): Boolean =
         mutex.withLock {
             if (locked && lockedNow()) owesLock = false
+            // Only a take over gives out the screen during cleanup, and it stops the cleanup, so
+            // this is a cleanup that ended just as it was stopped.
+            if (!cleaning || _state.value.holder != null) return@withLock false
             // The next holder hears about cleanup either way, so a home screen and a locked
             // phone are no surprise.
             forNext =
@@ -396,91 +457,118 @@ class ScreenLease(
                 return@withLock true
             }
             cleaning = false
+            cleanJob = null
             false
         }
 
-    /** Forgets [holder], as when its session ends or its socket closes. */
+    /**
+     * Forgets [holder], as when its session ends or its socket closes. Its calls waiting for the
+     * screen fail with `not_found`, and its screen goes with cleanup.
+     */
     suspend fun forget(holder: Holder) {
-        release(holder)
-        mutex.withLock { notes.remove(holder) }
-    }
-
-    /** Gets [holder] the screen, waiting for it if needed. True when it had the screen already. */
-    private suspend fun acquire(holder: Holder): Boolean {
-        val waiter = mutex.withLock {
-            val current = _state.value
-            if (current.takenFrom == holder) throw taken(current)
-            if (current.holder == holder) return true
-            if (current.holder == null && !cleaning && queue.isEmpty()) {
-                grant(holder)
-                return false
-            }
-            Waiter(holder, CompletableDeferred()).also {
-                queue.addLast(it)
-                watchIdle()
-            }
-        }
-        val caller = currentCoroutineContext().job
-        val granted =
-            try {
-                withTimeoutOrNull(waitMs) { waiter.granted.await() } != null
-            } finally {
-                // A caller canceled while waiting leaves, and gives back a screen granted
-                // meanwhile.
-                if (!caller.isActive) {
-                    withContext(NonCancellable) {
-                        if (leaveQueue(waiter)) release(holder, cleanup = false)
-                    }
+        mutex.withLock {
+            queue
+                .firstOrNull { it.holder == holder }
+                ?.let { waiter ->
+                    queue.remove(waiter)
+                    waiter.granted.completeExceptionally(
+                        ApiException.notFound(
+                            "The session ended while this call waited for the screen."
+                        )
+                    )
                 }
-            }
-        // The grant can land just as the wait runs out. Then the screen is this holder's.
-        if (!granted && !withContext(NonCancellable) { leaveQueue(waiter) }) throw busy()
-        return false
-    }
-
-    /** Takes [waiter] out of the queue. True when it had already been granted the screen. */
-    private suspend fun leaveQueue(waiter: Waiter): Boolean = mutex.withLock {
-        if (waiter.granted.isCompleted) return@withLock true
-        queue.remove(waiter)
-        false
-    }
-
-    /** Runs [block] as a child that [takeOver] can cancel, turning that into `screen_taken`. */
-    private suspend fun <T> runTracked(holder: Holder, block: suspend () -> T): T = coroutineScope {
-        val work = async(start = CoroutineStart.LAZY) { block() }
-        // The screen can go to a waiter between acquire and here; then wait for it again.
-        while (!register(holder, work)) acquire(holder)
-        started.incrementAndGet()
-        work.start()
-        try {
-            // join throws only when this caller is canceled, not when take over cancels the child.
-            work.join()
-            if (work.isCancelled && mutex.withLock { taken.remove(work) }) throw taken(_state.value)
-            work.await()
-        } finally {
-            withContext(NonCancellable) {
-                mutex.withLock {
-                    running[holder]?.remove(work)
-                    if (_state.value.holder == holder) lastCallMs = now()
-                }
-            }
+            letGo(holder, cleanup = true)
+            notes.remove(holder)
         }
     }
 
     /**
-     * Records [work] as [holder]'s screen call, if [holder] still has the screen. Under the gate,
-     * so betweenCalls cannot miss a call that is about to start.
+     * Gets [holder] the screen for [work], waiting for it if needed, and registers [work] as
+     * [holder]'s screen call. True when it had the screen already.
      */
-    private suspend fun register(holder: Holder, work: Job): Boolean = gate.withLock {
-        mutex.withLock {
-            if (_state.value.holder != holder) {
-                false
-            } else {
-                running.getOrPut(holder) { HashSet() } += work
-                lastCallMs = now()
-                true
+    private suspend fun acquire(holder: Holder, work: Job): Boolean {
+        val waiter = mutex.withLock {
+            val current = _state.value
+            if (current.takenFrom == holder) throw taken(current)
+            if (current.holder == holder) {
+                track(holder, work)
+                return true
             }
+            if (current.holder == null && !cleaning && queue.isEmpty()) {
+                grant(holder)
+                track(holder, work)
+                return false
+            }
+            val place =
+                queue.firstOrNull { it.holder == holder } ?: Waiter(holder).also(queue::addLast)
+            place.calls += work
+            watchIdle()
+            place
         }
+        val granted =
+            try {
+                withTimeoutOrNull(waitMs) { waiter.granted.await() } != null
+            } catch (e: CancellationException) {
+                // A caller canceled while waiting leaves, and gives back a screen granted
+                // meanwhile that none of its other calls is using.
+                withContext(NonCancellable) {
+                    mutex.withLock {
+                        if (leave(waiter, work)) {
+                            untrack(holder, work)
+                            if (_state.value.holder == holder && running[holder].isNullOrEmpty()) {
+                                letGo(holder, cleanup = false)
+                            }
+                        }
+                    }
+                }
+                throw e
+            }
+        // The grant can land just as the wait runs out. Then the screen is this holder's.
+        if (!granted && !withContext(NonCancellable) { mutex.withLock { leave(waiter, work) } }) {
+            throw busy()
+        }
+        return false
+    }
+
+    /**
+     * With [mutex] held: takes [work] out of [waiter], and [waiter] out of the queue once none of
+     * its calls is left. True when the screen was granted first, so [work] is a screen call now.
+     */
+    private fun leave(waiter: Waiter, work: Job): Boolean {
+        if (waiter.granted.isCompleted) return true
+        waiter.calls -= work
+        if (waiter.calls.isEmpty()) queue.remove(waiter)
+        return false
+    }
+
+    /** Runs [work], which [takeOver] can cancel, turning that into `screen_taken`. */
+    private suspend fun <T> runTracked(work: Deferred<T>): T {
+        // A betweenCalls block that started before this call got the screen finishes first.
+        activity.first { !it.paused }
+        started.incrementAndGet()
+        work.start()
+        // join throws only when this caller is canceled, not when take over cancels the child.
+        work.join()
+        if (work.isCancelled && mutex.withLock { taken.remove(work) }) throw taken(_state.value)
+        return work.await()
+    }
+
+    /** With [mutex] held: records [work] as [holder]'s screen call. */
+    private fun track(holder: Holder, work: Job) {
+        if (running.getOrPut(holder) { HashSet() }.add(work)) {
+            activity.update { it.copy(calls = it.calls + 1) }
+        }
+        lastCallMs = now()
+    }
+
+    /** With [mutex] held: [holder]'s screen call [work] has ended. */
+    private fun untrack(holder: Holder, work: Job) {
+        val calls = running[holder]
+        if (calls != null && calls.remove(work)) {
+            activity.update { it.copy(calls = it.calls - 1) }
+            if (calls.isEmpty()) running.remove(holder)
+        }
+        if (_state.value.holder == holder) lastCallMs = now()
     }
 
     /** Whether the phone is unlocked and owes a lock. */
@@ -500,9 +588,11 @@ class ScreenLease(
         }
     }
 
+    /** Gives the screen to the first waiter, with all its calls. */
     private fun grantNext(): Holder? {
         val next = queue.removeFirstOrNull() ?: return null
         grant(next.holder)
+        next.calls.forEach { track(next.holder, it) }
         next.granted.complete(Unit)
         return next.holder
     }
@@ -545,6 +635,9 @@ class ScreenLease(
     companion object {
         const val WAIT_MS = 60_000L
         const val GRACE_MS = 30_000L
+        /** How long [betweenCalls] waits for running screen calls to end. */
+        const val BETWEEN_WAIT_MS = 5_000L
+        private const val TAG = "PhoneApiLease"
         private const val LEFT_BY_PERSON =
             "A person used the screen from the viewer and has let go, so it is yours now. They " +
                 "left it as it was, so it may be unlocked and on any app. ui_snapshot shows " +
@@ -554,7 +647,6 @@ class ScreenLease(
                 "before acting."
         /** A screen call that waited at least this long says so in a note. */
         private const val WAITED_NOTE_MS = 2_000L
-        private const val BETWEEN_POLL_MS = 50L
         private const val MS_PER_S = 1_000
     }
 }

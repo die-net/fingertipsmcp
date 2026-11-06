@@ -131,7 +131,7 @@ Authenticated errors are JSON:
 | 409 | `screen_busy` | Someone else held the screen for the whole 60 s wait |
 | 409 | `screen_taken` | A person in the viewer took the screen from this session |
 | 409 | `tab_limit` | A session has 4 tabs it opened, or all sessions 8 |
-| 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run |
+| 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so PhoneAPI could not check which tab Chrome shows; a new tab from `browser_open` is closed |
 | 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, so nothing was typed |
 | 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it |
 | 409 | `tab_reloaded` | Chrome had unloaded the hidden tab, so PhoneAPI reloaded it instead of sending input or script to a page the caller has not seen |
