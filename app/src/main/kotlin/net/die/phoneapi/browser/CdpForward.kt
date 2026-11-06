@@ -43,23 +43,23 @@ internal class CdpForward(
     private var generation = 0
 
     @Suppress("MissingUseCall") // The caller closes the socket. This connection closes when idle.
-    suspend fun open(name: String, readTimeoutMs: Long = READ_TIMEOUT_MS): DevtoolsSocket =
-        withContext(io) { openStream(name, readTimeoutMs, retry = true) }
+    suspend fun open(name: String, answerTimeoutMs: Long = ANSWER_TIMEOUT_MS): DevtoolsSocket =
+        withContext(io) { openStream(name, answerTimeoutMs, retry = true) }
 
     @Suppress("MissingUseCall") // closeStream closes the adb stream when the caller finishes.
     private suspend fun openStream(
         name: String,
-        readTimeoutMs: Long,
+        answerTimeoutMs: Long,
         retry: Boolean,
     ): DevtoolsSocket {
         val session = session()
         try {
             val stream = synchronized(wire) { session.client.open("localabstract:$name") }
             acquired()
-            return socket(stream, readTimeoutMs)
+            return socket(stream, answerTimeoutMs)
         } catch (e: IOException) {
             if (retry && !session.fresh && drop(session.client)) {
-                return openStream(name, readTimeoutMs, retry = false)
+                return openStream(name, answerTimeoutMs, retry = false)
             }
             if (session.fresh) armIdle()
             throw connectFailed(name, e)
@@ -67,12 +67,12 @@ internal class CdpForward(
     }
 
     @Suppress("MissingUseCall") // The DevTools socket owns these streams.
-    private fun socket(stream: AdbStream, readTimeoutMs: Long): DevtoolsSocket =
+    private fun socket(stream: AdbStream, answerTimeoutMs: Long): DevtoolsSocket =
         AdbDevtoolsSocket(
             inputStream = stream.source.inputStream(),
             outputStream = stream.sink.outputStream(),
             release = { closeStream(stream) },
-            readTimeoutMs = readTimeoutMs,
+            answerTimeoutMs = answerTimeoutMs,
             dispatcher = io,
         )
 
@@ -215,7 +215,7 @@ internal class CdpForward(
     private companion object {
         const val TAG = "PhoneApi"
         const val HOST = "127.0.0.1"
-        const val READ_TIMEOUT_MS = 15_000L
+        const val ANSWER_TIMEOUT_MS = 15_000L
         const val IDLE_MS = 3 * 60 * 1000L
 
         fun connectFailed(name: String, error: Exception): ApiException =

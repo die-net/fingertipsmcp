@@ -108,6 +108,45 @@ class BrowserTapWaitTest {
     }
 
     @Test
+    fun `gives up on a selector after its wait`() {
+        // Each poll asks for the document and finds nothing, more often than the wait allows.
+        val misses =
+            (0 until 100).fold(byteArrayOf()) { all, n ->
+                all +
+                    harness.serverTextFrame(
+                        """{"id":${5 + n * 2},"result":{"root":{"nodeId":1}}}"""
+                    ) +
+                    harness.serverTextFrame("""{"id":${6 + n * 2},"result":{"nodeId":0}}""")
+            }
+        val frames =
+            harness.switched() +
+                harness.serverTextFrame("""{"id":1,"result":{}}""") +
+                harness.visibility(2, "visible") +
+                misses
+        val page = harness.socket(frames)
+        val service =
+            harness.service(
+                frames,
+                sockets = BrowserServiceTest.CHROME,
+                content = { Rect(0, 283, 1080, 2339) },
+                open = { page },
+            )
+        val error = harness.virtual {
+            val start = harness.clock.now
+            val error = harness.failure {
+                service.tap(
+                    "chrome_devtools_remote~abc",
+                    BrowserTapRequest(selector = "a", waitMs = 20_000),
+                )
+            }
+            assertEquals(20_000L, harness.clock.now - start)
+            error
+        }
+        assertEquals("not_found", error)
+        assertEquals(100, page.methods().count { it == "DOM.querySelector" })
+    }
+
+    @Test
     fun `fails at once with no wait`() {
         val frames =
             harness.switched() +

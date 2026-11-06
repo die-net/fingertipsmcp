@@ -17,7 +17,7 @@ internal class UsbDevtools(
     private val io: CoroutineDispatcher,
 ) {
     @Suppress("MissingUseCall") // The returned socket closes the descriptor.
-    suspend fun open(name: String, readTimeoutMs: Long): DevtoolsSocket =
+    suspend fun open(name: String, answerTimeoutMs: Long): DevtoolsSocket =
         withContext(io) {
             val fd =
                 try {
@@ -32,7 +32,7 @@ internal class UsbDevtools(
                 inputStream = FileInputStream(descriptor),
                 outputStream = FileOutputStream(descriptor),
                 release = { fd.close() },
-                readTimeoutMs = readTimeoutMs,
+                answerTimeoutMs = answerTimeoutMs,
                 dispatcher = io,
             )
         }
