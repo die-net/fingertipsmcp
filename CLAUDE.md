@@ -46,7 +46,8 @@ The agent is meant to use the phone the way its owner would. Many apps and sites
 - Hidden and reflective framework calls live in `helper/.../compat/`, behind a `Build.VERSION.SDK_INT` check where the API varies by release. When one is missing, the call fails with a clear error and the helper keeps running. minSdk is 29, so there is no check for older releases.
 - Tests use JUnit Jupiter (`org.junit.jupiter.api.Assertions`) and `kotlinx-coroutines-test` for virtual time. Routes are tested through `ServerHarness` with fakes of the `ServerServices` interfaces, not a mocking library.
 - Tests don't sleep, wait out a real timer, or depend on a long timeout. Use virtual time, or wait for the event itself. A wait inside a library or test engine counts too. A test normally finishes well under 1 second. That is how long it should take, not a deadline: a safety timeout that fires only on failure can stay generous, and a tight one only makes the test flaky.
-- Test-only helpers, fakes, and parameters live under `src/test`, not in production classes.
+- Test-only helpers, fakes, and parameters live under `src/test`, not in production classes. A test that wants a shorter timeout needs virtual time: inject the clock and the scope, never the duration.
+- A fake behaves as the real thing can. It doesn't answer before it is asked, or deliver events in an order the real one never would. When a test is flaky because of its fake, fix the fake, not the assertion.
 - A public or internal declaration whose purpose is not obvious from its name has a KDoc. Comments say what a thing is for and why, in full sentences.
 - No `TODO:` or `FIXME:` comments; detekt rejects them.
 - A rename or move updates every caller. No `typealias`, `@Deprecated` forwarder, or wrapper is kept for the old name.
@@ -55,12 +56,21 @@ The agent is meant to use the phone the way its owner would. Many apps and sites
 ## Fixes
 
 - Fix the general cause, in the parser, the service, or the shared helper, rather than special-casing the one input, page, or device that broke.
+- Fix it where the wrong answer is produced, not in the caller that noticed. If another caller of the same function would hit the same failure, the fix is in the wrong layer.
+- After a fix, look for the same mistake in the code beside it: the other callers, the REST or MCP twin, audio next to video, the other writer of the same setting. Fix those too, or list them in the PR.
+- A second fix to the same function for the same kind of failure means its design is wrong. Stop patching. Write down its states and what owns each one, and rebuild it around those.
 - An `if`, flag, retry, delay, or fallback added only to make one failure go away is not a fix. Find why it fails and fix that. If the root fix is out of reach (an OEM bug, a Chrome behavior), say so in the PR and in a comment at the workaround.
-- Never sleep a fixed time and assume something finished. After an action, wait for its event if there is one. If there is none, poll a real check up to a deadline, and handle the deadline passing. A fixed delay is fine only when the delay is itself the behavior, such as humanized input timing, retry backoff, or a poll interval.
-- A failing check is never made to pass by weakening it: no new `@Disabled`, `assumeTrue`, deleted or loosened assertion, raised timeout or threshold, caught-and-ignored exception, `@Suppress`, or detekt baseline entry, unless the owner agreed to that specific change.
+- A retry names the failure it expects to clear and retries only that. A failure that will be the same next time, such as not paired, a rejected command, or an HTTP 403, is final.
+- Never sleep a fixed time and assume something finished. After an action, wait for its event if there is one. If there is none, poll a real check up to a deadline, and handle the deadline passing. A wait for an event has a deadline too. A fixed delay is fine only when the delay is itself the behavior, such as humanized input timing, retry backoff, or a poll interval.
+- Record a fact rather than inferring it. A held lock, a time window, or a counter does not say who did something or whether it is still true. A clamp on a counter, such as `coerceAtLeast(0)`, means the count is wrong: count the collection instead.
+- One class owns each piece of shared state, such as a system setting or the screen. Other code asks the owner and does not write the state itself.
+- Don't decide from message text (an exception message, `am` or `dumpsys` output, a Chrome error string) when there is an exit status, an error code, or a typed field. Where text is the only signal, say so in a comment and record the text in `docs/device-notes.md`.
+- A `catch` that returns false, null, or empty has to be true for everything it catches. "The helper is down" is not "no dialog is showing". Return unknown and make the caller choose.
+- A failing check is never made to pass by weakening it: no new `@Disabled`, `assumeTrue`, deleted or loosened assertion, raised timeout or threshold, caught-and-ignored exception, `@Suppress`, or detekt baseline entry, unless the owner agreed to that specific change. Moving work to where a check can't see it, such as off the thread StrictMode watches while that thread still waits, is the same thing.
 - For a detekt or lint finding, change the code. A `@Suppress` is for code that is correct as written. It names the rule and carries a trailing comment saying why, as the `MissingUseCall` ones do ("The caller closes the socket.").
 - A new field, flag, setting, route, or MCP tool is added only when no existing one can carry it. Prefer deleting or generalizing code to adding it.
-- A behavior change comes with a test that exercises the failure mode, not only the success path.
+- A behavior change comes with a test that exercises the failure mode, not only the success path. The test drives the code where the failure happened, through the same sequence of events, and fails without the fix. A truth table for a predicate lifted out of the fix does not count.
+- A fix's PR says what the cause was, why the change removes it instead of hiding it, what similar code was checked, and which new test fails without it. If one of those can't be written, the fix isn't done.
 
 ## Devices
 
