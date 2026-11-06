@@ -12,7 +12,6 @@ import java.io.File
 import java.io.FileDescriptor
 import java.io.IOException
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -26,7 +25,14 @@ internal object AbstractSockets {
     private const val RELAY_BUFFER = 8 * 1024
     private const val RELAY_POLL_FOREVER = -1
     private const val CONNECT_TIMEOUT_MS = 1_000L
-    private val connecting = ConcurrentHashMap<String, Thread>()
+
+    /**
+     * How many connects to one name may be in flight, counting ones whose caller gave up but whose
+     * thread is still blocked in connect. Enough for the app's overlapping healthy connects; a
+     * socket that never accepts stops costing threads here.
+     */
+    private const val MAX_WAITING_CONNECTS = 4
+    private val connecting = InFlight(MAX_WAITING_CONNECTS)
 
     fun connect(name: String): ParcelFileDescriptor {
         val remote =
@@ -47,8 +53,11 @@ internal object AbstractSockets {
 
     @Suppress("MissingUseCall") // The relay owns the connected socket and closes it.
     private fun connectSocket(name: String): LocalSocket {
-        val pending = connecting[name]
-        if (pending != null && pending.isAlive) throw IOException("connect $name: timed out")
+        if (!connecting.enter(name)) {
+            throw IOException(
+                "connect $name: earlier connects are still waiting; it is not accepting"
+            )
+        }
         val result = CompletableFuture<LocalSocket>()
         val worker = Thread {
             val socket = LocalSocket()
@@ -59,11 +68,10 @@ internal object AbstractSockets {
                 socket.close()
                 result.completeExceptionally(e)
             } finally {
-                connecting.remove(name, Thread.currentThread())
+                connecting.exit(name)
             }
         }
         worker.isDaemon = true
-        connecting[name] = worker
         worker.start()
         return awaitSocket(name, result)
     }
@@ -246,3 +254,24 @@ private fun socketRow(line: String): AbstractSocket? {
 
 private const val INODE_COLUMN = 6
 private const val PATH_COLUMN = 7
+
+/** Counts work in flight per key, up to [max] at once for each. */
+internal class InFlight(private val max: Int) {
+    private val counts = HashMap<String, Int>()
+
+    /** Counts one more for [key], or returns false when [max] are already in flight. */
+    @Synchronized
+    fun enter(key: String): Boolean {
+        val now = counts[key] ?: 0
+        if (now >= max) return false
+        counts[key] = now + 1
+        return true
+    }
+
+    /** Counts one fewer for [key]. */
+    @Synchronized
+    fun exit(key: String) {
+        val left = (counts[key] ?: return) - 1
+        if (left > 0) counts[key] = left else counts.remove(key)
+    }
+}
