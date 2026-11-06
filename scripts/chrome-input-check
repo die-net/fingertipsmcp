@@ -6,7 +6,8 @@
 // Usage: scripts/chrome-input-check [--hidden-only]
 //   --hidden-only  Skip the checks that wake the screen and bring Chrome to the front.
 // Needs adb and Node 22 or later. Exits 0 when Chrome behaves as expected, 1 when it does not,
-// and 2 when the run could not finish.
+// and 2 when the run could not finish: a read failed, a wait timed out, or the keyguard kept the
+// checks that need Chrome on screen from running.
 
 import { execFileSync } from 'node:child_process';
 
@@ -52,7 +53,9 @@ function phone() {
   const activities = adb('shell', 'dumpsys', 'activity', 'activities');
   return {
     awake: !/mWakefulness=Asleep/.test(power),
-    resumed: (activities.match(/ResumedActivity: ActivityRecord\{\S+ \S+ (\S+)/) ?? [])[1] ?? '',
+    // Android 11 prints `ResumedActivity: ActivityRecord{...}`, later versions
+    // `topResumedActivity=ActivityRecord{...}`, as the app's ResumedActivity.kt reads them.
+    resumed: (activities.match(/ResumedActivity[:=]\s*ActivityRecord\{\S+ \S+ ([^\s}]+)/) ?? [])[1] ?? '',
   };
 }
 
@@ -111,12 +114,17 @@ async function main(port, observed) {
     const id = reply.result.targetId;
     opened.add(id);
     const page = await connect(port, `/devtools/page/${id}`);
-    await page.call('Runtime.evaluate', { expression: SETUP });
+    await read(page, SETUP);
     return { id, page };
   }
-  const hits = async (page) =>
-    (await page.call('Runtime.evaluate', { expression: 'hits.join(" ")', returnByValue: true }))
-      .result?.result?.value ?? '';
+  // A read that fails must stop the run: an empty answer is what several checks expect.
+  const read = async (page, expression, awaitPromise = false) => {
+    const reply = await page.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise });
+    const value = reply.result?.result?.value;
+    if (value === undefined) throw new Error(`Could not read ${expression}: ${JSON.stringify(reply)}`);
+    return value;
+  };
+  const hits = (page) => read(page, 'hits.join(" ")');
   const touch = (page) =>
     page.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [AT] });
   const mouse = (page, type, buttons) =>
@@ -162,22 +170,25 @@ async function main(port, observed) {
     adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
     await until(() => phone().awake, 5_000, 'the screen to turn on');
     if (/isKeyguardShowing=true/.test(adb('shell', 'dumpsys', 'window'))) {
-      console.log('The keyguard is up, so the checks that need Chrome on screen are skipped.');
-      return;
+      console.log('The keyguard is up, so the checks that need Chrome on screen could not run.');
+      return 'skipped';
     }
     adb('shell', 'monkey', '-p', 'com.android.chrome', '-c', 'android.intent.category.LAUNCHER', '1');
     await until(() => phone().resumed.startsWith('com.android.chrome/'), 5_000, 'Chrome to come to the front');
     await browser.call('Target.activateTarget', { targetId: id });
-    await sleep(1_500);
     const again = await connect(port, `/devtools/page/${id}`);
+    await until(async () => (await read(again, 'document.visibilityState')) === 'visible', 5_000, 'the tab to show');
+    // A page's event loop runs queued input before its animation frame callbacks, so a held touch
+    // that Chrome sends once the tab shows has landed by the second frame after that.
+    await read(again, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', true);
     observed.set(EXPECTED[5][0], (await hits(again)).includes('touchstart') ? 'played once shown' : 'dropped');
     again.close();
 
     // The newest tab is in front, so the first one is a background tab in a visible Chrome.
     const first = await newPage();
     const second = await newPage();
-    const firstState = await first.page.call('Runtime.evaluate', { expression: 'document.visibilityState', returnByValue: true });
-    observed.set(EXPECTED[6][0], firstState.result?.result?.value === 'hidden' ? 'Chrome switches to it' : 'stays behind');
+    const firstState = await read(first.page, 'document.visibilityState');
+    observed.set(EXPECTED[6][0], firstState === 'hidden' ? 'Chrome switches to it' : 'stays behind');
     for (const [check, { page }] of [[EXPECTED[7][0], second], [EXPECTED[8][0], first]]) {
       const reply = answered(await touch(page));
       await page.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -230,7 +241,8 @@ const deadline = setTimeout(() => {
 const observed = new Map();
 let code = 0;
 try {
-  await main(port, observed);
+  // Checks that could not run leave Chrome's behavior unknown, so the run did not finish.
+  if ((await main(port, observed)) === 'skipped') code = 2;
 } catch (e) {
   console.error(e.message);
   code = 2;
