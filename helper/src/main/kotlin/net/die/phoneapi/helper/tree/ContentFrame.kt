@@ -44,8 +44,9 @@ internal object ContentFrame {
                     "tab switcher covers it. ui_snapshot shows what is there; tap one of its " +
                     "buttons to dismiss it."
             } else {
-                "The page is not on screen. The browser has to be in the foreground; a " +
-                    "background tab has no box to tap."
+                "The browser did not come to the front, so the page has no box to tap. The " +
+                    "phone may be locked, or something else may be in front. ui_snapshot shows " +
+                    "what is there."
             },
         )
 
