@@ -85,19 +85,23 @@ private suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
         ?: throw ApiException(502, "cdp_error", "Chrome did not return an isolated world")
 
 /**
- * Evaluates [expression] in the page's own world, where it leaves globals behind. Only for a
- * document Chrome builds itself, with no site script to see them, such as its PDF viewer.
+ * Runs [body], the statements of a function, in the own world of the document that [objectId] is an
+ * object of, with that object as `this`. Script there leaves globals behind, so this is only for a
+ * document with no site script to see them, such as the page [PdfReader] makes. Chrome runs it in
+ * the object's document or not at all, so a document loaded in its place never runs it.
  */
-internal suspend fun evaluateInMainWorld(
+internal suspend fun callOn(
     cdp: CdpSession,
-    expression: String,
+    objectId: String,
+    body: String,
     awaitPromise: Boolean,
 ): EvalResult =
     evalResult(
         cdp.call(
-            "Runtime.evaluate",
+            "Runtime.callFunctionOn",
             buildJsonObject {
-                put("expression", expression)
+                put("objectId", objectId)
+                put("functionDeclaration", "function () {\n$body\n}")
                 put("returnByValue", true)
                 put("awaitPromise", awaitPromise)
             },

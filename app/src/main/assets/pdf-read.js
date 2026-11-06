@@ -647,7 +647,7 @@ async function drop() {
 // Fetches the file at `want` and parses it. A copy that opening the PDF left in Chrome's cache is
 // used as it is, fresh or not, so a cached PDF costs no request. Returns `{ok: true}`, or the error
 // and what went wrong: `fetch` when the request failed, `http` for an error status, `type` when the
-// reply is not a PDF, and `size` when it is over `maxBytes`.
+// reply is not a PDF, `size` when it is over `maxBytes`, and `parse` when pdf.js cannot read it.
 async function load(want, maxBytes) {
   await drop();
   let response;
@@ -673,18 +673,62 @@ async function load(want, maxBytes) {
     useWorkerFetch: false,
     stopAtErrors: false,
   });
-  doc = await task.promise;
+  try {
+    doc = await task.promise;
+  } catch (e) {
+    return { error: "parse", detail: String((e && e.message) || e) };
+  }
   url = want;
   progress = newProgress();
   return { ok: true };
 }
 
+// The load PhoneAPI started: its URL, the promise of its end, and its result once it has one.
+// PhoneAPI makes a new page for each load, so a page has at most one.
+let job = null;
+
+// Whether two URLs name one document, as the browser writes them and whatever their fragment.
+function sameDocument(a, b) {
+  try {
+    return new URL(a).href.split("#")[0] === new URL(b).href.split("#")[0];
+  } catch (e) {
+    return false;
+  }
+}
+
 globalThis.phoneapiPdf = {
-  // Whether the document from `want` is parsed.
-  has(want) {
-    return doc !== null && url === want;
+  // "parsed" when the document from `want` is parsed, "loading" while it is fetched or parsed,
+  // and null otherwise.
+  state(want) {
+    if (!job || !sameDocument(job.url, want)) return null;
+    if (!job.result) return "loading";
+    return job.result.ok ? "parsed" : null;
   },
-  load: load,
+  // Starts loading `want`, as `load` does, without waiting for it.
+  start(want, maxBytes) {
+    const started = { url: want, result: null, done: null };
+    job = started;
+    started.done = load(want, maxBytes).then(
+      (result) => {
+        started.result = result;
+      },
+      (e) => {
+        started.result = { error: "parse", detail: String((e && e.message) || e) };
+      },
+    );
+  },
+  // Waits up to `budget` milliseconds for the load, so that no one call waits for a whole
+  // download. Returns its result, or `{pending: true}` while it goes on.
+  async wait(budget) {
+    if (!job) throw new Error("No PDF is loading");
+    let timer = null;
+    const later = new Promise((resolve) => {
+      timer = setTimeout(resolve, budget);
+    });
+    await Promise.race([job.done, later]);
+    clearTimeout(timer);
+    return job.result || { pending: true };
+  },
   // Reads pages for about `budget` milliseconds, so that no one call runs long. Returns whether
   // every page has been read.
   async step(budget) {
