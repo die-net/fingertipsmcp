@@ -102,7 +102,7 @@ One exclusive lease per phone. The first call that needs the screen takes it. A 
 - `wait_for` with any condition that is not `browser.*`, or with `snapshot` or `screenshot`. A `screen` condition with only `person` is the exception: it reads the lease, not the screen.
 - Browser input with `input` `touch`, which brings the tab forward. Pointer input with `input` `cdp` too: Chrome only takes cdp touch on the tab it is showing, so it already needs Chrome in front.
 - `browser_read` and `browser_snapshot` with `show`.
-- `browser_open` with `incognito`, since Chrome's incognito shortcut brings Chrome forward, and a call that opens a tab while Chrome is not running (`browser_open`, or `browser_read` or `browser_snapshot` with `url`), since starting Chrome does too. It needs the screen only while the tab opens, so a session that did not have the screen gives it back after, with cleanup. One that had it keeps it, as does one with another screen call still running.
+- `browser_open` with `incognito`, since Chrome's incognito shortcut brings Chrome forward, and a call that opens a tab while Chrome is not running (`browser_open`, or `browser_read` or `browser_find` with `url`), since starting Chrome does too. It needs the screen only while the tab opens, so a session that did not have the screen gives it back after, with cleanup. One that had it keeps it, as does one with another screen call still running.
 - Anything else that brings Chrome or a tab to the front.
 
 Calls that need no lease: `device_info`, `logcat_tail`, and browser tools on the caller's own tabs with `input` `cdp` (keys and text) or `cdp-mouse`, or no input at all. The REST routes for the same operations follow the same lists.
@@ -245,7 +245,7 @@ If a call from a session without the screen still brings an app or Chrome forwar
 - If two sessions without the screen had calls in progress, both fail with `took_screen` and neither gets the screen, and the app that was in front comes back.
 - Chrome switching to another holder's tab, as a popup makes it do, does not change the foreground app, so it is handled as in [Background tabs stay in the background](#background-tabs-stay-in-the-background).
 
-PhoneAPI checks the top task before and after `browser_open`, `browser_navigate`, `browser_eval`, and browser input from a session without the screen, the calls through which a page could launch something. Reads cannot. It checks again 2 seconds after the call. A change found then cannot fail the call, so it reaches the session as a note on its next screen call, along with the event, log line, and count. Nothing is checked while a person in the viewer holds the screen, since the viewer's input makes no screen calls.
+PhoneAPI checks the top task before and after `browser_open`, `browser_navigate`, `browser_eval`, browser input, and `browser_read` or `browser_find` with `url` from a session without the screen, the calls through which a page could launch something. Reads of an open tab cannot. It checks again 2 seconds after the call. A change found then cannot fail the call, so it reaches the session as a note on its next screen call, along with the event, log line, and count. Nothing is checked while a person in the viewer holds the screen, since the viewer's input makes no screen calls.
 
 Android and Chrome blocked every such launch from a tab not on screen in testing, so `took_screen` is a tripwire for workflows to fix, not something agents handle in normal use.
 

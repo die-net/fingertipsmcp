@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.lease.ScreenLease
 import net.die.phoneapi.model.Scope
+import net.die.phoneapi.server.FakeBrowser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -43,55 +44,96 @@ class McpScreenTest {
     }
 
     @Test
-    fun `every tool is classified`() {
-        val known = SCREEN_TOOLS + SOMETIMES_SCREEN_TOOLS + NO_SCREEN
-        val unclassified = MCP_TOOLS.map { it.name }.filter { it !in known }
-        assertEquals(emptyList<String>(), unclassified)
+    fun `screen tools always take it`() {
+        val always = MCP_TOOLS.filter { it.screen.always }.map { it.name }.toSet()
+        assertEquals(SCREEN_TOOLS, always)
+        assertEquals(
+            setOf("open_intent", "app_launch"),
+            tools().filter { it.screen.claims }.names(),
+        )
     }
 
     @Test
     fun `arguments decide some tools`() {
-        assertTrue(takesScreen("tap", null))
-        assertTrue(takesScreen("clipboard_read", null))
-        assertFalse(takesScreen("browser_read", null))
-        assertTrue(takesScreen("browser_read", args("""{"show":true}""")))
-        assertTrue(takesScreen("browser_tap", null))
-        assertTrue(takesScreen("browser_tap", args("""{"input":"cdp"}""")))
-        assertFalse(takesScreen("browser_tap", args("""{"input":"cdp-mouse"}""")))
-        assertFalse(takesScreen("browser_type", args("""{"input":"CDP"}""")))
-        assertTrue(takesScreen("browser_key", null))
-        assertFalse(takesScreen("wait_for", args("""{"all":[{"type":"browser.url"}]}""")))
+        assertTrue(takes("tap", null))
+        assertTrue(takes("clipboard_read", null))
+        assertFalse(takes("browser_read", null))
+        assertTrue(takes("browser_read", args("""{"show":true}""")))
+        assertTrue(takes("browser_tap", null))
+        assertTrue(takes("browser_tap", args("""{"input":"cdp"}""")))
+        assertFalse(takes("browser_tap", args("""{"input":"cdp-mouse"}""")))
+        assertFalse(takes("browser_type", args("""{"input":"CDP"}""")))
+        assertTrue(takes("browser_key", null))
+        assertFalse(takes("wait_for", args("""{"all":[{"type":"browser.url"}]}""")))
         assertTrue(
-            takesScreen(
+            takes(
                 "wait_for",
                 args("""{"all":[{"type":"browser.url"}],"any":[{"type":"ime"}]}"""),
             )
         )
         val browserWait = """"all":[{"type":"browser.url"}]"""
-        assertTrue(takesScreen("wait_for", args("""{$browserWait,"snapshot":true}""")))
-        assertTrue(takesScreen("wait_for", args("""{$browserWait,"screenshot":true}""")))
-        assertFalse(takesScreen("wait_for", args("""{$browserWait,"snapshot":false}""")))
-        assertFalse(takesScreen("device_info", null))
-        assertFalse(takesScreen("browser_open", args("""{"url":"https://example.com/"}""")))
-        assertTrue(takesScreen("browser_open", args("""{"incognito":true}""")))
+        assertTrue(takes("wait_for", args("""{$browserWait,"snapshot":true}""")))
+        assertTrue(takes("wait_for", args("""{$browserWait,"screenshot":true}""")))
+        assertFalse(takes("wait_for", args("""{$browserWait,"snapshot":false}""")))
+        assertFalse(takes("device_info", null))
+        assertFalse(takes("browser_open", args("""{"url":"https://example.com/"}""")))
+        assertTrue(takes("browser_open", args("""{"incognito":true}""")))
     }
 
     @Test
     fun `some tools open tabs`() {
-        assertTrue(opensTab("browser_open", null))
-        assertTrue(opensTab("browser_read", args("""{"url":"https://example.com/"}""")))
-        assertTrue(opensTab("browser_snapshot", args("""{"url":"https://example.com/"}""")))
-        assertFalse(opensTab("browser_read", args("""{"target":"t"}""")))
-        assertFalse(opensTab("browser_navigate", args("""{"url":"https://example.com/"}""")))
+        val url = args("""{"url":"https://example.com/"}""")
+        assertEquals(
+            setOf("browser_open", "browser_read", "browser_find"),
+            tools().filter { it.screen.opensTab(url) }.names(),
+        )
+        assertTrue(tool("browser_open").screen.opensTab(null))
+        assertFalse(tool("browser_read").screen.opensTab(args("""{"target":"t"}""")))
+        assertFalse(tool("browser_find").screen.opensTab(args("""{"target":"t"}""")))
+    }
+
+    @Test
+    fun `a find with url starts chrome with the screen`() = runBlocking {
+        val stopped = FakeBrowser().apply { stopped = true }
+        val url = args("""{"url":"https://example.com/","query":"x"}""")
+        val find = tool("browser_find").screen
+        assertEquals(ScreenUse(needed = true, brief = true), screenUse(find, url, stopped))
+        assertEquals(ScreenUse(needed = false, brief = false), screenUse(find, url, FakeBrowser()))
+        val byTarget = args("""{"target":"t","query":"x"}""")
+        assertEquals(ScreenUse(needed = false, brief = false), screenUse(find, byTarget, stopped))
+    }
+
+    @Test
+    fun `pages that can launch apps are watched`() {
+        val url = args("""{"url":"https://example.com/"}""")
+        val target = args("""{"target":"t"}""")
+        val watched = tools().filter { it.screen.launches(url) }.names()
+        assertEquals(
+            setOf(
+                "browser_open",
+                "browser_navigate",
+                "browser_eval",
+                "browser_tap",
+                "browser_swipe",
+                "browser_gesture",
+                "browser_key",
+                "browser_type",
+                "browser_read",
+                "browser_find",
+            ),
+            watched,
+        )
+        assertFalse(tool("browser_read").screen.launches(target))
+        assertFalse(tool("browser_find").screen.launches(target))
     }
 
     @Test
     fun `person waits skip screen`() {
-        assertFalse(takesScreen("wait_for", args("""{"all":[{"type":"screen","person":true}]}""")))
-        assertTrue(takesScreen("wait_for", args("""{"all":[{"type":"screen","on":true}]}""")))
+        assertFalse(takes("wait_for", args("""{"all":[{"type":"screen","person":true}]}""")))
+        assertTrue(takes("wait_for", args("""{"all":[{"type":"screen","on":true}]}""")))
         val both = """{"any":[{"type":"screen","on":true,"person":false}]}"""
-        assertTrue(takesScreen("wait_for", args(both)))
-        assertTrue(takesScreen("wait_for", args("""{"all":[{"type":"nonsense"}]}""")))
+        assertTrue(takes("wait_for", args(both)))
+        assertTrue(takes("wait_for", args("""{"all":[{"type":"nonsense"}]}""")))
     }
 
     @Test
@@ -104,7 +146,7 @@ class McpScreenTest {
         val untouched = request("browser_read", "{}")
         assertEquals(untouched, resolveInput("browser_read", untouched, false, ALL))
         val rest = resolveInput("browser_tap", request("browser_tap", "{}"), false, ALL)
-        assertFalse(takesScreen("browser_tap", rest.params.arguments))
+        assertFalse(takes("browser_tap", rest.params.arguments))
     }
 
     @Test
@@ -138,21 +180,38 @@ class McpScreenTest {
 
     private fun args(json: String): JsonObject = Json.parseToJsonElement(json).jsonObject
 
+    private fun tools() = MCP_TOOLS
+
+    private fun List<McpTool>.names() = map { it.name }.toSet()
+
+    private fun tool(name: String) = MCP_TOOLS.first { it.name == name }
+
+    private fun takes(name: String, args: JsonObject?) = tool(name).screen.takes(args)
+
     private companion object {
-        val NO_SCREEN =
+        /** The tools that act on the screen or show what is on it, whatever their arguments. */
+        val SCREEN_TOOLS =
             setOf(
-                "device_info",
-                "screen_release",
-                "session_start",
-                "session_end",
-                "logcat_tail",
-                "browser_targets",
-                "browser_navigate",
-                "browser_close",
-                "browser_find",
-                "browser_eval",
-                "browser_console",
-                "browser_capture",
+                "ui_snapshot",
+                "ui_find",
+                "ui_act",
+                "tap",
+                "swipe",
+                "type_text",
+                "press_key",
+                "clipboard_read",
+                "clipboard_write",
+                "keyboard_hide",
+                "keyboard_show",
+                "app_launch",
+                "app_stop",
+                "app_clear",
+                "open_intent",
+                "device_wake",
+                "device_unlock",
+                "device_lock",
+                "device_orientation",
+                "screenshot",
             )
         val ALL = Scope.entries.toSet()
     }
