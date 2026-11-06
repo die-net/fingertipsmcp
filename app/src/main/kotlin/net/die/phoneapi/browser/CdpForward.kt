@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import net.die.phoneapi.helperclient.AdbEndpointFinder
 import net.die.phoneapi.helperclient.KeystorePrivateKeyStore
 import net.die.phoneapi.helperclient.SecureSettings
+import net.die.phoneapi.helperclient.WirelessSetting
 import net.die.phoneapi.model.ApiException
 
 /**
@@ -29,6 +30,7 @@ internal class CdpForward(
     private val context: Context,
     private val keys: KeystorePrivateKeyStore,
     private val finder: AdbEndpointFinder,
+    private val wireless: WirelessSetting,
     private val io: CoroutineDispatcher,
 ) {
     private val secure = SecureSettings(context.contentResolver)
@@ -189,7 +191,7 @@ internal class CdpForward(
                     "using the browser.",
             )
         }
-        if (!secure.wirelessEnabled()) {
+        if (!wireless.refresh()) {
             if (!secure.canWrite(context)) {
                 throw ApiException.unavailable(
                     "cdp_error",
@@ -197,7 +199,7 @@ internal class CdpForward(
                         "WRITE_SECURE_SETTINGS, or turn on wireless debugging in Developer options.",
                 )
             }
-            secure.setWirelessEnabled(true)
+            wireless.set(true)
         }
         return finder.connectPort()
             ?: throw ApiException.unavailable(

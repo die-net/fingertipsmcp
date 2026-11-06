@@ -49,7 +49,9 @@ import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.HelperStatusNotifier
 import net.die.phoneapi.helperclient.HelperSupervisor
 import net.die.phoneapi.helperclient.KeystorePrivateKeyStore
+import net.die.phoneapi.helperclient.SecureSettings
 import net.die.phoneapi.helperclient.WirelessPairing
+import net.die.phoneapi.helperclient.WirelessSetting
 import net.die.phoneapi.helperclient.grantSecureSettings
 import net.die.phoneapi.input.ClipboardServiceImpl
 import net.die.phoneapi.input.Humanizer
@@ -116,6 +118,10 @@ class AppGraph(
     val network = NetworkWatcher(context)
     private val adbKeys = KeystorePrivateKeyStore(filesDir)
     private val adbEndpoints = AdbEndpointFinder(context, helper, ioDispatcher)
+    private val wirelessSetting =
+        SecureSettings(context.contentResolver).let {
+            WirelessSetting(read = it::wirelessEnabled, write = it::setWirelessEnabled)
+        }
     internal val helperSupervisor =
         HelperSupervisor(
             context = context,
@@ -123,10 +129,12 @@ class AppGraph(
             keys = adbKeys,
             finder = adbEndpoints,
             network = network,
+            setting = wirelessSetting,
             scope = scope,
             ioDispatcher = ioDispatcher,
         )
-    private val cdpForward = CdpForward(context, adbKeys, adbEndpoints, ioDispatcher)
+    private val cdpForward =
+        CdpForward(context, adbKeys, adbEndpoints, wirelessSetting, ioDispatcher)
     private val usbDevtools =
         UsbDevtools(
             openSocket = { helper.require().openAbstractSocket(USB_DEVTOOLS_SOCKET) },

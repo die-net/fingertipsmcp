@@ -18,13 +18,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.model.HelperStatus
 import net.die.phoneapi.server.NetworkWatcher
@@ -34,6 +30,9 @@ import net.die.phoneapi.server.NetworkWatcher
  *
  * The same wireless debugging session is what reaches Chrome DevTools, so a successful launch
  * leaves it on. Below Android 11 the helper is started over USB.
+ *
+ * This is the Android side. [RestartLoop] decides when to try, and [WirelessSetting] owns the
+ * setting.
  */
 internal class HelperSupervisor(
     private val context: Context,
@@ -41,78 +40,91 @@ internal class HelperSupervisor(
     private val keys: KeystorePrivateKeyStore,
     private val finder: AdbEndpointFinder,
     private val network: NetworkWatcher,
+    private val setting: WirelessSetting,
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher,
 ) {
-    private val gate = Mutex()
     private val secure = SecureSettings(context.contentResolver)
-    private var failures = 0
+    private val launcher =
+        object : HelperLauncher {
+            override val running: Boolean
+                get() = helper.isRunning
 
-    /** The user turned the helper off. Automatic restarts wait until the next [nudge]. */
-    @Volatile private var holdOff = false
-    private val wirelessState = MutableStateFlow(wirelessEnabled())
+            override val paired: Boolean
+                get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && keys.isPaired
+
+            override val canWriteSetting: Boolean
+                get() = secure.canWrite(context)
+
+            override suspend fun connectPort(): Int? = finder.connectPort()
+
+            override suspend fun launch(port: Int): Boolean {
+                if (!launchHelper(port) || !waitUntilRunning()) return false
+                keys.markPaired()
+                return true
+            }
+
+            override fun showStarting() = helper.setStatus(HelperStatus.STARTING)
+
+            override fun showIdle() = helper.setStatus(idleStatus())
+
+            override fun shutdown() = helper.shutdown()
+        }
+    private val loop = RestartLoop(launcher, setting)
     private val wirelessObserver =
         object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                val on = wirelessEnabled()
-                wirelessState.value = on
-                if (settingChangeStartsAttempt(on, gate.isLocked)) {
-                    scope.launch { runAttempt(resetFailures = true) }
-                }
+                setting.refresh()
             }
         }
 
     /** True while Settings has wireless debugging turned on. */
-    val wireless: StateFlow<Boolean> = wirelessState.asStateFlow()
+    val wireless: StateFlow<Boolean> = setting.on
 
     fun start() {
         KadbCert.configure(
             store = keys,
             policy = KadbCertPolicy(autoHealInvalidPrivateKey = false),
         )
+        // Only turning it on is worth a fresh start. Android turns it off on a network it hasn't
+        // approved, and starting over then would put its prompt back on screen each time.
+        setting.onOutsideChange = { on -> if (on) loop.wake(Wake.FRESH) }
         context.contentResolver.registerContentObserver(
             Settings.Global.getUriFor(ADB_WIFI_ENABLED),
             false,
             wirelessObserver,
         )
-        wirelessState.value = wirelessEnabled()
-        helper.onDied = { scope.launch { runAttempt() } }
-        helper.onRejected = { scope.launch { runAttempt() } }
+        setting.refresh()
+        helper.onDied = { loop.wake(Wake.FRESH) }
+        helper.onRejected = { loop.wake(Wake.RETRY) }
         scope.coroutineContext[Job]?.invokeOnCompletion {
             context.contentResolver.unregisterContentObserver(wirelessObserver)
         }
-        scope.launch {
-            network.lanAddress.drop(1).collect { runAttempt(resetFailures = true) }
-        }
-        scope.launch { runAttempt() }
+        scope.launch { network.lanAddress.drop(1).collect { loop.wake(Wake.FRESH) } }
+        scope.launch { loop.run() }
+        loop.wake(Wake.RETRY)
     }
 
-    /** User-driven start. Resets the backoff counter and clears a user stop. */
-    fun nudge() {
-        scope.launch { runAttempt(resetFailures = true, resume = true) }
-    }
+    /** User-driven start. Forgets earlier failures and clears a user stop. */
+    fun nudge() = loop.wake(Wake.RESUME)
 
     /** User-driven stop. The process exits, and nothing starts it again until [nudge]. */
-    fun stop() {
-        holdOff = true
-        scope.launch { gate.withLock { helper.shutdown() } }
-    }
+    fun stop() = loop.wake(Wake.STOP)
 
     fun isPaired(): Boolean = keys.isPaired
 
     /** The phone can launch the helper over wireless debugging. */
-    fun canStartHelper(): Boolean = wirelessReady()
+    fun canStartHelper(): Boolean =
+        launcher.paired && (setting.on.value || launcher.canWriteSetting)
 
     fun canControlWireless(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && secure.canWrite(context)
 
+    /** Sets wireless debugging as the user asked. Turning it on is a reason to try the helper. */
     fun setWirelessEnabled(on: Boolean) {
-        secure.setWirelessEnabled(on)
-        wirelessState.value = wirelessEnabled()
+        setting.setByUser(on)
+        if (on) loop.wake(Wake.FRESH)
     }
-
-    fun wirelessEnabled(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && secure.wirelessEnabled()
 
     /** Pairs with the wireless-debugging dialog, then starts the helper. */
     @Suppress(
@@ -169,101 +181,12 @@ internal class HelperSupervisor(
         throw failure ?: error("Wireless debugging pairing failed")
     }
 
-    private suspend fun runAttempt(resetFailures: Boolean = false, resume: Boolean = false) {
-        var reset = resetFailures
-        var allow = resume
-        while (true) {
-            val delayMs =
-                gate.withLock {
-                    if (allow) {
-                        holdOff = false
-                        allow = false
-                    }
-                    if (reset) {
-                        failures = 0
-                        reset = false
-                    }
-                    doAttempt()
-                } ?: return
-            delay(delayMs)
-        }
-    }
-
-    private suspend fun doAttempt(): Long? {
-        if (holdOff || helper.isRunning) return null
-        if (!wirelessReady()) {
-            helper.setStatus(idleStatus())
-            return null
-        }
-        helper.setStatus(HelperStatus.STARTING)
-        if (restartOverWireless()) return null
-        if (helper.isRunning) return null
-        failures += 1
-        if (failures >= MAX_FAILURES) {
-            helper.setStatus(idleStatus())
-            return null
-        }
-        return restartDelayMs(failures - 1)
-    }
-
     private fun idleStatus(): HelperStatus =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             HelperStatus.NEEDS_PAIRING
         } else {
             HelperStatus.NEEDS_USB
         }
-
-    private fun wirelessReady(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || !keys.isPaired) return false
-        return secure.wirelessEnabled() || secure.canWrite(context)
-    }
-
-    private suspend fun restartOverWireless(): Boolean {
-        val wasOn = secure.wirelessEnabled()
-        var started = false
-        return try {
-            if (!wasOn) {
-                secure.setWirelessEnabled(true)
-                wirelessState.value = true
-            }
-            val port = finder.connectPort()
-            if (port == null) {
-                Log.w(TAG, "Wireless debugging did not publish a TLS port")
-                // With the helper down, mDNS is the only way to the port. Turning the setting off
-                // here and on in the next attempt makes adbd register again. The gap is the
-                // backoff between attempts, since adbd can miss an off that is undone at once.
-                if (shouldCycleWireless(wasOn, secure.canWrite(context))) {
-                    secure.setWirelessEnabled(false)
-                    wirelessState.value = false
-                }
-                false
-            } else if (launchHelper(port) && waitUntilRunning()) {
-                keys.markPaired()
-                started = true
-                true
-            } else {
-                false
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Could not toggle wireless debugging", e)
-            false
-        } finally {
-            // A failed launch puts the setting back. A running helper keeps wireless debugging on
-            // so adbd can open Chrome's DevTools socket.
-            if (!started && !wasOn && secure.canWrite(context)) restoreWirelessOff()
-        }
-    }
-
-    private fun restoreWirelessOff() {
-        try {
-            secure.setWirelessEnabled(false)
-            wirelessState.value = false
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Could not turn wireless debugging back off", e)
-        }
-    }
 
     @Suppress(
         "TooGenericExceptionCaught"
@@ -309,7 +232,6 @@ internal class HelperSupervisor(
         const val TAG = "PhoneApiHelper"
         const val HELPER_MAIN = "net.die.phoneapi.helper.Main"
         const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
-        const val MAX_FAILURES = 6
         const val RUNNING_WAIT_MS = 10_000L
         const val POLL_MS = 200L
         val PAIRING_CODE = Regex("""\d{6}""")
@@ -331,15 +253,3 @@ internal class HelperSupervisor(
             }
     }
 }
-
-/**
- * True when a change to the wireless debugging setting is worth a fresh start. Only turning it on
- * is. An attempt in progress toggles the setting itself, and Android turns it off on a network it
- * hasn't approved, so counting those would reset the failures and retry without end, putting
- * Android's approval prompt back on screen each time.
- */
-internal fun settingChangeStartsAttempt(on: Boolean, attempting: Boolean): Boolean =
-    on && !attempting
-
-/** True when a setting that is on but gave no port should be turned off for the next attempt. */
-internal fun shouldCycleWireless(wasOn: Boolean, canWrite: Boolean): Boolean = wasOn && canWrite

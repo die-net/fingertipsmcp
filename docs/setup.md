@@ -61,6 +61,8 @@ The helper is a separate `app_process` running as the shell user. It reads the s
 | `needs_usb` | Android 10. Relaunch from a computer. |
 | `stopped` | The automatic restart gave up after repeated failures. |
 
+Once paired, the app starts the helper itself after a crash, a package update, or a reboot, and when its screen reading switch is turned on. A start turns Wireless Debugging on if it is off, and puts it back as it was if the start fails, so the setting is only left on while the helper runs, which is what reaches Chrome too. When the setting was already on but no port can be found, adbd's mDNS record has gone, and the app turns the setting off for a second and on again, which makes adbd register again. Six failed starts in a row end the retries, and so does the setting going off while a start needs it on, since that is the user or Android refusing the network, and turning it on again would only put Android's prompt back up. Turning the setting on, a network change, or the switch starts over.
+
 Launch it once from the computer:
 
 ```sh
