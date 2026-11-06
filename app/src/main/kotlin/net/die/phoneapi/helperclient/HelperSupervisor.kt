@@ -195,6 +195,9 @@ internal class HelperSupervisor(
         withContext(ioDispatcher) {
             try {
                 Kadb.create("127.0.0.1", port).use { kadb ->
+                    // The serial names this phone's mDNS records, so a later search resolves only
+                    // those.
+                    finder.connected(kadb.shell(READ_SERIAL).output.trim(), port)
                     val listed = kadb.shell(LIST_CMDLINES)
                     if (HELPER_MAIN in listed.output) {
                         Log.i(TAG, "Helper process is already running")
@@ -215,6 +218,7 @@ internal class HelperSupervisor(
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Could not launch the helper over wireless debugging", e)
+                finder.refused(port)
                 false
             }
         }
@@ -235,6 +239,7 @@ internal class HelperSupervisor(
         const val RUNNING_WAIT_MS = 10_000L
         const val POLL_MS = 200L
         val PAIRING_CODE = Regex("""\d{6}""")
+        const val READ_SERIAL = "getprop ro.serialno"
         const val LIST_CMDLINES =
             """for c in /proc/[0-9]*/cmdline; do tr '\0' ' ' < "${'$'}c" 2>/dev/null; echo; done"""
 

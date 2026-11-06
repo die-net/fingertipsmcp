@@ -15,8 +15,6 @@ import androidx.core.app.RemoteInput
 import com.flyfishxu.kadb.mdns.KadbMdnsAndroid
 import com.flyfishxu.kadb.mdns.MdnsEndpoint
 import java.net.InetAddress
-import java.net.NetworkInterface
-import java.net.SocketException
 import java.net.UnknownHostException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -174,18 +172,6 @@ internal class WirelessPairing(
             } catch (e: UnknownHostException) {
                 Log.w(TAG, "Unparseable mDNS host $host", e)
                 null
-            }
-
-        fun localAddresses(): Set<InetAddress> =
-            try {
-                NetworkInterface.getNetworkInterfaces()
-                    ?.asSequence()
-                    ?.flatMap { it.inetAddresses.asSequence() }
-                    ?.toSet()
-                    .orEmpty()
-            } catch (e: SocketException) {
-                Log.w(TAG, "Could not list network interfaces", e)
-                emptySet()
             }
     }
 }
