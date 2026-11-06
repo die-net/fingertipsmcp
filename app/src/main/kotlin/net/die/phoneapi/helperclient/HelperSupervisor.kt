@@ -54,8 +54,11 @@ internal class HelperSupervisor(
     private val wirelessObserver =
         object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                wirelessState.value = wirelessEnabled()
-                scope.launch { runAttempt(resetFailures = true) }
+                val on = wirelessEnabled()
+                wirelessState.value = on
+                if (settingChangeStartsAttempt(on, gate.isLocked)) {
+                    scope.launch { runAttempt(resetFailures = true) }
+                }
             }
         }
 
@@ -321,3 +324,12 @@ internal class HelperSupervisor(
             }
     }
 }
+
+/**
+ * True when a change to the wireless debugging setting is worth a fresh start. Only turning it on
+ * is. An attempt in progress toggles the setting itself, and Android turns it off on a network it
+ * hasn't approved, so counting those would reset the failures and retry without end, putting
+ * Android's approval prompt back on screen each time.
+ */
+internal fun settingChangeStartsAttempt(on: Boolean, attempting: Boolean): Boolean =
+    on && !attempting
