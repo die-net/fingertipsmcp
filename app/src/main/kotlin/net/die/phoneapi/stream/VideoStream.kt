@@ -226,7 +226,12 @@ internal class VideoStream(
             encoder.start()
             running = true
             codec = encoder
-            val frames = FrameRelay(surface, width, height)
+            // A relay that cannot draw would leave viewers a frozen picture that looks alive, so
+            // its failure ends the stream as the encoder's own does, and viewers reconnect.
+            val frames =
+                FrameRelay(surface, width, height) { reason ->
+                    scope.launch { failLive(encoder, reason) }
+                }
             relay = frames
             val started =
                 helper.require().startMirror(frames.input, width, height, Display.DEFAULT_DISPLAY)
@@ -326,11 +331,14 @@ internal class VideoStream(
             }
         }
 
-    private suspend fun failLive(owner: MediaCodec) {
+    /**
+     * Ends the stream [owner] encodes, if it is still the live one, closing viewers with [reason].
+     */
+    private suspend fun failLive(owner: MediaCodec, reason: String = ENCODER_STOPPED) {
         gate.withLock {
             if (codec !== owner) return@withLock
             withContext(io) { stopEncoder() }
-            closeViewers(ENCODER_STOPPED)
+            closeViewers(reason)
         }
     }
 
