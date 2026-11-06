@@ -1,6 +1,7 @@
 package net.die.phoneapi.helper.compat
 
 import android.app.ActivityManager
+import android.content.ComponentName
 import android.os.IBinder
 import android.util.Log
 import java.lang.reflect.Method
@@ -37,7 +38,24 @@ internal class TopTask {
     }
 
     /** The top task's package, or null when there is none. */
-    fun packageName(): String? {
+    fun packageName(): String? = top()?.topActivity?.packageName
+
+    /**
+     * The id of the top task if [component] is its top activity, or null. A caller that started
+     * that activity uses it to close only the task it opened.
+     */
+    fun taskShowing(component: ComponentName): Int? =
+        top()?.takeIf { it.topActivity == component }?.taskId
+
+    /** Removes the task [taskId] and finishes its activities. False when there is no such task. */
+    fun removeTask(taskId: Int): Boolean =
+        reflective("removeTask") {
+            manager.javaClass
+                .getMethod("removeTask", Int::class.javaPrimitiveType)
+                .invoke(manager, taskId) as Boolean
+        }
+
+    private fun top(): ActivityManager.RunningTaskInfo? {
         val params = getTasks.parameterTypes
         val args = arrayOfNulls<Any>(params.size)
         args[0] = 1
@@ -54,8 +72,7 @@ internal class TopTask {
                 @Suppress("SpreadOperator") // A few trailing defaults; the copy is the call itself.
                 getTasks.invoke(manager, *args) as? List<*>
             } ?: return null
-        val task = tasks.firstOrNull() as? ActivityManager.RunningTaskInfo ?: return null
-        return task.topActivity?.packageName
+        return tasks.firstOrNull() as? ActivityManager.RunningTaskInfo
     }
 
     private companion object {
