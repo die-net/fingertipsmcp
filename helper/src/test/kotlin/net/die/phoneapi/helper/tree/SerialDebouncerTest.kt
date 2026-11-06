@@ -54,7 +54,11 @@ class SerialDebouncerTest {
     }
 
     private companion object {
-        const val DELAY_MS = 30L
+        /**
+         * Short, since each check for no run waits ten of these. A slow machine can only make such
+         * a check miss a bug, not fail. Overlap between threads needs a real pool to show.
+         */
+        const val DELAY_MS = 1L
         const val TIMEOUT_S = 5L
     }
 }

@@ -7,12 +7,16 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.server.cio.CIO
+import io.ktor.server.engine.embeddedServer
 import io.ktor.server.testing.ApplicationTestBuilder
+import java.net.Socket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.core.AppsService
@@ -303,6 +307,67 @@ internal class FakeApi(
             tabs = Tabs(browser, lease, inFront = { false }, store = tabStore),
             foreground = foreground,
         )
+}
+
+/** What [RawServer] got back. A reply to an upgrade has an empty [body] unless it was refused. */
+internal data class RawReply(val status: Int, val body: String)
+
+/**
+ * A real CIO server, for requests that Ktor's test client can't make or can't report on: it decodes
+ * a URL as it builds one, refuses to set `Upgrade`, and hides the status of a refused WebSocket
+ * upgrade behind a 1 second wait.
+ */
+internal class RawServer(services: ServerServices) : AutoCloseable {
+    // Not built in a coroutine scope, such as runTest's. There embeddedServer resolves to its
+    // CoroutineScope overload, so the application runs on the test dispatcher, and stop() blocks
+    // that dispatcher's thread until shutdownTimeout, 5 seconds by default, runs out.
+    private val server = embeddedServer(CIO, host = LOOPBACK, port = 0) { phoneApiModule(services) }
+    private val port = runBlocking {
+        server.start(wait = false)
+        server.engine.resolvedConnectors().first().port
+    }
+
+    fun get(target: String, vararg headers: String): RawReply =
+        exchange(target, listOf("Connection: close") + headers)
+
+    /** Sends a complete WebSocket handshake, so a route that takes sockets matches it. */
+    fun upgrade(target: String, vararg headers: String): RawReply =
+        exchange(target, HANDSHAKE + headers)
+
+    private fun exchange(target: String, headers: List<String>): RawReply =
+        Socket(LOOPBACK, port).use { socket ->
+            socket.soTimeout = READ_TIMEOUT_MS
+            val lines = listOf("GET $target HTTP/1.1", "Host: $LOOPBACK") + headers
+            val request = lines.joinToString("\r\n", postfix = "\r\n\r\n")
+            socket.getOutputStream().write(request.toByteArray())
+            val input = socket.getInputStream().buffered()
+            val head = StringBuilder()
+            while (!head.endsWith("\r\n\r\n")) head.append(input.read().toChar())
+            val length = CONTENT_LENGTH.find(head)?.groupValues?.get(1)?.toInt() ?: 0
+            RawReply(
+                status = head.toString().substringAfter(' ').substringBefore(' ').toInt(),
+                body = input.readNBytes(length).decodeToString(),
+            )
+        }
+
+    override fun close() {
+        server.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+    }
+
+    private companion object {
+        const val LOOPBACK = "127.0.0.1"
+
+        /** A guard against a hang. It fires only when a test is already failing. */
+        const val READ_TIMEOUT_MS = 5_000
+        val CONTENT_LENGTH = Regex("(?im)^content-length: *(\\d+)")
+        val HANDSHAKE =
+            listOf(
+                "Connection: Upgrade",
+                "Upgrade: websocket",
+                "Sec-WebSocket-Version: 13",
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            )
+    }
 }
 
 internal fun ApplicationTestBuilder.apiClient(): HttpClient = createClient {

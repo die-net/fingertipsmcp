@@ -1,8 +1,6 @@
 package net.die.phoneapi.server
 
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.ResponseException
-import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -25,9 +23,6 @@ import io.ktor.server.routing.RoutingRoot
 import io.ktor.server.routing.getAllRoutes
 import io.ktor.server.routing.path
 import io.ktor.server.testing.testApplication
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.model.ApiError
 import net.die.phoneapi.model.Scope
@@ -60,28 +55,28 @@ class RouteScopeTest {
                 routing.getAllRoutes().filter { it.scopeSelector() == null }.map { it.routePath() }
             assertTrue(unscoped.all { it in UNSCOPED }, "routes without a scope: $unscoped")
 
-            routes.forEach { route ->
-                if (route.scopes.isEmpty()) {
-                    // Any token may call it, even one with only the browser scope.
-                    val anyone = request(client, route, holding.getValue(Scope.BROWSER))
-                    assertTrue(anyone.status != HttpStatusCode.Forbidden, "$route -> $anyone")
-                    return@forEach
-                }
-                val others = Scope.entries.toSet() - route.scopes
-                val missing = api.tokens.issue("missing-$route", others)
-                val denied = request(client, route, missing)
-                assertEquals(HttpStatusCode.Forbidden, denied.status, route.toString())
-                if (route.method != ApiMethod.WEBSOCKET) {
+            RawServer(api.services).use { raw ->
+                routes.forEach { route ->
+                    if (route.scopes.isEmpty()) {
+                        // Any token may call it, even one with only the browser scope.
+                        val anyone = request(client, raw, route, holding.getValue(Scope.BROWSER))
+                        assertTrue(anyone.status != HttpStatusCode.Forbidden, "$route -> $anyone")
+                        return@forEach
+                    }
+                    val others = Scope.entries.toSet() - route.scopes
+                    val missing = api.tokens.issue("missing-$route", others)
+                    val denied = request(client, raw, route, missing)
+                    assertEquals(HttpStatusCode.Forbidden, denied.status, route.toString())
                     val error = ApiJson.decodeFromString(ApiError.serializer(), denied.body)
                     assertEquals("forbidden", error.error, route.toString())
-                }
-                // Each of the route's scopes is enough on its own.
-                route.scopes.forEach { scope ->
-                    val allowed = request(client, route, holding.getValue(scope))
-                    assertTrue(
-                        allowed.status != HttpStatusCode.Forbidden,
-                        "$route with $scope -> ${allowed.status} ${allowed.body}",
-                    )
+                    // Each of the route's scopes is enough on its own.
+                    route.scopes.forEach { scope ->
+                        val allowed = request(client, raw, route, holding.getValue(scope))
+                        assertTrue(
+                            allowed.status != HttpStatusCode.Forbidden,
+                            "$route with $scope -> ${allowed.status} ${allowed.body}",
+                        )
+                    }
                 }
             }
         }
@@ -101,24 +96,15 @@ private data class CallResult(val status: HttpStatusCode, val body: String)
 
 private suspend fun request(
     client: HttpClient,
+    raw: RawServer,
     route: RegisteredRoute,
     secret: String,
 ): CallResult {
     val path =
         route.path.replace("{ref}", "e1").replace("{pkg}", "com.example").replace("{id}", "abc")
     if (route.method == ApiMethod.WEBSOCKET) {
-        // The test engine reports a rejected upgrade as "WebSocket connection failed" and does not
-        // surface the 403. A handshake that completes is the scope being accepted.
-        return try {
-            withTimeout(5.seconds) { client.webSocket(path, { bearer(secret) }) {} }
-            CallResult(HttpStatusCode.SwitchingProtocols, "")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: ResponseException) {
-            CallResult(e.response.status, e.response.bodyAsText())
-        } catch (_: IllegalStateException) {
-            CallResult(HttpStatusCode.Forbidden, "")
-        }
+        val reply = raw.upgrade(path, "Authorization: Bearer $secret")
+        return CallResult(HttpStatusCode.fromValue(reply.status), reply.body)
     }
     val response =
         when (route.method) {
