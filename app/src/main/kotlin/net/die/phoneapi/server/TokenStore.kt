@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
-import net.die.phoneapi.core.StoreIo
 import net.die.phoneapi.core.randomToken
 import net.die.phoneapi.core.readUtf8
 import net.die.phoneapi.core.writeUtf8
@@ -18,7 +17,10 @@ import net.die.phoneapi.model.CreatedToken
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.TokenInfo
 
-/** Bearer tokens, stored only as SHA-256 hashes. */
+/**
+ * Bearer tokens, stored only as SHA-256 hashes. It reads and writes its file on the caller's
+ * thread, which must not be the main thread.
+ */
 class TokenStore(dir: File) : TokenGateway {
     @Serializable
     private data class Stored(
@@ -118,16 +120,14 @@ class TokenStore(dir: File) : TokenGateway {
 
     private fun ensureLoaded() {
         if (loaded) return
-        tokens = StoreIo.call {
-            atomic.readUtf8()?.let { ApiJson.decodeFromString(serializer, it) }.orEmpty()
-        }
+        tokens = atomic.readUtf8()?.let { ApiJson.decodeFromString(serializer, it) }.orEmpty()
         loaded = true
     }
 
     private fun persist() {
         lastPersistMs = System.currentTimeMillis()
         val text = ApiJson.encodeToString(serializer, tokens)
-        StoreIo.call { atomic.writeUtf8(text) }
+        atomic.writeUtf8(text)
     }
 
     private fun bumpRevision() {
