@@ -8,7 +8,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +27,7 @@ import net.die.phoneapi.model.TreeFocusCall
 import net.die.phoneapi.model.TreeFocusedText
 import net.die.phoneapi.model.TreeFound
 import net.die.phoneapi.model.TreeGlobalCall
+import net.die.phoneapi.model.TreeHoldCall
 import net.die.phoneapi.model.TreePackageCall
 import net.die.phoneapi.model.TreeResult
 import net.die.phoneapi.model.TreeScreened
@@ -45,7 +45,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     private var imePackage: String? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val nodes = NodeRegistry()
-    private val holds = AtomicInteger()
+    private val hold = ClientHold { client()?.asBinder() }
     private val session: UiAutomationSession
     private val tracker: UiChangeTracker
     private val nodeCache: NodeCacheAge
@@ -61,7 +61,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                     if (up) created?.onConnected()
                     notify { it.onConnected(up) }
                 },
-                busy = { holds.get() > 0 },
+                busy = { hold.held },
             )
         tracker =
             UiChangeTracker(
@@ -108,9 +108,8 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
             "pinpad",
             "contentBounds",
             "windowTitle" -> read(op, body)
-            "hold",
-            "release",
-            "invalidate" -> sessionOp(op)
+            "setHold",
+            "invalidate" -> sessionOp(op, body)
             else -> write(op, body)
         }
 
@@ -144,20 +143,16 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
             else -> throw ApiException.badRequest("Unknown tree op '$op'")
         }
 
-    private fun sessionOp(op: String): String =
+    private fun sessionOp(op: String, body: String): String =
         when (op) {
             "invalidate" -> {
                 snapshots.invalidate()
                 "{}"
             }
-            "hold" -> {
-                holds.incrementAndGet()
-                session.ensure()
-                "{}"
-            }
-            "release" -> {
-                holds.updateAndGet { (it - 1).coerceAtLeast(0) }
-                session.poke()
+            "setHold" -> {
+                val call = json.decodeFromString(serializer<TreeHoldCall>(), body)
+                hold.set(call.hold)
+                if (call.hold) session.ensure() else session.poke()
                 "{}"
             }
             else -> throw ApiException.badRequest("Unknown tree op '$op'")

@@ -40,6 +40,12 @@ public data class TreeSetTextCall(
 /** The `windowTitle` op's body: text to look for in window titles. */
 @Serializable public data class TreeTitleCall(val text: String)
 
+/**
+ * The `setHold` op's body. [hold] true keeps UiAutomation connected for the calling client's event
+ * subscribers; false lets it idle out. A newly attached client holds nothing until it says so.
+ */
+@Serializable public data class TreeHoldCall(val hold: Boolean)
+
 /** The `windowTitle` op's reply. */
 @Serializable public data class TreeFound(val found: Boolean)
 
