@@ -31,42 +31,21 @@ internal class SnapshotEngine(
     private val nodeCache: NodeCacheAge,
     private val screenRect: () -> Rect,
 ) {
-    private data class Built(
-        val options: SnapshotOptions,
-        val seq: Long,
-        val atMs: Long,
-        val windows: List<UiWindow>,
-        val cut: TreeCut,
-    )
+    private class Built(val seq: Long, val windows: List<UiWindow>, val cut: TreeCut)
 
     private val mutex = Mutex()
-    @Volatile private var cache: Built? = null
 
-    /** Drops the cached snapshot and nodes; called after every action. */
+    /** Makes the next read fetch current nodes; called after every action. */
     fun invalidate() {
-        cache = null
         nodeCache.expire()
     }
 
     suspend fun snapshot(options: SnapshotOptions, summary: DeviceStateSummary): UiSnapshot {
-        val key =
-            options.copy(
-                format = SnapshotFormat.COMPACT,
-                autoWake = true,
-                maxNodes = null,
-                maxChars = null,
-                textOnly = false,
-                redact = false,
-            )
         val built =
             withContext(io) {
                 mutex.withLock {
                     val seq = this@SnapshotEngine.seq.value
-                    cache?.takeIf {
-                        it.options == key &&
-                            it.seq == seq &&
-                            SystemClock.uptimeMillis() - it.atMs < CACHE_MS
-                    } ?: nodeCache.read { build(windows(), key, seq) }.also { cache = it }
+                    nodeCache.read { build(windows(), options, seq) }
                 }
             }
         val redactor = Redactor()
@@ -161,7 +140,7 @@ internal class SnapshotEngine(
                     maxDepth = options.maxDepth.takeIf { traversal.depthCut },
                     nodeCap = MAX_NODES.takeIf { traversal.capped },
                 )
-            return Built(options, seq, SystemClock.uptimeMillis(), out, cut)
+            return Built(seq, out, cut)
         } finally {
             NodeCompat.recycleAll(windows)
         }
@@ -337,7 +316,6 @@ internal class SnapshotEngine(
 
     private companion object {
         const val TAG = "PhoneApiUi"
-        const val CACHE_MS = 5_000L
         const val MAX_NODES = 5_000
         const val MAX_FIND = 200
         const val INTERESTING_SYSTEM_FRACTION = 0.15
