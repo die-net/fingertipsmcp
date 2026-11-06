@@ -195,8 +195,16 @@ class ViewerSocketTest {
                 client.webSocket("/v1/input/pointer", { bearer(secret) }) {
                     assertEquals("agent", lease(this).holder())
                     send(Frame.Text("""{"op":"copy","id":1}"""))
+                    // The page waits for a copy's answer, so a dropped one is answered at once.
+                    val refused = next(this, "error")
+                    assertEquals("1", refused["id"]?.jsonPrimitive?.content)
+                    assertTrue(
+                        refused["message"]?.jsonPrimitive?.content.orEmpty().contains("Take over")
+                    )
                     send(Frame.Text("""{"op":"paste","text":"x"}"""))
-                    delay(100)
+                    // Frames are handled in order, so once the take is, the paste was too.
+                    send(Frame.Text("""{"op":"take"}"""))
+                    assertEquals("you", lease(this).holder())
                 }
             }
         }
