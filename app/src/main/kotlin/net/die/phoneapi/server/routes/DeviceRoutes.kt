@@ -21,6 +21,7 @@ import net.die.phoneapi.server.SESSION_HEADER
 import net.die.phoneapi.server.ServerServices
 import net.die.phoneapi.server.SessionsKey
 import net.die.phoneapi.server.scoped
+import net.die.phoneapi.server.token
 import net.die.phoneapi.server.withScreen
 
 /**
@@ -31,7 +32,9 @@ fun Route.deviceRoutes(services: ServerServices) {
     scoped(Scope.OBSERVE) {
         get("/v1/device") {
             val sessions = call.application.attributes[SessionsKey]
-            val caller = call.request.header(SESSION_HEADER)
+            // Only the caller's own token's session counts; another token's id names no one.
+            val caller =
+                call.request.header(SESSION_HEADER)?.let { sessions.forRest(it, call.token.id) }?.id
             call.respond(
                 sessions.withScreenHolder(
                     services.device.info(),

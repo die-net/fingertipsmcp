@@ -106,6 +106,21 @@ class AuthRoutesTest {
         }
     }
 
+    /** An `Upgrade` header on a route that is not a socket gives the query and cookie no say. */
+    @Test
+    fun `query and cookie go by route, not by upgrade header`() {
+        val api = FakeApi()
+        val secret = api.tokens.issue("all", Scope.entries.toSet())
+        RawServer(api.services).use { raw ->
+            for (path in listOf("/mcp", "/v1/device", "/v1/tokens")) {
+                assertEquals(RawReply(404, ""), raw.upgrade("$path?access_token=$secret"), path)
+                val cookie = "Cookie: $VIEWER_COOKIE=$secret"
+                assertEquals(RawReply(404, ""), raw.upgrade(path, cookie), path)
+            }
+            assertEquals(101, raw.upgrade("/v1/events?access_token=$secret").status)
+        }
+    }
+
     @Test
     fun `sockets refuse other origins`() {
         val api = FakeApi()
