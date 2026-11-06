@@ -193,10 +193,9 @@ public data class ActionResult(
 
 @Serializable
 public data class LaunchRequest(
-    /** Clear the task and start fresh. */
-    val fresh: Boolean = false,
-    val activity: String? = null,
-    val wait: Boolean = true,
+    @Doc("Clear the app's task and start it fresh.") val fresh: Boolean = false,
+    @Doc("An activity to start instead of the launcher's.") val activity: String? = null,
+    @Doc("Wait for the app to reach the foreground. Defaults to true.") val wait: Boolean = true,
 )
 
 @Serializable

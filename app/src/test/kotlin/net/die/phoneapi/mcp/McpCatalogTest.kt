@@ -12,9 +12,11 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.model.Capabilities
 import net.die.phoneapi.model.Scope
+import net.die.phoneapi.model.SessionArg
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -106,17 +108,27 @@ class McpCatalogTest {
             assertEquals("object", tool.schema.type)
             val properties = tool.schema.properties ?: JsonObject(emptyMap())
             val names =
-                (0 until tool.arguments.descriptor.elementsCount).map { index ->
-                    tool.arguments.descriptor.getElementName(index)
+                tool.arguments.flatMap { part ->
+                    (0 until part.descriptor.elementsCount).map(part.descriptor::getElementName)
                 }
-            // Every tool but the session tools also takes session, which PhoneAPI strips.
-            val session = if (tool.name in SESSION_TOOLS) emptySet() else setOf(SESSION_ARGUMENT)
-            assertEquals(names.toSet() + session, properties.keys, tool.name)
+            assertEquals(names.toSet(), properties.keys, tool.name)
+            // Every tool but the session tools also takes session, from SessionArg.
+            val named = tool.arguments.any { it.descriptor == serializer<SessionArg>().descriptor }
+            assertEquals(tool.name !in SESSION_TOOLS, named, tool.name)
+            assertTrue(named <= ("session" in properties.keys), tool.name)
             val defs = tool.schema.defs ?: JsonObject(emptyMap())
-            val decoded = JsonObject(properties - session)
-            val sample = sampleObject(decoded, tool.schema.required.orEmpty(), defs)
-            ApiJson.decodeFromJsonElement(tool.arguments, sample)
+            // One sample of the required fields decodes as every part.
+            val sample = sampleObject(properties, tool.schema.required.orEmpty(), defs)
+            tool.arguments.forEach { ApiJson.decodeFromJsonElement(it, sample) }
         }
+        val browserTap = MCP_TOOLS.first { it.name == "browser_tap" }.schema
+        assertEquals(listOf("target"), browserTap.required)
+        // The request type's own docs reach the tool, with nothing copied by hand.
+        val swipe = MCP_TOOLS.first { it.name == "browser_swipe" }.schema.properties!!
+        assertTrue(swipe.getValue("durationMs").jsonObject.containsKey("description"))
+        val type = MCP_TOOLS.first { it.name == "browser_type" }.schema.properties!!
+        assertTrue(type.getValue("text").jsonObject.containsKey("description"))
+        assertTrue(type.getValue("session").jsonObject.containsKey("description"))
         val tap = MCP_TOOLS.first { it.name == "tap" }.schema.properties!!
         assertTrue(tap.keys.containsAll(listOf("count", "holdMs", "force", "autoWake")))
         assertTrue("autoWake" in MCP_TOOLS.first { it.name == "ui_act" }.schema.properties!!.keys)
@@ -136,7 +148,7 @@ class McpCatalogTest {
             waitItems.jsonObject.containsKey("\$ref") || waitItems.jsonObject.containsKey("oneOf")
         )
         ApiJson.decodeFromJsonElement(
-            MCP_TOOLS.first { it.name == "tap" }.arguments,
+            MCP_TOOLS.first { it.name == "tap" }.arguments.first(),
             buildJsonObject { put("count", 2) },
         )
     }
@@ -176,7 +188,7 @@ class McpCatalogTest {
         val failure =
             assertThrows<SerializationException> {
                 ApiJson.decodeFromJsonElement(
-                    MCP_TOOLS.first { it.name == "wait_for" }.arguments,
+                    MCP_TOOLS.first { it.name == "wait_for" }.arguments.first(),
                     buildJsonObject {
                         put(
                             "all",

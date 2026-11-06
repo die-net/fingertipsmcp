@@ -7,7 +7,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.util.Base64
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -18,12 +17,9 @@ import net.die.phoneapi.core.ScreenshotScale
 import net.die.phoneapi.core.checkLogTag
 import net.die.phoneapi.core.windowId
 import net.die.phoneapi.helperclient.failureMessage
-import net.die.phoneapi.model.ActionMode
 import net.die.phoneapi.model.ApiException
-import net.die.phoneapi.model.BROWSER_INPUT_DOC
-import net.die.phoneapi.model.BROWSER_WAKE_DOC
+import net.die.phoneapi.model.BrowserCaptureRequest
 import net.die.phoneapi.model.BrowserGestureRequest
-import net.die.phoneapi.model.BrowserInput
 import net.die.phoneapi.model.BrowserInputKind
 import net.die.phoneapi.model.BrowserKeyRequest
 import net.die.phoneapi.model.BrowserSnapshot
@@ -31,34 +27,29 @@ import net.die.phoneapi.model.BrowserSnapshotOptions
 import net.die.phoneapi.model.BrowserSwipeRequest
 import net.die.phoneapi.model.BrowserTapRequest
 import net.die.phoneapi.model.BrowserTextRequest
-import net.die.phoneapi.model.CAPTURE_OPEN_DOC
 import net.die.phoneapi.model.ClipboardReadRequest
 import net.die.phoneapi.model.ClipboardWriteRequest
 import net.die.phoneapi.model.ConsoleRequest
-import net.die.phoneapi.model.DEFAULT_TAP_WAIT_MS
 import net.die.phoneapi.model.EvalRequest
 import net.die.phoneapi.model.FindRequest
-import net.die.phoneapi.model.INCOGNITO_OPEN_DOC
 import net.die.phoneapi.model.ImeShowRequest
 import net.die.phoneapi.model.IntentRequest
 import net.die.phoneapi.model.KeyRequest
 import net.die.phoneapi.model.LaunchRequest
+import net.die.phoneapi.model.NavigateRequest
 import net.die.phoneapi.model.NodeActionRequest
-import net.die.phoneapi.model.NodeSelector
+import net.die.phoneapi.model.NodeRefArg
+import net.die.phoneapi.model.OpenTabRequest
 import net.die.phoneapi.model.OrientationRequest
-import net.die.phoneapi.model.Point
-import net.die.phoneapi.model.SHOW_DOC
+import net.die.phoneapi.model.PackageArg
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.ScreenReleaseRequest
 import net.die.phoneapi.model.SnapshotFormat
 import net.die.phoneapi.model.SnapshotOptions
-import net.die.phoneapi.model.SwipeDirection
 import net.die.phoneapi.model.SwipeRequest
-import net.die.phoneapi.model.TAP_WAIT_DOC
 import net.die.phoneapi.model.TapRequest
-import net.die.phoneapi.model.TextMode
+import net.die.phoneapi.model.TargetArg
 import net.die.phoneapi.model.TextRequest
-import net.die.phoneapi.model.TimedPoint
 import net.die.phoneapi.model.UnlockRequest
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.model.WaitRequest
@@ -104,29 +95,13 @@ internal suspend fun uiSnapshot(
 
 internal suspend fun uiFind(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        val args = request.args<UiFindArgs>()
-        jsonText(
-            services.ui.find(
-                FindRequest(args.selector, args.limit, args.includeInvisible, args.redact)
-            )
-        )
+        jsonText(services.ui.find(request.args<FindRequest>()))
     }
 
 internal suspend fun uiAct(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        val args = request.args<NodeActArgs>()
-        jsonText(
-            services.ui.act(
-                args.ref,
-                NodeActionRequest(
-                    action = args.action,
-                    mode = args.mode,
-                    text = args.text,
-                    force = args.force,
-                    autoWake = args.autoWake,
-                ),
-            )
-        )
+        val ref = request.args<NodeRefArg>().ref
+        jsonText(services.ui.act(ref, request.args<NodeActionRequest>()))
     }
 
 internal suspend fun tap(services: ServerServices, request: CallToolRequest): CallToolResult =
@@ -262,23 +237,18 @@ internal suspend fun keyboardShow(
 
 internal suspend fun appLaunch(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        val args = request.args<PackageArgs>()
-        jsonText(
-            services.apps.launch(
-                args.packageName,
-                LaunchRequest(fresh = args.fresh, activity = args.activity, wait = args.wait),
-            )
-        )
+        val pkg = request.args<PackageArg>().packageName
+        jsonText(services.apps.launch(pkg, request.args<LaunchRequest>()))
     }
 
 internal suspend fun appStop(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.apps.stop(request.args<PackageNameArgs>().packageName))
+        jsonText(services.apps.stop(request.args<PackageArg>().packageName))
     }
 
 internal suspend fun appClear(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.apps.clear(request.args<PackageNameArgs>().packageName))
+        jsonText(services.apps.clear(request.args<PackageArg>().packageName))
     }
 
 internal suspend fun openIntent(
@@ -315,44 +285,37 @@ internal suspend fun browserOpen(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserOpenArgs>()
-    jsonText(services.browser.openTab(args.url, args.capture, args.incognito))
+    val open = request.args<OpenTabRequest>()
+    jsonText(services.browser.openTab(open.url, open.capture, open.incognito))
 }
 
 internal suspend fun browserCapture(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserCaptureArgs>()
-    jsonText(services.browser.capture(args.target, args.on))
+    jsonText(services.browser.capture(request.target(), request.args<BrowserCaptureRequest>().on))
 }
 
 internal suspend fun browserNavigate(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<TargetUrlArgs>()
-    jsonText(services.browser.navigate(args.target, args.url))
+    jsonText(services.browser.navigate(request.target(), request.args<NavigateRequest>().url))
 }
 
 internal suspend fun browserClose(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    jsonText(services.browser.closeTab(request.args<TargetArgs>().target))
+    jsonText(services.browser.closeTab(request.target()))
 }
 
 internal suspend fun browserSnapshot(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserSnapshotArgs>()
-    val snapshot =
-        services.browser.snapshot(
-            args.target,
-            BrowserSnapshotOptions(args.maxNodes, args.maxChars, args.show),
-        )
-    snapshotText(snapshot, args.show)
+    val options = request.args<BrowserSnapshotOptions>()
+    snapshotText(services.browser.snapshot(request.target(), options), options.show)
 }
 
 /** The outline, with notes on whether the tab was drawn after its header line. */
@@ -370,63 +333,21 @@ internal suspend fun browserTap(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserTapArgs>()
-    jsonText(
-        services.browser.tap(
-            args.target,
-            BrowserTapRequest(
-                ref = args.ref,
-                selector = args.selector,
-                humanize = args.humanize,
-                autoWake = args.autoWake,
-                input = args.input,
-                waitMs = args.waitMs,
-            ),
-        )
-    )
+    jsonText(services.browser.tap(request.target(), request.args<BrowserTapRequest>()))
 }
 
 internal suspend fun browserSwipe(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserSwipeArgs>()
-    jsonText(
-        services.browser.swipe(
-            args.target,
-            BrowserSwipeRequest(
-                from = args.from,
-                to = args.to,
-                ref = args.ref,
-                selector = args.selector,
-                direction = args.direction,
-                distance = args.distance,
-                durationMs = args.durationMs,
-                fling = args.fling,
-                humanize = args.humanize,
-                autoWake = args.autoWake,
-                input = args.input,
-            ),
-        )
-    )
+    jsonText(services.browser.swipe(request.target(), request.args<BrowserSwipeRequest>()))
 }
 
 internal suspend fun browserGesture(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserGestureArgs>()
-    jsonText(
-        services.browser.gesture(
-            args.target,
-            BrowserGestureRequest(
-                pointers = args.pointers,
-                humanize = args.humanize,
-                autoWake = args.autoWake,
-                input = args.input,
-            ),
-        )
-    )
+    jsonText(services.browser.gesture(request.target(), request.args<BrowserGestureRequest>()))
 }
 
 internal suspend fun browserKey(
@@ -434,62 +355,30 @@ internal suspend fun browserKey(
     scopes: Set<Scope>,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserKeyArgs>()
-    requireTouchAccess(BrowserInputKind.KEY, args.input, scopes)
-    jsonText(
-        services.browser.key(
-            args.target,
-            BrowserKeyRequest(
-                key = args.key,
-                longPress = args.longPress,
-                metaState = args.metaState,
-                autoWake = args.autoWake,
-                input = args.input,
-            ),
-        )
-    )
+    val key = request.args<BrowserKeyRequest>()
+    requireTouchAccess(BrowserInputKind.KEY, key.input, scopes)
+    jsonText(services.browser.key(request.target(), key))
 }
 
 internal suspend fun browserText(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserTextArgs>()
-    jsonText(
-        services.browser.text(
-            args.target,
-            BrowserTextRequest(
-                text = args.text,
-                ref = args.ref,
-                selector = args.selector,
-                mode = args.mode,
-                clear = args.clear,
-                submit = args.submit,
-                minDelayMs = args.minDelayMs,
-                maxDelayMs = args.maxDelayMs,
-                autoWake = args.autoWake,
-                input = args.input,
-            ),
-        )
-    )
+    jsonText(services.browser.text(request.target(), request.args<BrowserTextRequest>()))
 }
 
 internal suspend fun browserEval(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<EvalArgs>()
-    jsonText(
-        services.browser.evaluate(args.target, EvalRequest(args.expression, args.awaitPromise))
-    )
+    jsonText(services.browser.evaluate(request.target(), request.args<EvalRequest>()))
 }
 
 internal suspend fun browserConsole(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<ConsoleArgs>()
-    jsonText(services.browser.console(args.target, ConsoleRequest(args.timeoutMs)))
+    jsonText(services.browser.console(request.target(), request.args<ConsoleRequest>()))
 }
 
 internal suspend fun screenshot(
@@ -568,10 +457,17 @@ private fun toolError(error: ApiException): String {
 internal inline fun <reified T> jsonText(value: T): String =
     ApiJson.encodeToString(serializer<T>(), value)
 
+/**
+ * The arguments as [T], which decodes the fields it names and ignores the rest, since a tool's
+ * arguments can be several types' fields together (see [McpTool.arguments]).
+ */
 internal inline fun <reified T> CallToolRequest.args(): T {
     val arguments = this.arguments ?: JsonObject(emptyMap())
     return ApiJson.decodeFromJsonElement(serializer<T>(), arguments)
 }
+
+/** The browser tab the call names. */
+internal fun CallToolRequest.target(): String = args<TargetArg>().target
 
 @Serializable
 internal data class SnapshotArgs(
@@ -596,142 +492,6 @@ internal data class SnapshotArgs(
     val all: Boolean = false,
     val autoWake: Boolean = true,
 )
-
-@Serializable
-internal data class UiFindArgs(
-    val selector: NodeSelector,
-    @Doc("Most matches to return. Defaults to 20.") val limit: Int = 20,
-    @Doc("Also match nodes that are off screen or hidden.") val includeInvisible: Boolean = false,
-    @Doc(
-        "Mask the text of password and one-time-code fields, and card numbers, as ui_snapshot does. redacted counts them. Defaults to true."
-    )
-    val redact: Boolean = true,
-)
-
-@Serializable
-internal data class NodeActArgs(
-    @Doc("Node ref from ui_snapshot or ui_find, such as e12.") val ref: String,
-    @Doc(
-        "Standard action such as click, longClick, setText, scrollForward or imeEnter, or a custom action label listed on the node in the snapshot."
-    )
-    val action: String,
-    @Doc("real uses a touch where it can. semantic calls performAction and generates no touch.")
-    val mode: ActionMode = ActionMode.REAL,
-    val text: String? = null,
-    val force: Boolean = false,
-    val autoWake: Boolean = true,
-)
-
-@Serializable internal data class PackageNameArgs(@SerialName("package") val packageName: String)
-
-@Serializable
-internal data class PackageArgs(
-    @SerialName("package") val packageName: String,
-    val fresh: Boolean = false,
-    val activity: String? = null,
-    val wait: Boolean = true,
-)
-
-@Serializable
-internal data class BrowserOpenArgs(
-    val url: String,
-    @Doc(CAPTURE_OPEN_DOC) val capture: Boolean = false,
-    @Doc(INCOGNITO_OPEN_DOC) val incognito: Boolean = false,
-)
-
-@Serializable
-internal data class BrowserCaptureArgs(
-    val target: String,
-    @Doc(
-        "true (default) starts recording, or keeps it going. false stops it and forgets what it recorded."
-    )
-    val on: Boolean = true,
-)
-
-@Serializable internal data class TargetArgs(val target: String)
-
-@Serializable
-internal data class BrowserSnapshotArgs(
-    val target: String,
-    @Doc("Most nodes to show, 1 to 5000. Defaults to 400. A line after the header counts the rest.")
-    val maxNodes: Int = 400,
-    @Doc("Most characters of outline to show, cut at a line. Cuts are reported like maxNodes.")
-    val maxChars: Int? = null,
-    @Doc(SHOW_DOC) val show: Boolean = false,
-)
-
-@Serializable internal data class TargetUrlArgs(val target: String, val url: String)
-
-@Serializable
-internal data class BrowserTapArgs(
-    val target: String,
-    val ref: String? = null,
-    val selector: String? = null,
-    val humanize: Boolean = true,
-    @Doc(BROWSER_WAKE_DOC) val autoWake: Boolean = true,
-    @Doc(BROWSER_INPUT_DOC) val input: BrowserInput = BrowserInput.AUTO,
-    @Doc(TAP_WAIT_DOC) val waitMs: Long = DEFAULT_TAP_WAIT_MS,
-)
-
-@Serializable
-internal data class BrowserSwipeArgs(
-    val target: String,
-    val from: Point? = null,
-    val to: Point? = null,
-    val ref: String? = null,
-    val selector: String? = null,
-    val direction: SwipeDirection? = null,
-    val distance: Float = 0.6f,
-    val durationMs: Long = 300,
-    val fling: Boolean = true,
-    val humanize: Boolean = true,
-    @Doc(BROWSER_WAKE_DOC) val autoWake: Boolean = true,
-    @Doc(BROWSER_INPUT_DOC) val input: BrowserInput = BrowserInput.AUTO,
-)
-
-@Serializable
-internal data class BrowserGestureArgs(
-    val target: String,
-    val pointers: List<List<TimedPoint>>,
-    @Doc("Jitter the path and vary the finger contact. Defaults to true.")
-    val humanize: Boolean = true,
-    @Doc(BROWSER_WAKE_DOC) val autoWake: Boolean = true,
-    @Doc(BROWSER_INPUT_DOC) val input: BrowserInput = BrowserInput.AUTO,
-)
-
-@Serializable
-internal data class BrowserKeyArgs(
-    val target: String,
-    val key: String,
-    val longPress: Boolean = false,
-    val metaState: Int = 0,
-    @Doc(BROWSER_WAKE_DOC) val autoWake: Boolean = true,
-    @Doc(BROWSER_INPUT_DOC) val input: BrowserInput = BrowserInput.AUTO,
-)
-
-@Serializable
-internal data class BrowserTextArgs(
-    val target: String,
-    val text: String,
-    val ref: String? = null,
-    val selector: String? = null,
-    val mode: TextMode = TextMode.AUTO,
-    val clear: Boolean = false,
-    val submit: Boolean = false,
-    val minDelayMs: Long = 40,
-    val maxDelayMs: Long = 140,
-    @Doc(BROWSER_WAKE_DOC) val autoWake: Boolean = true,
-    @Doc(BROWSER_INPUT_DOC) val input: BrowserInput = BrowserInput.AUTO,
-)
-
-@Serializable
-internal data class EvalArgs(
-    val target: String,
-    val expression: String,
-    val awaitPromise: Boolean = false,
-)
-
-@Serializable internal data class ConsoleArgs(val target: String, val timeoutMs: Long = 1_000)
 
 @Serializable
 internal data class ScaleArgs(

@@ -68,6 +68,34 @@ public class JsonSchemas(
         return if (descriptor.isNullable) nullable(body) else body
     }
 
+    /**
+     * One object schema with the properties of every class in [descriptors], for a JSON object that
+     * each of them decodes in part, ignoring the others' fields. A property two of them name keeps
+     * the first one's schema.
+     */
+    public fun merged(descriptors: List<SerialDescriptor>): JsonObject {
+        val properties = LinkedHashMap<String, JsonElement>()
+        val required = LinkedHashSet<String>()
+        for (descriptor in descriptors) {
+            val part = inline(descriptor)
+            check(part["type"] == JsonPrimitive("object")) {
+                "Only classes merge, found ${descriptor.serialName}"
+            }
+            (part["properties"] as? JsonObject)?.forEach { (name, schema) ->
+                properties.putIfAbsent(name, schema)
+            }
+            (part["required"] as? JsonArray)?.forEach { name ->
+                (name as? JsonPrimitive)?.let { required += it.content }
+            }
+        }
+        return buildJsonObject {
+            put("type", "object")
+            put("properties", JsonObject(properties))
+            if (required.isNotEmpty()) put("required", strings(required.toList()))
+            if (!config.ignoreUnknownKeys) put("additionalProperties", false)
+        }
+    }
+
     private fun place(descriptor: SerialDescriptor): JsonObject {
         val body = structural(unwrap(descriptor))
         return if (descriptor.isNullable) nullable(body) else body
