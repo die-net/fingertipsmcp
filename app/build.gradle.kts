@@ -56,7 +56,6 @@ android {
             excludes +=
                 setOf(
                     "META-INF/INDEX.LIST",
-                    "META-INF/io.netty.versions.properties",
                     "META-INF/DEPENDENCIES",
                     "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
                     "META-INF/LICENSE*",
@@ -65,16 +64,6 @@ android {
                 )
         }
     }
-}
-
-configurations.configureEach {
-    // Desktop-native Netty transports and HTTP/3 codecs can't load on Android; NIO is used instead.
-    exclude(group = "io.netty", module = "netty-codec-native-quic")
-    exclude(group = "io.netty", module = "netty-codec-classes-quic")
-    exclude(group = "io.netty", module = "netty-codec-http3")
-    exclude(group = "io.netty", module = "netty-transport-native-epoll")
-    exclude(group = "io.netty", module = "netty-transport-native-kqueue")
-    exclude(group = "io.netty", module = "netty-transport-native-io_uring")
 }
 
 dependencies {
