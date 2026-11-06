@@ -167,7 +167,7 @@ class McpCatalogTest {
     fun `screen tools say so once`() {
         MCP_TOOLS.forEach { tool ->
             val times = tool.description.split("Uses the screen.").size - 1
-            assertEquals(if (tool.name in SCREEN_TOOLS) 1 else 0, times, tool.name)
+            assertEquals(if (tool.screen.always) 1 else 0, times, tool.name)
         }
     }
 

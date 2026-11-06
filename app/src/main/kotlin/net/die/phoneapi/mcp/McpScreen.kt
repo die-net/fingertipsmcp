@@ -21,126 +21,102 @@ import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.wait.usesScreen
 
-/** Tools that always take the screen: they act on it or show what is on it. */
-internal val SCREEN_TOOLS =
-    setOf(
-        "ui_snapshot",
-        "ui_find",
-        "ui_act",
-        "tap",
-        "swipe",
-        "type_text",
-        "press_key",
-        "clipboard_read",
-        "clipboard_write",
-        "keyboard_hide",
-        "keyboard_show",
-        "app_launch",
-        "app_stop",
-        "app_clear",
-        "open_intent",
-        "device_wake",
-        "device_unlock",
-        "device_lock",
-        "device_orientation",
-        "screenshot",
-    )
-
-/** Tools whose arguments decide, in [takesScreen]. */
-internal val SOMETIMES_SCREEN_TOOLS =
-    setOf(
-        "wait_for",
-        "browser_open",
-        "browser_tap",
-        "browser_swipe",
-        "browser_gesture",
-        "browser_key",
-        "browser_type",
-        "browser_read",
-        "browser_snapshot",
-    )
-
 /**
- * Whether a call to [tool] with [args] takes the screen, as docs/sharing.md lists. Reading and cdp
- * input on a tab need no screen; touch input brings the tab forward, and Chrome only takes cdp
- * pointer input on the tab it is showing.
+ * How a tool uses the screen, as docs/sharing.md lists. Every tool in the catalog declares one, so
+ * a new tool cannot be left out. Reading and cdp input on a tab need no screen; touch input brings
+ * the tab forward, and Chrome only takes cdp pointer input on the tab it is showing.
  */
-internal fun takesScreen(tool: String, args: JsonObject?): Boolean =
-    when (tool) {
-        in SCREEN_TOOLS -> true
-        "wait_for" ->
-            conditionsUseScreen(args) || flag(args, "snapshot") || flag(args, "screenshot")
-        "browser_tap",
-        "browser_swipe",
-        "browser_gesture" -> input(args) !in setOf("cdp-mouse")
-        "browser_key",
-        "browser_type" -> input(args) in setOf("touch", "auto")
-        "browser_read",
-        "browser_snapshot" -> flag(args, "show")
-        "browser_open" -> flag(args, "incognito")
-        else -> false
+internal class ToolScreen(
+    /** Whether every call takes the screen, so its description says so. */
+    val always: Boolean = false,
+    /** Whether a call with these arguments takes the screen. */
+    private val byArguments: (JsonObject?) -> Boolean = { always },
+    /** Whether a call with these arguments opens a tab, which starts Chrome when it is stopped. */
+    val opensTab: (JsonObject?) -> Boolean = { false },
+    /** Whether a call needs the screen only while it runs, so it gives back a screen it took. */
+    val brief: Boolean = false,
+    /**
+     * Whether a call with these arguments, from a session without the screen, acts on a page that
+     * could launch an app, so the foreground watch watches the top task around it. Opening a page
+     * is such an act.
+     */
+    private val pageActs: (JsonObject?) -> Boolean = { false },
+    /** Whether a call can make Chrome open a tab, which then belongs to the caller. */
+    val claims: Boolean = false,
+) {
+    fun takes(args: JsonObject?): Boolean = always || byArguments(args)
+
+    fun launches(args: JsonObject?): Boolean = pageActs(args) || opensTab(args)
+
+    companion object {
+        /** A tool that acts on the screen or shows what is on it. */
+        val ALWAYS = ToolScreen(always = true)
+
+        /** A tool that never takes the screen and acts on no page. */
+        val NEVER = ToolScreen()
+
+        /** A tool that acts on the screen and can make Chrome open a tab, as an intent can. */
+        val CLAIMING = ToolScreen(always = true, claims = true)
+
+        /** Pointer input, which takes the screen unless it is a cdp mouse tap. */
+        val POINTER = ToolScreen(byArguments = { input(it) != "cdp-mouse" }, pageActs = { true })
+
+        /** Keys and text, which take the screen only as touch, or as auto before it resolves. */
+        val TYPING =
+            ToolScreen(byArguments = { input(it) in setOf("touch", "auto") }, pageActs = { true })
+
+        /** Acts on a page without the screen, such as by navigating it. */
+        val PAGE = ToolScreen(pageActs = { true })
+
+        /** A look at a tab, which takes the screen with `show`. */
+        val SHOWN = ToolScreen(byArguments = { flag(it, "show") })
+
+        /**
+         * A read or find, which takes the screen with `show`, and with `url` opens a tab and the
+         * page in it.
+         */
+        val READ = ToolScreen(byArguments = { flag(it, "show") }, opensTab = ::hasUrl)
+
+        /** Opens a tab, taking the screen for an incognito one, only while it opens. */
+        val OPEN =
+            ToolScreen(byArguments = { flag(it, "incognito") }, opensTab = { true }, brief = true)
+
+        /** wait_for, which takes the screen for conditions on the UI and for its pictures. */
+        val WAIT =
+            ToolScreen(
+                byArguments = {
+                    conditionsUseScreen(it) || flag(it, "snapshot") || flag(it, "screenshot")
+                }
+            )
     }
+}
 
 private fun flag(args: JsonObject?, name: String): Boolean =
     (args?.get(name) as? JsonPrimitive)?.booleanOrNull == true
 
-/**
- * Tools that need the screen only while they run, so a session that did not have it before gives it
- * back after.
- */
-internal val BRIEF_SCREEN_TOOLS = setOf("browser_open")
-
-/**
- * Whether a call to [tool] with [args] opens a tab, which starts Chrome first when it is not
- * running. Reading or snapshotting a `url` opens one.
- */
-internal fun opensTab(tool: String, args: JsonObject?): Boolean =
-    when (tool) {
-        "browser_open" -> true
-        "browser_read",
-        "browser_snapshot" -> (args?.get("url") as? JsonPrimitive)?.contentOrNull != null
-        else -> false
-    }
+private fun hasUrl(args: JsonObject?): Boolean =
+    (args?.get("url") as? JsonPrimitive)?.contentOrNull != null
 
 /** Whether a call takes the screen, and whether it takes it only while it runs. */
 internal data class ScreenUse(val needed: Boolean, val brief: Boolean)
 
 /**
- * How a call to [tool] with [args] uses the screen. Its arguments decide, as [takesScreen] says,
- * except that opening a tab while [browser] has Chrome stopped starts Chrome, which brings it
- * forward, so that call takes the screen while the tab opens.
+ * How a call with [args] to a tool that uses the screen as [screen] says does. Its arguments
+ * decide, except that opening a tab while [browser] has Chrome stopped starts Chrome, which brings
+ * it forward, so that call takes the screen while the tab opens.
  */
 internal suspend fun screenUse(
-    tool: String,
+    screen: ToolScreen,
     args: JsonObject?,
     browser: BrowserService,
 ): ScreenUse {
-    val byArguments = takesScreen(tool, args)
-    val startsChrome = opensTab(tool, args) && browser.chromeStopped()
+    val byArguments = screen.takes(args)
+    val startsChrome = screen.opensTab(args) && browser.chromeStopped()
     return ScreenUse(
         needed = byArguments || startsChrome,
-        brief = tool in BRIEF_SCREEN_TOOLS || (startsChrome && !byArguments),
+        brief = screen.brief || (startsChrome && !byArguments),
     )
 }
-
-/**
- * Tools that, without the screen, could still make a page launch an app, so the foreground watch
- * watches the top task around them.
- */
-internal val LAUNCHING_TOOLS =
-    setOf(
-        "browser_open",
-        "browser_navigate",
-        "browser_eval",
-        "browser_tap",
-        "browser_swipe",
-        "browser_gesture",
-        "browser_key",
-        "browser_type",
-    )
-
-/** Tools that can make Chrome open a tab, which then belongs to the caller. */
-internal val CLAIMING_TOOLS = setOf("open_intent", "app_launch")
 
 /** The browser input tools, and the kind of input each sends. */
 private val INPUT_KINDS =

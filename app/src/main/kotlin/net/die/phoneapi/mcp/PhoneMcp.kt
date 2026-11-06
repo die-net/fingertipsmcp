@@ -262,7 +262,8 @@ private suspend fun callTool(
     val services = if (holder == own.holder) own else shared.forHolder(holder, control)
     val request =
         resolveInput(tool.name, withoutSession(asked), services.lease.holds(holder), scopes)
-    val (screen, brief) = screenUse(tool.name, request.params.arguments, services.browser)
+    val arguments = request.params.arguments
+    val (screen, brief) = screenUse(tool.screen, arguments, services.browser)
     val current = services.lease.state.value.holder as? Holder.Session
     if (screen && current != null) {
         control.conflict(holder, current)?.let {
@@ -272,8 +273,8 @@ private suspend fun callTool(
     return leased(services.lease, holder, screen, brief) {
         val call = suspend { tool.call(services, scopes, request) }
         when {
-            screen -> services.tabs.screenCall(holder, tool.name in CLAIMING_TOOLS, call)
-            tool.name in LAUNCHING_TOOLS ->
+            screen -> services.tabs.screenCall(holder, tool.screen.claims, call)
+            tool.screen.launches(arguments) ->
                 tookScreenError { services.foreground.watch(holder, call) }
             else -> call()
         }
