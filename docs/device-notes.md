@@ -189,7 +189,7 @@ Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web fie
 
 - On Android 16, Gboard relabels its letters without an event that reaches UiAutomation's node cache. After a shift tap the shift key read "Shift enabled" while the cached letters stayed lowercase for over a second. Both `AccessibilityNodeInfo.refresh()` on each node and `UiAutomation.clearCache()` gave the new labels at once. Typing 10 mixed characters took about 5.0 s from the cache, 5.5 s with `clearCache`, and 7.4 s with `refresh` on each node. `clearCache` needs Android 14, so older releases refresh each node.
 - Gboard lists its suggestions among its keys. A suggestion can be one letter, and it has no view id, where a real key's id holds `key_pos_`. Tapping one enters the letter and a space.
-- A keyboard still sliding up reports keys that aren't where it ends up. Tapping then lost the first letter in 5 of 6 runs on Android 16 on the old build.
+- A keyboard still sliding up reports keys that aren't where it ends up. Tapping then lost the first letter in 3 of 6 runs on Android 16 on the old build.
 - On Android 10, labels change before the redraw ends. Tapping as soon as they changed lost or swapped a letter in 2 of 8 runs. Waiting until they hold still for one poll lost none in 16.
 - Read just after a letter, the keys can still show the shift that letter ended. Pressing shift then turns it back on, and pressing it again recovers. This happened in 1 of 8 runs on Android 16.
 - `findFocus(FOCUS_INPUT)` in Chrome returns a `FrameLayout`, not the web field. The field is a focused, editable node below it.
