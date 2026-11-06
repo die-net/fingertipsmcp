@@ -60,6 +60,27 @@ class StreamRouteTest {
     }
 
     @Test
+    fun `audio failure closes`() = testApplication {
+        val api = FakeApi()
+        val secret = api.tokens.issue("stream", setOf(Scope.STREAM))
+        val message = "Audio capture could not start; it needs the helper."
+        val services =
+            api.services.copy(
+                audio = AudioFeed { _ -> throw ApiException.unavailable("audio_error", message) }
+            )
+        application { phoneApiModule(services) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/stream/audio", { bearer(secret) }) {
+                    val reason = closeReason.await()
+                    assertEquals(CloseReason.Codes.INTERNAL_ERROR.code, reason?.code)
+                    assertEquals(message, reason?.message)
+                }
+            }
+        }
+    }
+
+    @Test
     fun `a leaving viewer is let go`() = testApplication {
         val api = FakeApi()
         val secret = api.tokens.issue("stream", setOf(Scope.STREAM))

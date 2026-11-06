@@ -55,7 +55,7 @@ fun Route.streamRoutes(services: ServerServices) {
                 services.power.wake()
                 services.video.serve(this, videoSpec(call))
             } catch (e: ApiException) {
-                failVideo(this, e)
+                failStream(this, e, "The video encoder could not start")
             }
         }
         webSocket("/v1/stream/audio") {
@@ -68,8 +68,12 @@ fun Route.streamRoutes(services: ServerServices) {
                 )
                 return@webSocket
             }
-            services.power.wake()
-            services.audio.serve(this)
+            try {
+                services.power.wake()
+                services.audio.serve(this)
+            } catch (e: ApiException) {
+                failStream(this, e, "Audio capture could not start")
+            }
         }
     }
 }
@@ -119,23 +123,27 @@ private fun videoSpec(call: ApplicationCall): VideoSpec =
     )
 
 /**
- * Close reason text is at most 123 bytes, so a long codec message has to be cut on a UTF-8
- * boundary.
+ * Closes a stream that could not start with the error's message as the reason, or [fallback] when
+ * it has none. Close reason text is at most 123 bytes, so a long codec message has to be cut on a
+ * UTF-8 boundary.
  */
-private suspend fun failVideo(session: DefaultWebSocketServerSession, error: ApiException) {
-    session.close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, closeReasonText(error.message)))
-    Log.w(TAG, "video stream failed", error)
+private suspend fun failStream(
+    session: DefaultWebSocketServerSession,
+    error: ApiException,
+    fallback: String,
+) {
+    val reason = closeReasonText(error.message, fallback)
+    session.close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, reason))
+    Log.w(TAG, "stream failed: ${error.error}", error)
 }
 
-private fun closeReasonText(message: String?): String {
-    val text = message?.takeIf { it.isNotBlank() } ?: "The video encoder could not start"
+private fun closeReasonText(message: String?, fallback: String): String {
+    val text = message?.takeIf { it.isNotBlank() } ?: fallback
     val bytes = text.toByteArray(Charsets.UTF_8)
     if (bytes.size <= CLOSE_REASON_BYTES) return text
     var end = CLOSE_REASON_BYTES
     while (end > 0 && (bytes[end].toInt() and 0xC0) == 0x80) end--
-    return bytes.copyOf(end).toString(Charsets.UTF_8).ifBlank {
-        "The video encoder could not start"
-    }
+    return bytes.copyOf(end).toString(Charsets.UTF_8).ifBlank { fallback }
 }
 
 private const val TAG = "PhoneApiStream"

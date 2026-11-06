@@ -41,7 +41,7 @@ internal class AudioStream(
 ) {
     private val gate = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + io)
-    private val subscribers = CopyOnWriteArrayList<Channel<ByteArray>>()
+    private val subscribers = CopyOnWriteArrayList<AudioQueue>()
 
     @Volatile private var codec: MediaCodec? = null
 
@@ -66,32 +66,42 @@ internal class AudioStream(
     @Volatile private var bundler: OpusBundler? = null
 
     suspend fun serve(session: DefaultWebSocketServerSession) {
-        val channel = Channel<ByteArray>(CHANNEL_CAP, BufferOverflow.DROP_OLDEST)
+        val queue = AudioQueue(CHANNEL_CAP)
         lease.opened()
         var attached = false
         try {
-            val (header, config) =
-                gate.withLock {
-                    subscribers.add(channel)
-                    attached = true
-                    if (subscribers.size == 1) withContext(io) { startEncoder() }
-                    headerJson to configFrame
+            val header = gate.withLock {
+                subscribers.add(queue)
+                attached = true
+                // An encoder that failed, or whose capture ended, is gone while its closing
+                // viewers are still detaching, so the count of viewers can't say.
+                if (!running) {
+                    withContext(io) {
+                        stopEncoder()
+                        startEncoder()
+                    }
                 }
+                // The config may also arrive through emit; the queue keeps one.
+                configFrame?.let(queue::offer)
+                headerJson
+            }
             session.send(Frame.Text(header))
-            config?.let { session.send(Frame.Binary(true, it)) }
             sendUntilClientLeaves(session) {
-                for (frame in channel) session.send(Frame.Binary(true, frame))
+                while (true) {
+                    val frame = queue.next() ?: break
+                    session.send(Frame.Binary(true, frame))
+                }
             }
         } finally {
-            if (attached) withContext(NonCancellable) { detach(channel) }
-            channel.close()
+            if (attached) withContext(NonCancellable) { detach(queue) }
+            queue.close()
             lease.closed()
         }
     }
 
-    private suspend fun detach(channel: Channel<ByteArray>) {
+    private suspend fun detach(queue: AudioQueue) {
         gate.withLock {
-            subscribers.remove(channel)
+            subscribers.remove(queue)
             if (subscribers.isEmpty()) withContext(io) { stopEncoder() }
         }
     }
@@ -330,7 +340,7 @@ internal class AudioStream(
     }
 
     private fun emit(frame: ByteArray) {
-        for (subscriber in subscribers) subscriber.trySend(frame)
+        for (subscriber in subscribers) subscriber.offer(frame)
     }
 
     private fun closeViewers() {
