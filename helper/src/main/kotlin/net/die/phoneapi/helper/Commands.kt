@@ -86,31 +86,37 @@ internal object Commands {
         return builder.start()
     }
 
+    /**
+     * Reads [stream] to its end on a thread of its own, keeping the first [max] bytes and
+     * discarding the rest. It must keep reading past the cap: a child whose pipe fills blocks in
+     * write and never exits.
+     */
     private fun readAsync(stream: InputStream, max: Int): Background<String> {
-        val holder = arrayOfNulls<String>(1)
-        val worker =
-            thread(name = "helper-read", isDaemon = true) { holder[0] = readCapped(stream, max) }
+        val out = ByteArrayOutputStream()
+        val cap = max.coerceAtLeast(0)
+        val worker = thread(name = "helper-read", isDaemon = true) { drain(stream, cap, out) }
         return Background { timeoutMs ->
             worker.join(timeoutMs)
-            holder[0].orEmpty()
+            // A reader still running (a background child holds the pipe open) returns what it
+            // has.
+            out.toByteArray().toString(Charsets.UTF_8)
         }
     }
 
-    private fun readCapped(stream: InputStream, max: Int): String {
-        val out = ByteArrayOutputStream()
+    private fun drain(stream: InputStream, max: Int, out: ByteArrayOutputStream) {
         val buf = ByteArray(BUFFER)
-        var left = max.coerceAtLeast(0)
         try {
-            while (left > 0) {
-                val n = stream.read(buf, 0, minOf(buf.size, left))
-                if (n < 0) break
-                out.write(buf, 0, n)
-                left -= n
+            stream.use {
+                while (true) {
+                    val n = it.read(buf)
+                    if (n < 0) break
+                    val keep = minOf(n, max - out.size())
+                    if (keep > 0) out.write(buf, 0, keep)
+                }
             }
         } catch (e: IOException) {
             Log.i(TAG, "output closed: ${e.message.orEmpty()}")
         }
-        return out.toByteArray().toString(Charsets.UTF_8)
     }
 
     private fun interface Background<T> {
