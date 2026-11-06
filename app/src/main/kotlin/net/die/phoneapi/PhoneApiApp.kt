@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.StrictMode
-import net.die.phoneapi.core.StoreIo
 
 class PhoneApiApp : Application() {
     override fun onCreate() {
@@ -17,9 +16,19 @@ class PhoneApiApp : Application() {
             )
         }
         super.onCreate()
-        StoreIo.markMain(Thread.currentThread())
-        // filesDir stats the directory. Do that off the main thread; reuse the File afterwards.
-        val files = StoreIo.call { filesDir }
+        // The graph needs the files directory, and getFilesDir stats it, creating it on first
+        // run. That is one small disk access the main thread makes once, at process start, before
+        // anything else runs, so it is allowed here rather than handed to a thread the main thread
+        // would wait for anyway. The stores read and write their files on their callers' threads,
+        // which are background threads, so StrictMode still reports any main-thread use of them.
+        // allowThreadDiskWrites permits reads too.
+        val policy = StrictMode.allowThreadDiskWrites()
+        val files =
+            try {
+                filesDir
+            } finally {
+                StrictMode.setThreadPolicy(policy)
+            }
         graph = AppGraph(this, filesDir = files).also { it.start() }
     }
 

@@ -1,12 +1,11 @@
 package net.die.phoneapi.core
 
+import android.util.Log
 import androidx.core.util.AtomicFile
 import java.io.File
 import java.io.IOException
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,29 +20,9 @@ data class Settings(
 )
 
 /**
- * Disk reads and writes for the JSON stores. Callers stay synchronous; work that would otherwise
- * run on the main thread is moved to a single background thread.
+ * Small JSON-file settings store in the app's private files directory. It reads and writes on the
+ * caller's thread, which must not be the main thread.
  */
-internal object StoreIo {
-    @Volatile private var main: Thread? = null
-
-    private val executor by lazy {
-        Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "phoneapi-store").apply { isDaemon = true }
-        }
-    }
-
-    fun markMain(thread: Thread) {
-        main = thread
-    }
-
-    fun <T> call(block: () -> T): T {
-        if (Thread.currentThread() !== main) return block()
-        return CompletableFuture.supplyAsync(block, executor).join()
-    }
-}
-
-/** Small JSON-file settings store in the app's private files directory. */
 class SettingsStore(private val dir: File) {
     private val atomic = AtomicFile(File(dir, SETTINGS_FILE_NAME))
     private val state: MutableStateFlow<Settings> by lazy { MutableStateFlow(load()) }
@@ -56,25 +35,30 @@ class SettingsStore(private val dir: File) {
     @Synchronized
     fun update(transform: (Settings) -> Settings) {
         val next = transform(current)
-        StoreIo.call { atomic.writeUtf8(ApiJson.encodeToString(serializer<Settings>(), next)) }
+        atomic.writeUtf8(ApiJson.encodeToString(serializer<Settings>(), next))
         state.value = next
     }
 
-    private fun load(): Settings = StoreIo.call {
-        atomic.readUtf8()?.let { text ->
-            runCatching { ApiJson.decodeFromString(serializer<Settings>(), text) }.getOrNull()
-        }
-            ?: run {
-                val random = SecureRandom()
-                val created =
-                    Settings(port = EPHEMERAL_MIN + random.nextInt(EPHEMERAL_MAX - EPHEMERAL_MIN))
-                dir.mkdirs()
-                atomic.writeUtf8(ApiJson.encodeToString(serializer<Settings>(), created))
-                created
+    private fun load(): Settings {
+        val text = atomic.readUtf8()
+        if (text != null) {
+            try {
+                return ApiJson.decodeFromString(serializer<Settings>(), text)
+            } catch (e: IllegalArgumentException) {
+                // SerializationException is one; decoding throws the base class for bad input too.
+                // A new port means `phoneapi` on the computer has to pair again, so say why.
+                Log.w(TAG, "$SETTINGS_FILE_NAME did not parse, so it is made again", e)
             }
+        }
+        val random = SecureRandom()
+        val created = Settings(port = EPHEMERAL_MIN + random.nextInt(EPHEMERAL_MAX - EPHEMERAL_MIN))
+        dir.mkdirs()
+        atomic.writeUtf8(ApiJson.encodeToString(serializer<Settings>(), created))
+        return created
     }
 
     private companion object {
+        const val TAG = "PhoneApiSettings"
         const val SETTINGS_FILE_NAME = "settings.json"
         // Stay clear of well-known and commonly scanned ports.
         const val EPHEMERAL_MIN = 20_000
