@@ -9,6 +9,7 @@ This guide is for working on the app from a source checkout. Installing a releas
 - A device or emulator with USB debugging
 - `adb`, `jq`, and `curl` on the host
 - [`uv`](https://docs.astral.sh/uv/) for `phoneapi-dev papi WS …` WebSocket calls
+- Node 20 or later on the `PATH` for `testDebugUnitTest`, which runs the page scripts' tests in `app/src/test/js` with `node --test`
 
 Typical macOS Homebrew layout:
 

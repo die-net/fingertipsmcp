@@ -114,13 +114,14 @@ function scriptName(script, kind, counts) {
   return [name, source];
 }
 
-// text when it is JSON, else null.
+// text when it is JSON, else null. Malformed JSON in a page is common, and JSON.parse says so with
+// a SyntaxError.
 function checkedJson(text) {
   try {
     JSON.parse(text);
     return text;
   } catch (e) {
-    if (e === DATA_NOT_LITERAL) return null;
+    if (e instanceof SyntaxError) return null;
     throw e;
   }
 }

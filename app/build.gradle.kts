@@ -66,6 +66,19 @@ android {
     }
 }
 
+// PageScriptsTest runs the page scripts' tests under node, reading the scripts and their tests from
+// these directories, which are not on the test classpath.
+tasks.withType<Test>().configureEach {
+    inputs
+        .dir("src/main/assets")
+        .withPropertyName("pageScripts")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs
+        .dir("src/test/js")
+        .withPropertyName("pageScriptTests")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     constraints {
         // activity 1.13 still requests core-ktx 1.18. Those Kotlin extensions now live in core
