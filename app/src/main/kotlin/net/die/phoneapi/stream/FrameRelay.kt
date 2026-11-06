@@ -34,11 +34,16 @@ import java.util.concurrent.TimeoutException
  * second.
  *
  * Until the mirror delivers its first frame there is nothing to redraw.
+ *
+ * When reading a mirrored frame or presenting one fails, the relay stops drawing and calls
+ * [onFailure] once, on its own thread, with the reason. Redrawing the last good frame after that
+ * would look like a still screen to the viewer, whose stall check then never fires.
  */
 internal class FrameRelay(
     encoderSurface: Surface,
     private val width: Int,
     private val height: Int,
+    private val onFailure: (String) -> Unit,
 ) {
     private val thread = HandlerThread("phoneapi-relay").apply { start() }
     private val handler = Handler(thread.looper)
@@ -215,6 +220,7 @@ internal class FrameRelay(
             mirrored.updateTexImage()
         } catch (e: RuntimeException) {
             Log.w(TAG, "updateTexImage", e)
+            fail("The relay could not read a mirrored frame")
             return
         }
         mirrored.getTransformMatrix(matrix)
@@ -255,9 +261,19 @@ internal class FrameRelay(
         EGLExt.eglPresentationTimeANDROID(display, eglSurface, pts)
         if (!EGL14.eglSwapBuffers(display, eglSurface)) {
             Log.w(TAG, "eglSwapBuffers failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+            fail("The relay could not hand a frame to the encoder")
+            return
         }
         lastPtsNs = pts
         plan.drew(SystemClock.uptimeMillis())
+    }
+
+    /** Stops drawing, as [release] would, and reports [reason] once. */
+    private fun fail(reason: String) {
+        if (released) return
+        released = true
+        handler.removeCallbacksAndMessages(tickToken)
+        onFailure(reason)
     }
 
     private fun tearDown() {
