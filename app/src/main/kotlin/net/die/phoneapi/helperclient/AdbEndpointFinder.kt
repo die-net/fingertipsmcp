@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Handler
 import android.os.Looper
+import android.os.RemoteException
 import android.os.SystemClock
 import android.util.Log
 import com.flyfishxu.kadb.mdns.KadbMdnsAndroid
@@ -19,13 +20,19 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Finds this device's wireless-debugging ports via `getprop`, then mDNS. */
+/**
+ * Finds this device's wireless-debugging ports. The helper asks the adb service, the same answer
+ * Settings shows. mDNS is for when the helper is down: its record can end while adbd keeps
+ * listening, since NsdService stops mdnsd 10 s after a search and adbd doesn't register again until
+ * wireless debugging is toggled.
+ */
 internal class AdbEndpointFinder(
     private val context: Context,
+    private val helper: HelperConnection,
     private val io: CoroutineDispatcher,
 ) {
     suspend fun connectPort(timeoutMs: Long = CONNECT_WAIT_MS): Int? {
-        tlsPort()
+        helperPort()
             ?.takeIf { portOpen(it) }
             ?.let {
                 return it
@@ -156,24 +163,20 @@ internal class AdbEndpointFinder(
             false
         }
 
-    private fun tlsPort(): Int? = parseAdbPort(getprop(TLS_PORT))
-
-    private fun getprop(name: String): String? =
-        try {
-            ProcessBuilder("getprop", name)
-                .redirectErrorStream(true)
-                .start()
-                .inputStream
-                .bufferedReader()
-                .use { it.readText() }
-        } catch (e: IOException) {
-            Log.w(TAG, "getprop $name failed", e)
-            null
+    private suspend fun helperPort(): Int? {
+        val proxy = helper.getOrNull() ?: return null
+        return withContext(io) {
+            try {
+                validAdbPort(proxy.adbWirelessPort())
+            } catch (e: RemoteException) {
+                Log.w(TAG, "The helper could not read the wireless debugging port", e)
+                null
+            }
         }
+    }
 
     private companion object {
         const val TAG = "PhoneApiHelper"
-        const val TLS_PORT = "service.adb.tls.port"
         const val TLS_CONNECT = "_adb-tls-connect._tcp."
         const val LOOPBACK = "127.0.0.1"
         const val CONNECT_WAIT_MS = 15_000L

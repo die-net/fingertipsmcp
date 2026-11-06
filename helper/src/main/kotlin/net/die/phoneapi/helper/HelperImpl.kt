@@ -11,6 +11,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import java.io.File
+import net.die.phoneapi.helper.compat.AdbPort
 import net.die.phoneapi.helper.compat.AudioTap
 import net.die.phoneapi.helper.compat.InputInjector
 import net.die.phoneapi.helper.compat.MirrorDisplay
@@ -78,6 +79,8 @@ internal open class HelperImpl : IHelper.Stub() {
 
     override fun listDevtoolsSockets(): String =
         privileged("sockets") { AbstractSockets.devtools() }
+
+    override fun adbWirelessPort(): Int = privileged("adbPort") { AdbPort.read() }
 
     override fun exec(argv: Array<out String>, timeoutMs: Long, maxOutputBytes: Int): ShellResult =
         privileged("exec") {

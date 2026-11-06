@@ -42,6 +42,7 @@ import net.die.phoneapi.core.Screenshotter
 import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.UiService
 import net.die.phoneapi.core.WaitService
+import net.die.phoneapi.helperclient.AdbEndpointFinder
 import net.die.phoneapi.helperclient.HelperConnection
 import net.die.phoneapi.helperclient.HelperLogcatFeed
 import net.die.phoneapi.helperclient.HelperShell
@@ -114,16 +115,18 @@ class AppGraph(
     val shell = HelperShell(helper, ioDispatcher)
     val network = NetworkWatcher(context)
     private val adbKeys = KeystorePrivateKeyStore(filesDir)
+    private val adbEndpoints = AdbEndpointFinder(context, helper, ioDispatcher)
     internal val helperSupervisor =
         HelperSupervisor(
             context = context,
             helper = helper,
             keys = adbKeys,
+            finder = adbEndpoints,
             network = network,
             scope = scope,
             ioDispatcher = ioDispatcher,
         )
-    private val cdpForward = CdpForward(context, adbKeys, ioDispatcher)
+    private val cdpForward = CdpForward(context, adbKeys, adbEndpoints, ioDispatcher)
     private val usbDevtools =
         UsbDevtools(
             openSocket = { helper.require().openAbstractSocket(USB_DEVTOOLS_SOCKET) },

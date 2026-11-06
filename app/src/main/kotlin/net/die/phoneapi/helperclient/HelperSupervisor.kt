@@ -39,12 +39,12 @@ internal class HelperSupervisor(
     private val context: Context,
     private val helper: HelperConnection,
     private val keys: KeystorePrivateKeyStore,
+    private val finder: AdbEndpointFinder,
     private val network: NetworkWatcher,
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher,
 ) {
     private val gate = Mutex()
-    private val finder = AdbEndpointFinder(context, ioDispatcher)
     private val secure = SecureSettings(context.contentResolver)
     private var failures = 0
 
@@ -229,6 +229,13 @@ internal class HelperSupervisor(
             val port = finder.connectPort()
             if (port == null) {
                 Log.w(TAG, "Wireless debugging did not publish a TLS port")
+                // With the helper down, mDNS is the only way to the port. Turning the setting off
+                // here and on in the next attempt makes adbd register again. The gap is the
+                // backoff between attempts, since adbd can miss an off that is undone at once.
+                if (shouldCycleWireless(wasOn, secure.canWrite(context))) {
+                    secure.setWirelessEnabled(false)
+                    wirelessState.value = false
+                }
                 false
             } else if (launchHelper(port) && waitUntilRunning()) {
                 keys.markPaired()
@@ -333,3 +340,6 @@ internal class HelperSupervisor(
  */
 internal fun settingChangeStartsAttempt(on: Boolean, attempting: Boolean): Boolean =
     on && !attempting
+
+/** True when a setting that is on but gave no port should be turned off for the next attempt. */
+internal fun shouldCycleWireless(wasOn: Boolean, canWrite: Boolean): Boolean = wasOn && canWrite

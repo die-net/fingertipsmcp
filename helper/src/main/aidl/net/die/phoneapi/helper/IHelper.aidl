@@ -80,5 +80,8 @@ interface IHelper {
     // clipboard is empty. Reading the description does not read the clip itself.
     long primaryClipTimestamp() = 75;
 
+    // The port wireless debugging listens on, or 0 or less while it is off.
+    int adbWirelessPort() = 76;
+
     oneway void shutdown() = 99;
 }
