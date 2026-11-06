@@ -43,15 +43,16 @@ internal class ShellClipboard {
         val binder =
             serviceBinder("clipboard")
                 ?: error("The clipboard service is not available to this process")
-        val stub = Class.forName("android.content.IClipboard\$Stub")
-        val asInterface = stub.getMethod("asInterface", IBinder::class.java)
-        service = checkNotNull(asInterface.invoke(null, binder)) { "IClipboard is null" }
+        service =
+            reflective("IClipboard") {
+                val stub = Class.forName("android.content.IClipboard\$Stub")
+                val asInterface = stub.getMethod("asInterface", IBinder::class.java)
+                checkNotNull(asInterface.invoke(null, binder)) { "IClipboard is null" }
+            }
         get = method("getPrimaryClip")
         set = method("setPrimaryClip")
         try {
             call(method("addPrimaryClipChangedListener"), listener)
-        } catch (e: ReflectiveOperationException) {
-            Log.w(TAG, "Could not watch the clipboard", e)
         } catch (e: IllegalStateException) {
             Log.w(TAG, "Could not watch the clipboard", e)
         }
@@ -102,12 +103,9 @@ internal class ShellClipboard {
                     else -> null
                 }
         }
-        return try {
+        return reflective(method.name) {
             @Suppress("SpreadOperator") // A few arguments; the copy is the call itself.
             method.invoke(service, *args)
-        } catch (e: ReflectiveOperationException) {
-            // A Binder call can only report runtime exceptions back to the app.
-            throw IllegalStateException("${method.name} failed: ${e.cause ?: e}", e)
         }
     }
 
