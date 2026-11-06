@@ -151,6 +151,99 @@ class TextTyperWaitsTest {
         assertEquals(listOf("Shift", "Shift", "n"), tapped)
     }
 
+    @Test
+    fun `drop outs do not use up page presses`() = runTest {
+        // The keyboard's window drops out of the accessibility list for a moment at first and
+        // after each page change.
+        var page = LETTERS
+        var hiddenUntil = DROP_MS
+        val read = { if (currentTime < hiddenUntil) emptyList() else page }
+        val tapped = ArrayList<String>()
+        pressKeyFor('%', read) { key ->
+            tapped += key.label
+            page =
+                when (key.label) {
+                    "?123" -> SYMBOLS
+                    "=\\<" -> MORE
+                    else -> page
+                }
+            hiddenUntil = currentTime + DROP_MS
+        }
+        assertEquals(listOf("?123", "=\\<", "%"), tapped)
+    }
+
+    @Test
+    fun `shift is pressed at most twice`() = runTest {
+        // A keyboard whose shift does nothing.
+        val tapped = ArrayList<String>()
+        val refused =
+            assertThrows<ApiException> { pressKeyFor('n', { UPPER }) { tapped += it.label } }
+        assertEquals("unsupported_char", refused.error)
+        assertEquals(listOf("Shift", "Shift"), tapped)
+    }
+
+    @Test
+    fun `a keyboard is waited for while it drops out`() = runTest {
+        val ime = MutableStateFlow(summary(imeVisible = true))
+        var reads = 0
+        val keys = awaitKeyboard(ime) { if (++reads <= 30) emptyList() else LETTERS }
+        assertEquals(LETTERS, keys)
+    }
+
+    @Test
+    fun `no keyboard is no keyboard`() = runTest {
+        val ime = MutableStateFlow(summary(imeVisible = false))
+        assertEquals(null, awaitKeyboard(ime) { emptyList() })
+        assertEquals(IME_WAIT_MS + KEYBOARD_WAIT_MS, currentTime)
+    }
+
+    @Test
+    fun `focus is waited for`() = runTest {
+        val seq = MutableStateFlow(1L)
+        var focused = false
+        val waiting = async { awaitTreeChange(seq, TIMEOUT_MS) { focused } }
+        runCurrent()
+        assertFalse(waiting.isCompleted)
+        focused = true
+        seq.value = 2L
+        assertTrue(waiting.await())
+    }
+
+    @Test
+    fun `focus that never comes`() = runTest {
+        assertFalse(awaitTreeChange(MutableStateFlow(1L), TIMEOUT_MS) { false })
+    }
+
+    @Test
+    fun `key events are built as they go`() = runTest {
+        val built = ArrayList<Long>()
+        val sent = ArrayList<String>()
+        sendKeys(
+            count = 3,
+            build = { i ->
+                built += currentTime
+                listOf("down$i", "up$i")
+            },
+            send = {
+                sent += it
+                true
+            },
+            gap = { 100L },
+        )
+        assertEquals(listOf(0L, 100L, 200L), built)
+        assertEquals(listOf("down0", "up0", "down1", "up1", "down2", "up2"), sent)
+    }
+
+    @Test
+    fun `an undelivered key fails`() = runTest {
+        val refused =
+            assertThrows<ApiException> {
+                sendKeys(count = 3, build = { i -> listOf(i) }, send = { it != 1 }, gap = { 0L })
+            }
+        assertEquals("key_failed", refused.error)
+        assertTrue(refused.message.orEmpty().contains("1 were typed"), refused.message)
+    }
+
     private fun key(top: Int) = listOf(ImeKey("q", null, Rect(0, top, 10, top + 10)))
 
     private fun summary(imeVisible: Boolean) =
@@ -164,10 +257,17 @@ class TextTyperWaitsTest {
         const val TIMEOUT_MS = 1_000L
         const val KEYBOARD_WAIT_MS = 1_000L
         const val KEYS_BACK_WAIT_MS = 5_000L
+        const val IME_WAIT_MS = 1_500L
+        const val DROP_MS = 300L
         val LOWER = keyboard("n")
         val UPPER = keyboard("N")
+        val LETTERS = labels("qwertyuiop".map { it.toString() } + "?123")
+        val SYMBOLS = labels("1234567890".map { it.toString() } + listOf("=\\<", "ABC"))
+        val MORE = labels(listOf("%", "^", "~", "?123", "ABC"))
 
         fun keyboard(letter: String) =
             listOf(letter, "Shift").map { ImeKey(it, null, Rect(0, 0, 10, 10)) }
+
+        fun labels(names: List<String>) = names.map { ImeKey(it, null, Rect(0, 0, 10, 10)) }
     }
 }

@@ -3,9 +3,11 @@ package net.die.phoneapi.input
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import kotlin.random.Random
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import net.die.phoneapi.core.DeviceStateTracker
 import net.die.phoneapi.core.settled
@@ -55,12 +57,19 @@ class TextTyper(
         points += outcome.points
         if (!outcome.ok) throw gestureCancelled()
         if ("editable" in node.states) {
-            withTimeoutOrNull(FOCUS_WAIT_MS) {
-                while (true) {
+            // Typing or clearing now would go to whatever holds focus instead.
+            val focused =
+                awaitTreeChange(tree.seq, FOCUS_WAIT_MS) {
                     val again = tree.find(FindRequest(selector, limit = 1)).matches.firstOrNull()
-                    if (again != null && "focused" in again.states) return@withTimeoutOrNull
-                    delay(POLL_MS)
+                    again != null && "focused" in again.states
                 }
+            if (!focused) {
+                throw ApiException(
+                    409,
+                    "no_editor",
+                    "The field the selector names did not take focus after a tap, so nothing " +
+                        "was typed.",
+                )
             }
         } else {
             awaitKeyboardAfterTap(tree.seq, before, state.state, FOCUS_WAIT_MS)
@@ -89,15 +98,15 @@ class TextTyper(
     ): ActionResult? {
         val unsupported = request.text.filterNot { it == '\n' || it in ' '..'~' }.toSet()
         if (unsupported.isNotEmpty()) throw unsupportedChars(unsupported)
-        withTimeoutOrNull(IME_WAIT_MS) { state.state.first { it.ime.visible } }
-        // A keyboard still sliding up reports keys above where they end up.
-        awaitSteadyKeys(::keys, KEYBOARD_WAIT_MS) { it.isNotEmpty() }
-        val keys = keys()
-        if (!KeyMatcher.looksLikeKeyboard(keys)) return null
+        awaitKeyboard(state.state, ::keys) ?: return null
         if (request.clear) clearWithKeyboard(points)
         request.text.forEachIndexed { i, c ->
             if (i > 0) delay(cadence(request))
-            typeKey(c, points)
+            try {
+                typeKey(c, points)
+            } catch (e: ApiException) {
+                throw partlyTyped(e, i, request.text.length)
+            }
         }
         var message: String? = null
         if (request.submit) {
@@ -146,18 +155,20 @@ class TextTyper(
     private suspend fun typeKeyEvents(request: TextRequest): ActionResult {
         if (!keyInjector.isAvailable) throw ApiException.helperUnavailable()
         val map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
-        val events =
-            request.text.map { c ->
-                map.getEvents(charArrayOf(c)) ?: throw unsupportedChars(setOf(c))
-            }
+        // Every character is checked before any is typed.
+        val unsupported = request.text.filter { map.getEvents(charArrayOf(it)) == null }.toSet()
+        if (unsupported.isNotEmpty()) throw unsupportedChars(unsupported)
         if (request.clear) {
             keyInjector.press(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON, longPress = false)
             keyInjector.press(KeyEvent.KEYCODE_DEL, 0, longPress = false)
         }
-        events.forEachIndexed { i, keyEvents ->
-            if (i > 0) delay(cadence(request))
-            keyEvents.forEach { keyInjector.send(it) }
-        }
+        sendKeys(
+            count = request.text.length,
+            // Built as each character goes, so its events carry the time it is typed.
+            build = { i -> map.getEvents(charArrayOf(request.text[i])).orEmpty().toList() },
+            send = keyInjector::send,
+            gap = { cadence(request) },
+        )
         if (request.submit) keyInjector.press(KeyEvent.KEYCODE_ENTER, 0, longPress = false)
         return ActionResult(ok = true, backend = keyInjector.name)
     }
@@ -185,9 +196,7 @@ class TextTyper(
     private companion object {
         const val MAX_TEXT = 10_000
         const val MAX_DELAY_MS = 5_000L
-        const val POLL_MS = 50L
         const val FOCUS_WAIT_MS = 1_000L
-        const val IME_WAIT_MS = 1_500L
     }
 }
 
@@ -195,6 +204,11 @@ class TextTyper(
  * Taps the key for [c], pressing shift or a page key first when it doesn't show. A read can find no
  * keys while the keyboard is still up, because Android can drop its window from the accessibility
  * list for a moment. So [c] is refused only once the keys have held still without it.
+ *
+ * Each page key is pressed at most once, and shift at most [MAX_SHIFTS] times: once, and once more
+ * to undo a press that landed as an earlier shift ended. Waits for a keyboard that changed on its
+ * own, or did not redraw after a press, have their own budget, so a keyboard that drops out for a
+ * moment does not use up the presses.
  */
 internal suspend fun pressKeyFor(
     c: Char,
@@ -202,26 +216,33 @@ internal suspend fun pressKeyFor(
     tap: suspend (ImeKey) -> Unit,
 ) {
     val tried = HashSet<String>()
-    repeat(MAX_KEY_ATTEMPTS) {
+    var shifts = 0
+    var waits = 0
+    while (true) {
         val keys = read()
         val key = keyFor(keys, c)
         if (key != null) {
             tap(key)
             return
         }
-        val modifier = KeyMatcher.modifierFor(keys, c, tried)
+        val modifier =
+            KeyMatcher.modifierFor(keys, c, tried)?.takeUnless {
+                it == KeyMatcher.shift(keys) && shifts >= MAX_SHIFTS
+            }
         if (modifier == null) {
+            if (waits++ >= MAX_KEY_WAITS) throw unsupportedChars(setOf(c))
             awaitOtherKeys(keys, c, read)
-        } else {
-            tried += modifier.label
-            tap(modifier)
-            // A keyboard that never redraws is left to the next attempt, which tries another key.
+            continue
+        }
+        if (modifier == KeyMatcher.shift(keys)) shifts++ else tried += modifier.label
+        tap(modifier)
+        // A keyboard that did not redraw counts as a wait; the next pass reads it again.
+        val redrawn =
             awaitSteadyKeys(read, KEYBOARD_WAIT_MS) { now ->
                 KeyMatcher.redrawn(keys, now, modifier, c)
             }
-        }
+        if (!redrawn) waits++
     }
-    throw unsupportedChars(setOf(c))
 }
 
 private fun keyFor(keys: List<ImeKey>, c: Char): ImeKey? =
@@ -298,7 +319,83 @@ internal suspend fun awaitSteadyKeys(
     }
 }
 
+/**
+ * The on-screen keyboard's keys once they hold still and look like a text keyboard, or null when
+ * none shows. A keyboard still sliding up reports keys above where they end up, and Android can
+ * drop its window from the accessibility list for a moment, so a keyboard [ime] reports visible
+ * gets as long as one that drops out mid-typing.
+ */
+internal suspend fun awaitKeyboard(
+    ime: Flow<DeviceStateSummary>,
+    read: () -> List<ImeKey>,
+): List<ImeKey>? {
+    val shown = withTimeoutOrNull(IME_WAIT_MS) { ime.first { it.ime.visible } } != null
+    var keys = emptyList<ImeKey>()
+    val steady =
+        awaitSteadyKeys(
+            { read().also { keys = it } },
+            if (shown) KEYS_BACK_WAIT_MS else KEYBOARD_WAIT_MS,
+        ) {
+            KeyMatcher.looksLikeKeyboard(it)
+        }
+    return keys.takeIf { steady }
+}
+
+/**
+ * Waits until [check] holds, checking now and each time [seq] says the screen changed. False when
+ * it did not within [timeoutMs].
+ */
+internal suspend fun awaitTreeChange(
+    seq: Flow<Long>,
+    timeoutMs: Long,
+    check: suspend () -> Boolean,
+): Boolean = withTimeoutOrNull(timeoutMs) { seq.first { check() } } != null
+
+/**
+ * Sends [count] characters' key events, each built by [build] just before it goes, so the events
+ * carry the time the character is typed, with [gap] between characters. A character's events go
+ * together, so a cancel cannot leave a key or shift down between them. Fails with `key_failed`,
+ * saying how much was typed, when the helper does not deliver one.
+ */
+internal suspend fun <E> sendKeys(
+    count: Int,
+    build: (Int) -> List<E>,
+    send: suspend (E) -> Boolean,
+    gap: () -> Long,
+) {
+    for (i in 0 until count) {
+        if (i > 0) delay(gap())
+        val events = build(i)
+        var ok = true
+        withContext(NonCancellable) { events.forEach { ok = send(it) && ok } }
+        if (!ok) {
+            throw ApiException(
+                409,
+                "key_failed",
+                "The helper did not deliver the key for character ${i + 1} of $count. " +
+                    "$i were typed before it.",
+            )
+        }
+    }
+}
+
+/** [e], from typing character [index] of [count], saying how much of the text went in first. */
+private fun partlyTyped(e: ApiException, index: Int, count: Int): ApiException =
+    if (index == 0) {
+        e
+    } else {
+        ApiException(
+            e.status,
+            e.error,
+            "${e.message} $index of $count characters were typed before it.",
+            e.state,
+            e,
+        )
+    }
+
 private const val CLEAR_WAIT_MS = 3_000L
 private const val KEYBOARD_WAIT_MS = 1_000L
 private const val KEYS_BACK_WAIT_MS = 5_000L
-private const val MAX_KEY_ATTEMPTS = 5
+private const val IME_WAIT_MS = 1_500L
+private const val MAX_SHIFTS = 2
+private const val MAX_KEY_WAITS = 3
