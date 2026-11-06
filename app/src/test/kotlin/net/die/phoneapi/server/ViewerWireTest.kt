@@ -2,6 +2,7 @@ package net.die.phoneapi.server
 
 import kotlinx.serialization.json.JsonPrimitive
 import net.die.phoneapi.core.ApiJson
+import net.die.phoneapi.model.DisplayInfo
 import net.die.phoneapi.model.ViewerClipboard
 import net.die.phoneapi.model.ViewerError
 import net.die.phoneapi.model.ViewerHolder
@@ -51,8 +52,14 @@ class ViewerWireTest {
     @Test
     fun `stream headers`() {
         assertEquals(
-            """{"codec":"avc","width":288,"height":640,"fps":30,"bitRate":4000000}""",
-            videoHeader(288, 640, VideoSpec(640, 30, 4_000_000)),
+            """{"codec":"avc","width":288,"height":640,"fps":30,"bitRate":4000000,""" +
+                """"displayWidth":1080,"displayHeight":2400}""",
+            videoHeader(
+                288,
+                640,
+                VideoSpec(640, 30, 4_000_000),
+                DisplayInfo(1080, 2400, 420, 0, 60f),
+            ),
         )
         assertEquals(
             """{"codec":"opus","sampleRate":48000,"channels":2}""",

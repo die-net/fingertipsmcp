@@ -76,6 +76,10 @@ internal class VideoStream(
     private var activeSpec: VideoSpec? = null
     private var activeWidth = 0
     private var activeHeight = 0
+
+    /** The screen size [headerJson] names, which the viewer maps its points with. */
+    private var namedWidth = 0
+    private var namedHeight = 0
     private var listening = false
     private var displayJob: Job? = null
 
@@ -150,7 +154,7 @@ internal class VideoStream(
     private fun startEncoder(spec: VideoSpec) {
         val screen = display()
         val (width, height) = scaledSize(screen.widthPx, screen.heightPx, spec.maxSize)
-        beginEncoder(spec, width, height)
+        beginEncoder(spec, width, height, screen)
     }
 
     private suspend fun watchDisplay() {
@@ -170,23 +174,23 @@ internal class VideoStream(
 
     private fun reconfigure(spec: VideoSpec) {
         val screen = display()
-        val (width, height) = scaledSize(screen.widthPx, screen.heightPx, spec.maxSize)
-        if (
-            !shouldReconfigure(
-                activeWidth,
-                activeHeight,
-                screen.widthPx,
-                screen.heightPx,
-                spec.maxSize,
-            )
-        ) {
-            return
+        val encoded = activeWidth to activeHeight
+        when (displayChange(encoded, namedWidth to namedHeight, screen, spec.maxSize)) {
+            DisplayChange.NONE -> return
+            DisplayChange.HEADER -> {
+                // The picture keeps its size, so frames already queued still show.
+                nameScreen(videoHeader(activeWidth, activeHeight, spec, screen), screen)
+                for (viewer in subscribers) viewer.headers.trySend(headerJson)
+                return
+            }
+            DisplayChange.ENCODER -> Unit
         }
+        val (width, height) = scaledSize(screen.widthPx, screen.heightPx, spec.maxSize)
         releaseEncoder()
-        headerJson = videoHeader(width, height, spec)
+        nameScreen(videoHeader(width, height, spec, screen), screen)
         emitHeader(headerJson)
         try {
-            beginEncoder(spec, width, height)
+            beginEncoder(spec, width, height, screen)
         } catch (e: CancellationException) {
             stopEncoder()
             closeViewers(ENCODER_STOPPED)
@@ -200,8 +204,15 @@ internal class VideoStream(
         requestSync()
     }
 
-    private fun beginEncoder(spec: VideoSpec, width: Int, height: Int) {
-        headerJson = videoHeader(width, height, spec)
+    /** Keeps [header] for viewers that join, and the screen size it names. */
+    private fun nameScreen(header: String, screen: DisplayInfo) {
+        headerJson = header
+        namedWidth = screen.widthPx
+        namedHeight = screen.heightPx
+    }
+
+    private fun beginEncoder(spec: VideoSpec, width: Int, height: Int, screen: DisplayInfo) {
+        nameScreen(videoHeader(width, height, spec, screen), screen)
         val encoder =
             try {
                 MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)

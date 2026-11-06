@@ -62,7 +62,7 @@ class AuthEscapeTest {
     fun `bad query with a token is 400`() {
         val header = raw.get("/v1/device?a=%ZZ", "Authorization: Bearer $secret")
         assertEquals(400, header.status)
-        val cookie = raw.get("/v1/device?a=%ZZ", "Cookie: $VIEWER_COOKIE=$secret")
+        val cookie = raw.get("/viewer?a=%ZZ", "Cookie: $VIEWER_COOKIE=$secret")
         assertEquals(400, cookie.status)
     }
 

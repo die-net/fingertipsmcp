@@ -69,10 +69,6 @@ class AuthRoutesTest {
             assertEquals(HttpStatusCode.OK, page.status)
             assertTrue(page.bodyAsText().contains("viewer"))
 
-            val device =
-                client.get("/v1/device") { header(HttpHeaders.Cookie, "$VIEWER_COOKIE=$observe") }
-            assertEquals(HttpStatusCode.OK, device.status)
-
             withTimeout(5.seconds) {
                 client.webSocket(
                     "/v1/events",
@@ -100,11 +96,12 @@ class AuthRoutesTest {
                     client.get("/v1/tokens", cookie),
                     client.post("/mcp", cookie),
                     client.get("/mcp", cookie),
+                    // The viewer learns the screen's size from the video header instead.
+                    client.get("/v1/device", cookie),
                 )) {
                 assertEquals(HttpStatusCode.NotFound, refused.status)
                 assertEquals("", refused.bodyAsText())
             }
-            assertEquals(HttpStatusCode.OK, client.get("/v1/device", cookie).status)
             assertEquals(HttpStatusCode.OK, client.get("/viewer", cookie).status)
         }
     }

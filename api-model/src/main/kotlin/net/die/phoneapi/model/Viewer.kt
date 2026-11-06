@@ -59,7 +59,12 @@ public data class ViewerClipboard(
 @SerialName("error")
 public data class ViewerError(val id: JsonElement? = null, val message: String) : ViewerMessage
 
-/** The text frame the video socket sends before binary frames, and again when the size changes. */
+/**
+ * The text frame the video socket sends before binary frames, and again when the encoded size or
+ * the screen's size changes. [width] and [height] are the encoded picture. [displayWidth] and
+ * [displayHeight] are the phone's screen in pixels, in its current rotation, which is the space of
+ * the input socket's `x` and `y`, so a viewer maps a point on the picture with these alone.
+ */
 @Serializable
 public data class VideoHeader(
     val codec: String,
@@ -67,6 +72,8 @@ public data class VideoHeader(
     val height: Int,
     val fps: Int,
     val bitRate: Int,
+    val displayWidth: Int,
+    val displayHeight: Int,
 )
 
 /** The text frame the audio socket sends once before binary frames. */

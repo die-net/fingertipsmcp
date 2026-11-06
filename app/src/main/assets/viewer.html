@@ -141,6 +141,9 @@ function makeDecoder() {
         if (canvas.height !== frame.displayHeight) canvas.height = frame.displayHeight;
         ctx.drawImage(frame, 0, 0);
         frame.close();
+        // A frame from this decoder is from the stream the last header described, so the picture
+        // and the screen size its points map to change together.
+        display = headerDisplay;
         lastPicture = performance.now();
         retryMs = RETRY_MIN_MS;
         status.textContent = canvas.width + "×" + canvas.height;
@@ -154,6 +157,10 @@ function makeDecoder() {
 }
 let video = null;
 let videoSocket = null;
+// The phone's screen size from the latest video header, and from the header of the picture on
+// the canvas, which pointer input maps to. Null until a picture is drawn.
+let headerDisplay = null;
+let display = null;
 let configured = false;
 let needKey = true;
 let streamWidth = 0;
@@ -178,8 +185,8 @@ function onHeader(info) {
   const changed = streamWidth !== 0 && (info.width !== streamWidth || info.height !== streamHeight);
   streamWidth = info.width;
   streamHeight = info.height;
+  headerDisplay = { widthPx: info.displayWidth, heightPx: info.displayHeight };
   status.textContent = info.width + "×" + info.height;
-  loadDisplay();
   if (!changed) return;
   if (video && video.state !== "closed") video.close();
   video = makeDecoder();
@@ -393,7 +400,6 @@ if (audioSession && audioSession.addEventListener) {
 
 document.body.addEventListener("pointerdown", unlockAudio, { once: true });
 
-let display = null;
 let inputQueue = Promise.resolve();
 let pointerSocket = null;
 let pointerRetry = null;
@@ -416,24 +422,13 @@ function unlockAudio() {
   syncAudio();
 }
 
-async function loadDisplay() {
-  try {
-    const response = await fetch("/v1/device");
-    if (!response.ok) return;
-    display = (await response.json()).display;
-    showOrientation(orientationOf(display));
-  } catch (error) {
-    // Frame pixels are used until the display size is known.
-  }
-}
-
+// Only called with a picture drawn, so display is set.
 function screenPoint(event) {
   const rect = canvas.getBoundingClientRect();
-  const frameX = (event.clientX - rect.left) * (canvas.width / rect.width);
-  const frameY = (event.clientY - rect.top) * (canvas.height / rect.height);
-  const scaleX = display && canvas.width > 2 ? display.widthPx / canvas.width : 1;
-  const scaleY = display && canvas.height > 2 ? display.heightPx / canvas.height : 1;
-  return { x: frameX * scaleX, y: frameY * scaleY };
+  return {
+    x: (event.clientX - rect.left) * (display.widthPx / rect.width),
+    y: (event.clientY - rect.top) * (display.heightPx / rect.height),
+  };
 }
 
 // Who holds the screen, from the input socket. While someone else does, input is dropped.
@@ -491,14 +486,9 @@ function showLease() {
 takeButton.addEventListener("click", () => sendPointer({ op: "take" }));
 doneButton.addEventListener("click", () => sendPointer({ op: "release" }));
 
+// The button cycles from what it last set, starting from auto-rotate.
 const ORIENTATIONS = ["auto", "0", "90", "180", "270"];
 let orientation = "auto";
-
-function orientationOf(info) {
-  if (!info || info.autoRotate) return "auto";
-  const degrees = String((info.rotation || 0) * 90);
-  return ORIENTATIONS.indexOf(degrees) >= 0 ? degrees : "auto";
-}
 
 function showOrientation(value) {
   orientation = value;
@@ -508,21 +498,11 @@ function showOrientation(value) {
   button.setAttribute("aria-label", label);
 }
 
-async function cycleOrientation() {
-  try {
-    const response = await fetch("/v1/device");
-    if (response.ok) orientation = orientationOf((await response.json()).display);
-  } catch (error) {
-    // Advance from the last label when the device read fails.
-  }
+function cycleOrientation() {
   const index = ORIENTATIONS.indexOf(orientation);
   const next = ORIENTATIONS[(index < 0 ? 0 : index + 1) % ORIENTATIONS.length];
   sendPointer({ op: "orientation", orientation: next });
   showOrientation(next);
-  if (display) {
-    display.autoRotate = next === "auto";
-    if (next !== "auto") display.rotation = Number(next) / 90;
-  }
 }
 
 function connectPointer() {
@@ -566,7 +546,7 @@ function sendPointer(body) {
 }
 
 function beginContact(event) {
-  if (canvas.width < 8 || canvas.height < 8) return;
+  if (!display) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
   event.preventDefault();
   if (contacts.has(event.pointerId)) return;
@@ -822,7 +802,6 @@ document.getElementById("keys").addEventListener("pointerdown", (event) => {
   sendPointer({ op: "key", key: button.dataset.key, autoWake: true });
 });
 
-loadDisplay();
 connectPointer();
 </script>
 </body>
