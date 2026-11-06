@@ -5,6 +5,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.Rect as ModelRect
 
@@ -13,22 +14,23 @@ class NodeTargeting(private val screen: () -> Rect) {
 
     /**
      * The largest part of [node] that is on screen and not covered by another window. Scrolls the
-     * node into view once if needed. Throws `409 offscreen` or `409 obscured` (unless [force]).
-     * Must be called off the main thread.
+     * node into view once if needed, and waits for the scroll to stop before reading where it is.
+     * [windows] is read after that, so the layout matches the bounds. Throws `409 offscreen` or
+     * `409 obscured` (unless [force]). Must be called off the main thread.
      */
     suspend fun touchTarget(
         node: AccessibilityNodeInfo,
-        windows: List<AccessibilityWindowInfo>,
+        windows: () -> List<AccessibilityWindowInfo>,
         force: Boolean,
     ): ModelRect {
         if (!node.isVisibleToUser) {
-            node.performAction(AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
-            delay(SHOW_ON_SCREEN_SETTLE_MS)
-            if (!node.refresh() || !node.isVisibleToUser) {
-                NodeCompat.recycleAll(windows)
-                throw offscreen()
-            }
+            if (!node.performAction(AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)) throw offscreen()
+            awaitSettled(SCROLL_POLL_MS, SCROLL_TIMEOUT_MS) {
+                if (!node.refresh()) throw offscreen()
+                if (node.isVisibleToUser) Rect().also(node::getBoundsInScreen) else null
+            } ?: throw offscreen()
         }
+        val windows = windows()
         try {
             val layout = ScreenLayout.capture(windows, screen())
             val raw = Rect().also(node::getBoundsInScreen)
@@ -62,7 +64,33 @@ class NodeTargeting(private val screen: () -> Rect) {
         ApiException(409, "offscreen", "The node is off screen and could not be scrolled into view")
 
     private companion object {
-        const val SHOW_ON_SCREEN_SETTLE_MS = 350L
+        /** How often a scroll into view is checked for having stopped. */
+        const val SCROLL_POLL_MS = 50L
+
+        /** How long a scroll into view may take, including a long smooth scroll. */
+        const val SCROLL_TIMEOUT_MS = 2_000L
+
         const val MIN_TARGET_PX = 6
     }
 }
+
+/**
+ * Polls [probe] every [intervalMs] until it returns the same value twice in a row, and returns that
+ * value. A null from [probe] means "not there yet". Returns null if nothing settles within
+ * [timeoutMs].
+ */
+internal suspend fun <T : Any> awaitSettled(
+    intervalMs: Long,
+    timeoutMs: Long,
+    probe: () -> T?,
+): T? =
+    withTimeoutOrNull(timeoutMs) {
+        var last: T?
+        var now: T? = null
+        do {
+            last = now
+            delay(intervalMs)
+            now = probe()
+        } while (now == null || now != last)
+        now
+    }
