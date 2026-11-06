@@ -246,6 +246,10 @@ The Android 13 emulator cuts a toast off at two lines, about 75 characters on it
 
 Turning off the listener's notification channel on the Android 13 emulator on 2026-11-06 removed the notification, and the system posted none in its place. The service stayed `isForeground=true`, the process stayed `fg-service` at `oom_score_adj` 200, and the socket kept answering. The Android 11 and 12 test phones did the same that day: the process stayed `fg-service`, and the system had posted no notification of its own when checked some seconds later.
 
+Android turns wireless debugging off when the access point changes. On the Android 12 test phone on 2026-11-06, moving between rooms logged `Detected wifi network change. Disabling adbwifi.`. Android 12's `AdbDebuggingManager` compares the BSSID, so roaming on one network counts. It also trusts networks by BSSID: turning wireless debugging on at an access point it hasn't approved shows "Allow wireless debugging on this network?" and puts the setting back to 0. So each access point needs "Always allow" once.
+
+On the Android 13 emulator that day, with the helper down on an unapproved network, the app's retries put that prompt up every 15 seconds without end, because each change to the setting reset the failure count. Now only turning the setting on starts over. Six tries, then it stops, and tapping Allow brought the helper back.
+
 ## Still to check on the phone
 
 - What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.

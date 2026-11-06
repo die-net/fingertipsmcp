@@ -1,7 +1,9 @@
 package net.die.phoneapi.helperclient
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class HelperRestartTest {
@@ -12,6 +14,21 @@ class HelperRestartTest {
         assertEquals(16_000L, restartDelayMs(4))
         assertEquals(30_000L, restartDelayMs(5))
         assertEquals(30_000L, restartDelayMs(9))
+    }
+
+    @Test
+    fun `turning on starts an attempt`() {
+        assertTrue(settingChangeStartsAttempt(on = true, attempting = false))
+    }
+
+    @Test
+    fun `turning off starts nothing`() {
+        assertFalse(settingChangeStartsAttempt(on = false, attempting = false))
+    }
+
+    @Test
+    fun `an attempt ignores its toggle`() {
+        assertFalse(settingChangeStartsAttempt(on = true, attempting = true))
     }
 
     @Test
