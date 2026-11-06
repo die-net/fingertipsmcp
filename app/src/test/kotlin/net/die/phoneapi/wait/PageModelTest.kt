@@ -44,6 +44,17 @@ class PageModelTest {
     }
 
     @Test
+    fun `a redirect is one request`() {
+        // Chrome sends requestWillBeSent again with the same requestId for each redirect hop.
+        val page = PageModel(startedMs = 0)
+        page.apply("Network.requestWillBeSent", sent("1", "http://example.org/"), now = 100)
+        page.apply("Network.requestWillBeSent", sent("1", "https://example.org/"), now = 150)
+        page.apply("Network.loadingFinished", buildJsonObject { put("requestId", "1") }, now = 200)
+        assertTrue(page.networkIdle(maxInflight = 0, quietMs = 500, now = 700).satisfied)
+        assertTrue(page.settled(quietMs = 500, now = 700).satisfied)
+    }
+
+    @Test
     fun `rejects a url with no matcher`() {
         val error =
             assertThrows(ApiException::class.java) {
