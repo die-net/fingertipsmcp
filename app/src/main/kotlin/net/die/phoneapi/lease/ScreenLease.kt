@@ -546,8 +546,9 @@ class ScreenLease(
         const val WAIT_MS = 60_000L
         const val GRACE_MS = 30_000L
         private const val LEFT_BY_PERSON =
-            "A person used the screen from the viewer and left it as it is, with no cleanup, so it " +
-                "may be unlocked and on any app. Check the screen before acting."
+            "A person used the screen from the viewer and has let go, so it is yours now. They " +
+                "left it as it was, so it may be unlocked and on any app. ui_snapshot shows " +
+                "what is there. If a person takes it back, you get screen_taken."
         private const val LEFT_AS_IS =
             "The last holder let the screen go as it was, with no cleanup. Check the screen " +
                 "before acting."
