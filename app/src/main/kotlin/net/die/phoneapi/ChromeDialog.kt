@@ -1,0 +1,62 @@
+package net.die.phoneapi
+
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import net.die.phoneapi.browser.CHROME_PACKAGE
+import net.die.phoneapi.model.ApiException
+import net.die.phoneapi.model.DeviceStateSummary
+import net.die.phoneapi.model.FindRequest
+import net.die.phoneapi.model.FindResult
+import net.die.phoneapi.model.NodeSelector
+import net.die.phoneapi.model.ScreenState
+
+/**
+ * Whether Chrome shows a page's dialog, read from the accessibility tree. Chrome draws an alert,
+ * confirm, or prompt in its own views, whose ids may change between releases; that only loses what
+ * this tells.
+ *
+ * Background work asks this, such as a wait or a DevTools call that timed out, so it never wakes
+ * the screen or extends the awake lease, as a screen call's find would. It reads the tree with
+ * [find] directly, and only while [state] says the screen is on and unlocked.
+ */
+internal class ChromeDialog(
+    private val state: () -> DeviceStateSummary,
+    private val find: (FindRequest) -> FindResult,
+    private val io: CoroutineDispatcher,
+) {
+    /**
+     * Whether Chrome shows a dialog, and with [host], one whose title names it, as in "example.com
+     * says". Null when it cannot tell: the screen is off or locked, so nothing of Chrome is on
+     * screen to read, or the helper could not read the tree.
+     */
+    suspend fun shown(host: String? = null): Boolean? {
+        val now = state()
+        if (now.screen != ScreenState.ON || now.keyguard.locked) return null
+        return try {
+            withContext(io) {
+                has(NodeSelector(id = DIALOG_ID, packageName = CHROME_PACKAGE)) &&
+                    (host == null ||
+                        has(
+                            NodeSelector(
+                                id = TITLE_ID,
+                                textContains = host,
+                                packageName = CHROME_PACKAGE,
+                            )
+                        ))
+            }
+        } catch (_: ApiException) {
+            null
+        }
+    }
+
+    private fun has(selector: NodeSelector): Boolean =
+        find(FindRequest(selector, limit = 1)).matches.isNotEmpty()
+
+    private companion object {
+        /** The view Chrome draws a page's dialog in. */
+        const val DIALOG_ID = "tab_modal_dialog_container"
+
+        /** The dialog's title, which names the page's host. */
+        const val TITLE_ID = "title"
+    }
+}
