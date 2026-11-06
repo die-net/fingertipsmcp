@@ -3,10 +3,12 @@ package net.die.phoneapi.server
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.URLDecodeException
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.isHandled
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.response.respondBytes
@@ -51,21 +53,7 @@ val BearerAuth =
                 call.respondBytes(ByteArray(0), status = HttpStatusCode.NotFound)
                 return@onCall
             }
-            val header =
-                call.request.headers[HttpHeaders.Authorization]
-                    ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
-                    ?.substring(BEARER_PREFIX_LENGTH)
-                    ?.trim()
-            val query =
-                call.request.queryParameters["access_token"]?.trim()?.takeIf { it.isNotEmpty() }
-            val cookie = call.request.cookies[VIEWER_COOKIE]?.trim()?.takeIf { it.isNotEmpty() }
-            // The query token wins over an older cookie on the viewer and on sockets, so opening a
-            // new link replaces the cookie instead of keeping the previous one.
-            val secret =
-                header
-                    ?: query?.takeIf { call.acceptsAccessTokenQuery() }
-                    ?: cookie?.takeIf { call.acceptsViewerCookie() }
-            val info = secret?.let(tokens::authenticate)
+            val info = call.presentedSecret()?.let(tokens::authenticate)
             if (info == null) {
                 call.respondBytes(ByteArray(0), status = HttpStatusCode.NotFound)
             } else {
@@ -75,6 +63,36 @@ val BearerAuth =
     }
 
 private const val BEARER_PREFIX_LENGTH = 7
+
+/**
+ * The secret this request presents. The query token wins over an older cookie on the viewer and on
+ * sockets, so opening a new link replaces the cookie instead of keeping the previous one.
+ */
+private fun ApplicationCall.presentedSecret(): String? =
+    request.headers[HttpHeaders.Authorization]
+        ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
+        ?.substring(BEARER_PREFIX_LENGTH)
+        ?.trim()
+        ?: decodedSecret(acceptsAccessTokenQuery()) { request.queryParameters["access_token"] }
+        ?: decodedSecret(acceptsViewerCookie()) { request.cookies[VIEWER_COOKIE] }
+
+/**
+ * Runs [read], which percent-decodes, only where the secret is [accepted]. A value that can't be
+ * decoded is no token. Letting the error out would answer a caller without a token with a body, and
+ * its message, which quotes the value, would reach the log.
+ */
+private inline fun decodedSecret(accepted: Boolean, read: () -> String?): String? {
+    if (!accepted) return null
+    val secret =
+        try {
+            read()
+        } catch (_: URLDecodeException) {
+            null
+        } catch (_: BadRequestException) {
+            null
+        }
+    return secret?.trim()?.takeIf { it.isNotEmpty() }
+}
 
 internal fun ApplicationCall.acceptsAccessTokenQuery(): Boolean {
     if (isWebSocketUpgrade()) return true
