@@ -198,11 +198,8 @@ internal class HelperSupervisor(
                     // The serial names this phone's mDNS records, so a later search resolves only
                     // those.
                     finder.connected(kadb.shell(READ_SERIAL).output.trim(), port)
-                    val listed = kadb.shell(LIST_CMDLINES)
-                    if (HELPER_MAIN in listed.output) {
-                        Log.i(TAG, "Helper process is already running")
-                        return@withContext true
-                    }
+                    // The helper allows one process per package, so this is a no-op when this
+                    // package's helper is already up, and starts one beside another package's.
                     val launched = kadb.shell(HelperLaunch.deviceCommand(context.packageName))
                     if (launched.exitCode != 0) {
                         Log.w(
@@ -234,14 +231,11 @@ internal class HelperSupervisor(
 
     private companion object {
         const val TAG = "PhoneApiHelper"
-        const val HELPER_MAIN = "net.die.phoneapi.helper.Main"
         const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
         const val RUNNING_WAIT_MS = 10_000L
         const val POLL_MS = 200L
         val PAIRING_CODE = Regex("""\d{6}""")
         const val READ_SERIAL = "getprop ro.serialno"
-        const val LIST_CMDLINES =
-            """for c in /proc/[0-9]*/cmdline; do tr '\0' ' ' < "${'$'}c" 2>/dev/null; echo; done"""
 
         fun pairingFailure(error: Exception): String =
             if (error is AdbAuthException || error is AdbPairAuthException) {
