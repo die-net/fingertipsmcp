@@ -7,7 +7,6 @@ import android.view.MotionEvent
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -45,9 +44,10 @@ class InjectTouchBackend(
     @Volatile private var screenProxy: IHelper? = null
     @Volatile private var screen: TouchscreenInfo? = null
 
-    suspend fun perform(pointers: List<List<TimedPoint>>): Boolean =
-        shapedPerform(pointers, emptyList())
-
+    /**
+     * Injects [pointers] on their schedule. A touch still down when this ends early, as when the
+     * call is cancelled or a person takes the screen over, is cancelled, as [playLive] does.
+     */
     internal suspend fun shapedPerform(
         pointers: List<List<TimedPoint>>,
         fingers: List<List<FingerShape>>,
@@ -59,27 +59,15 @@ class InjectTouchBackend(
             } catch (e: RemoteException) {
                 throw ApiException.helperDropped(e)
             }
-        val samples =
+        val events =
             try {
-                touchTimeline(pointers, fingers)
+                timelineEvents(touchTimeline(pointers, fingers))
             } catch (e: IllegalArgumentException) {
                 throw ApiException.badRequest(e.message ?: "Invalid gesture", e)
             }
-        val events = motionEvents(samples, device, SystemClock.uptimeMillis())
-        try {
-            withContext(io) {
-                var ok = true
-                for (event in events) {
-                    val wait = event.eventTime - SystemClock.uptimeMillis()
-                    if (wait > 0) delay(wait)
-                    ok = proxy.injectMotionEvent(event, WAIT_FOR_FINISH) && ok
-                }
-                ok
-            }
-        } catch (e: RemoteException) {
-            throw ApiException.helperDropped(e)
-        } finally {
-            events.forEach { it.recycle() }
+        val live = LiveTouch(proxy, device)
+        releasingTouches(live::inject) { emit ->
+            playTimeline(events, SystemClock::uptimeMillis, emit)
         }
     }
 
@@ -102,77 +90,39 @@ class InjectTouchBackend(
                     throw ApiException.helperDropped(e)
                 }
             val live = LiveTouch(proxy, device)
-            try {
-                playPointerGesture(first, frames, clamp) { event -> live.inject(event) }
-            } finally {
-                withContext(NonCancellable) { live.release() }
+            releasingTouches(live::inject) { emit ->
+                playPointerGesture(first, frames, clamp) { emit(it) }
             }
         }
     }
 
     /**
-     * One finger-down span. Active contacts are recorded before the binder call so a disconnect
-     * during injection still has something to cancel. The binder call itself is not cancellable: a
-     * down that the system already accepted has to be remembered, or the finger would stick.
+     * Turns pointer events into motion events and injects them. The binder call itself is not
+     * cancellable: a down that the system already accepted has to be remembered by [HeldContacts],
+     * or the finger would stick.
      */
     private inner class LiveTouch(private val proxy: IHelper, private val screen: TouchscreenInfo) {
         private var downTime = 0L
-        private val active = LinkedHashMap<Int, PointerPoint>()
 
-        suspend fun inject(event: PointerEvent) {
-            if (event.points.isEmpty()) return
+        suspend fun inject(event: PointerEvent): Boolean {
+            if (event.points.isEmpty()) return true
             val now = SystemClock.uptimeMillis()
-            if (active.isEmpty()) downTime = now
+            if (event.phase == PointerPhase.DOWN) downTime = now
             val eventTime =
                 if (now <= downTime) downTime else (downTime + event.tMs).coerceIn(downTime, now)
             val samples =
                 event.points.map { point ->
-                    TouchSample(point.id, point.x, point.y, event.tMs, TouchPhase.MOVE)
+                    TouchSample(point.id, point.x, point.y, event.tMs, TouchPhase.MOVE, point.shape)
                 }
             val motion = obtain(downTime, eventTime, motionAction(event), samples, screen)
-            // A down or move is recorded first, so a disconnect mid-call can still cancel that
-            // finger. A lift is recorded only after the call, so a failed up does not forget it.
-            val lifts =
-                event.phase == PointerPhase.POINTER_UP ||
-                    event.phase == PointerPhase.UP ||
-                    event.phase == PointerPhase.CANCEL
-            if (!lifts) remember(event)
-            try {
+            return try {
                 withContext(NonCancellable) {
                     withContext(io) { proxy.injectMotionEvent(motion, WAIT_FOR_FINISH) }
                 }
-                if (lifts) remember(event)
             } catch (e: RemoteException) {
                 throw ApiException.helperDropped(e)
             } finally {
                 motion.recycle()
-            }
-        }
-
-        suspend fun release() {
-            if (active.isEmpty()) return
-            val points = active.values.toList()
-            val event =
-                PointerEvent(
-                    PointerPhase.CANCEL,
-                    id = -1,
-                    points = points,
-                    tMs = points.maxOf { it.tMs },
-                )
-            inject(event)
-        }
-
-        private fun remember(event: PointerEvent) {
-            when (event.phase) {
-                PointerPhase.DOWN,
-                PointerPhase.POINTER_DOWN,
-                PointerPhase.MOVE -> {
-                    active.clear()
-                    event.points.forEach { active[it.id] = it }
-                }
-                PointerPhase.POINTER_UP -> active.remove(event.id)
-                PointerPhase.UP,
-                PointerPhase.CANCEL -> active.clear()
             }
         }
 
@@ -217,60 +167,6 @@ class InjectTouchBackend(
     }
 }
 
-private fun motionEvents(
-    samples: List<TouchSample>,
-    screen: TouchscreenInfo,
-    start: Long,
-): List<MotionEvent> {
-    val active = LinkedHashMap<Int, TouchSample>()
-    var downTime = start
-    val events = ArrayList<MotionEvent>(samples.size)
-    for (sample in samples) {
-        val eventTime = start + sample.tMs
-        when (sample.phase) {
-            TouchPhase.DOWN -> {
-                if (active.isEmpty()) downTime = eventTime
-                active[sample.pointer] = sample
-                val action =
-                    if (active.size == 1) {
-                        MotionEvent.ACTION_DOWN
-                    } else {
-                        pointerAction(MotionEvent.ACTION_POINTER_DOWN, active, sample.pointer)
-                    }
-                events += obtain(downTime, eventTime, action, active.values.toList(), screen)
-            }
-            TouchPhase.MOVE -> {
-                active[sample.pointer] = sample
-                events +=
-                    obtain(
-                        downTime,
-                        eventTime,
-                        MotionEvent.ACTION_MOVE,
-                        active.values.toList(),
-                        screen,
-                    )
-            }
-            TouchPhase.UP -> {
-                active[sample.pointer] = sample
-                val action =
-                    if (active.size == 1) {
-                        MotionEvent.ACTION_UP
-                    } else {
-                        pointerAction(MotionEvent.ACTION_POINTER_UP, active, sample.pointer)
-                    }
-                events += obtain(downTime, eventTime, action, active.values.toList(), screen)
-                active.remove(sample.pointer)
-            }
-        }
-    }
-    return events
-}
-
-private fun pointerAction(base: Int, active: Map<Int, TouchSample>, pointer: Int): Int {
-    val index = active.keys.indexOf(pointer).coerceAtLeast(0)
-    return base or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
-}
-
 private fun obtain(
     downTime: Long,
     eventTime: Long,
@@ -299,11 +195,6 @@ private fun obtain(
                 orientation = contact.orientation
             }
         }
-    // A device's source mask can include bits the input verifier does not know. On API 36 an
-    // unknown source aborts system_server, so a finger is always a plain touchscreen event.
-    val source =
-        screen.source.takeIf { it == InputDevice.SOURCE_TOUCHSCREEN }
-            ?: InputDevice.SOURCE_TOUCHSCREEN
     return MotionEvent.obtain(
         downTime,
         eventTime,
@@ -317,7 +208,9 @@ private fun obtain(
         1f,
         screen.deviceId,
         0,
-        source,
+        // A device's source mask can include bits the input verifier does not know. On API 36 an
+        // unknown source aborts system_server, so a finger is always a plain touchscreen event.
+        InputDevice.SOURCE_TOUCHSCREEN,
         0,
     )
 }
