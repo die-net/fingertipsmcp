@@ -43,5 +43,5 @@ public data class TreeSetTextCall(
 /** The `windowTitle` op's reply. */
 @Serializable public data class TreeFound(val found: Boolean)
 
-/** The `selectFocused` op's reply: the length of the focused field's text. */
-@Serializable public data class TreeFocusedText(val length: Int)
+/** The `selectFocused` op's reply: the focused field's text length, or null with no such field. */
+@Serializable public data class TreeFocusedText(val length: Int? = null)

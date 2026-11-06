@@ -299,7 +299,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     }
 
     private fun selectFocused(): TreeFocusedText {
-        val node = focusedField() ?: return TreeFocusedText(0)
+        val node = focusedField() ?: return TreeFocusedText()
         try {
             val length = if (node.isShowingHintText) 0 else node.text?.length ?: 0
             if (length == 0) return TreeFocusedText(0)

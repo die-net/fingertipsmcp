@@ -137,8 +137,8 @@ class TreeSession(
         rpc("invalidate", "{}")
     }
 
-    /** Characters currently in the focused field, after selecting them. Zero when it is empty. */
-    fun selectFocused(): Int {
+    /** Characters in the focused field, after selecting them. Null when no field is in sight. */
+    fun selectFocused(): Int? {
         val focused = decode<TreeFocusedText>(rpc("selectFocused", "{}"))
         return focused.length
     }

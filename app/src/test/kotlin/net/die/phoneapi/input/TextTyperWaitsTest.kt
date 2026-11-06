@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DeviceStateSummary
 import net.die.phoneapi.model.ImeState
 import net.die.phoneapi.model.KeyguardState
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 @OptIn(ExperimentalCoroutinesApi::class) // The virtual clock is read and moved by hand.
 class TextTyperWaitsTest {
@@ -30,6 +32,20 @@ class TextTyperWaitsTest {
     fun `one delete clears a selection`() = runTest {
         var text = 12
         assertTrue(clearField({ text }) { text = 0 })
+    }
+
+    @Test
+    fun `an unseen field is not empty`() = runTest {
+        // The field drops out of sight, so the first read says nothing about its text.
+        val reads = ArrayDeque(listOf(null, 12, 0))
+        var deletes = 0
+        assertTrue(clearField({ reads.removeFirst() }) { deletes++ })
+        assertEquals(1, deletes)
+    }
+
+    @Test
+    fun `a field that stays unseen`() = runTest {
+        assertFalse(clearField({ null }) {})
     }
 
     @Test
@@ -100,6 +116,41 @@ class TextTyperWaitsTest {
         assertEquals(TIMEOUT_MS, currentTime)
     }
 
+    @Test
+    fun `an empty read is not the end`() = runTest {
+        val shown = ArrayDeque(listOf(emptyList(), emptyList(), LOWER, LOWER))
+        val tapped = ArrayList<String>()
+        pressKeyFor('n', { shown.removeFirstOrNull() ?: LOWER }) { tapped += it.label }
+        assertEquals(listOf("n"), tapped)
+    }
+
+    @Test
+    fun `a missing key is refused`() = runTest {
+        val refused = assertThrows<ApiException> { pressKeyFor('7', { LOWER }) {} }
+        assertEquals("unsupported_char", refused.error)
+        assertEquals(KEYBOARD_WAIT_MS, currentTime)
+    }
+
+    @Test
+    fun `a keyboard that stays away`() = runTest {
+        val refused = assertThrows<ApiException> { pressKeyFor('n', { emptyList() }) {} }
+        assertEquals("no_keyboard", refused.error)
+        assertEquals(KEYS_BACK_WAIT_MS, currentTime)
+    }
+
+    @Test
+    fun `shift that misfired is undone`() = runTest {
+        // The first press lands after the shift it was read from has ended, so it turns shift on.
+        var shown = UPPER
+        var presses = 0
+        val tapped = ArrayList<String>()
+        pressKeyFor('n', { shown }) {
+            tapped += it.label
+            if (it.label == "Shift" && ++presses == 2) shown = LOWER
+        }
+        assertEquals(listOf("Shift", "Shift", "n"), tapped)
+    }
+
     private fun key(top: Int) = listOf(ImeKey("q", null, Rect(0, top, 10, top + 10)))
 
     private fun summary(imeVisible: Boolean) =
@@ -111,5 +162,12 @@ class TextTyperWaitsTest {
 
     private companion object {
         const val TIMEOUT_MS = 1_000L
+        const val KEYBOARD_WAIT_MS = 1_000L
+        const val KEYS_BACK_WAIT_MS = 5_000L
+        val LOWER = keyboard("n")
+        val UPPER = keyboard("N")
+
+        fun keyboard(letter: String) =
+            listOf(letter, "Shift").map { ImeKey(it, null, Rect(0, 0, 10, 10)) }
     }
 }
