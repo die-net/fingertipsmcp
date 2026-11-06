@@ -3,29 +3,10 @@
 
 # The helper is started by app_process via reflection on its main class.
 -keep class net.die.phoneapi.helper.Main { public static void main(java.lang.String[]); }
--keep class net.die.phoneapi.helper.** { *; }
 # The helper's copy of a hidden framework interface, which the framework's own class replaces.
 -keep class android.content.IOnPrimaryClipChangedListener** { *; }
 
-# Netty / Ktor reference optional classes that are not present on Android.
--dontwarn io.netty.**
--dontwarn org.slf4j.**
--dontwarn reactor.blockhound.**
--dontwarn org.eclipse.jetty.**
--dontwarn org.apache.log4j.**
--dontwarn org.apache.logging.log4j.**
--dontwarn com.aayushatharva.brotli4j.**
--dontwarn com.github.luben.zstd.**
--dontwarn com.jcraft.jzlib.**
--dontwarn com.ning.compress.**
--dontwarn lzma.sdk.**
--dontwarn net.jpountz.**
--dontwarn org.jboss.marshalling.**
--dontwarn com.google.protobuf.**
--dontwarn io.micrometer.**
--dontwarn java.lang.management.**
--keep class io.netty.** { *; }
--keepclassmembers class * extends io.netty.channel.ChannelInboundHandler { *; }
-
-# R8 full mode shrinks Ktor's Netty engine: the first TLS handshake succeeds, later ones are reset.
--keep,allowobfuscation,allowoptimization class io.ktor.server.netty.** { *; }
+# Ktor's IntellijIdeaDebugDetector asks java.lang.management, which Android lacks, whether a JDWP
+# agent is attached. It catches the Throwable and answers false, so the reference is harmless.
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
