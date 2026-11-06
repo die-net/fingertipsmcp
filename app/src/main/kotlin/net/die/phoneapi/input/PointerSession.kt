@@ -28,7 +28,73 @@ internal data class PointerEvent(
     val tMs: Long,
 )
 
-internal data class PointerPoint(val id: Int, val x: Float, val y: Float, val tMs: Long)
+/** One contact. [shape] is the finger's ellipse, which a live frame does not carry. */
+internal data class PointerPoint(
+    val id: Int,
+    val x: Float,
+    val y: Float,
+    val tMs: Long,
+    val shape: FingerShape = FingerShape.steady,
+)
+
+/**
+ * The contacts an injector has put down and not yet lifted. A down or move counts before it is
+ * sent, so a failure during the send still has something to lift. A lift counts only after it is
+ * sent, so a lift that failed is not forgotten.
+ */
+internal class HeldContacts {
+    private val active = LinkedHashMap<Int, PointerPoint>()
+
+    suspend fun send(event: PointerEvent, inject: suspend (PointerEvent) -> Boolean): Boolean {
+        val lifts =
+            event.phase == PointerPhase.POINTER_UP ||
+                event.phase == PointerPhase.UP ||
+                event.phase == PointerPhase.CANCEL
+        if (!lifts) remember(event)
+        val ok = inject(event)
+        if (lifts) remember(event)
+        return ok
+    }
+
+    /** Cancels every contact still down, so no finger is left on the screen. */
+    suspend fun release(inject: suspend (PointerEvent) -> Boolean) {
+        if (active.isEmpty()) return
+        val points = active.values.toList()
+        send(PointerEvent(PointerPhase.CANCEL, id = -1, points, points.maxOf { it.tMs }), inject)
+    }
+
+    private fun remember(event: PointerEvent) {
+        when (event.phase) {
+            PointerPhase.DOWN,
+            PointerPhase.POINTER_DOWN,
+            PointerPhase.MOVE -> {
+                active.clear()
+                event.points.forEach { active[it.id] = it }
+            }
+            PointerPhase.POINTER_UP -> active.remove(event.id)
+            PointerPhase.UP,
+            PointerPhase.CANCEL -> active.clear()
+        }
+    }
+}
+
+/**
+ * Runs [play], which sends a gesture's events through the `emit` it is given to [inject], and
+ * cancels any contact still down when [play] returns, fails, or is cancelled. Every touch PhoneAPI
+ * injects goes through here, so a take over or a cancelled call cannot leave a finger down under
+ * the next person's touches.
+ */
+internal suspend fun <T> releasingTouches(
+    inject: suspend (PointerEvent) -> Boolean,
+    play: suspend (emit: suspend (PointerEvent) -> Boolean) -> T,
+): T {
+    val held = HeldContacts()
+    try {
+        return play { event -> held.send(event, inject) }
+    } finally {
+        withContext(NonCancellable) { held.release(inject) }
+    }
+}
 
 /**
  * Contacts that are down right now. Frames for an unknown id, an id outside `0..9`, or an 11th
