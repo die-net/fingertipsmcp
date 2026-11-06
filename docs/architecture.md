@@ -53,7 +53,7 @@ Wireless Debugging pairing on Android 11+ is a separate concept. It allows the a
 
 ## App vs helper
 
-Chrome’s DevTools socket and realistic input injection are not available to a normal app UID. The helper runs as `shell` (or root on some emulators) via `app_process`, registers over a protected Binder provider, and detaches with `setsid` so it survives the `adb shell` session ending.
+Chrome’s DevTools socket and realistic input injection are not available to a normal app UID. The helper runs as `shell` (or root on some emulators) via `app_process`, registers over a protected Binder provider, and detaches with `setsid` so it survives the `adb shell` session ending. One helper runs per app package: it holds a lock on a file in `/data/local/tmp` named for the package, and a second launch for the same package exits at once. A release and a debug build each get their own helper, though Android lets only one of them hold UiAutomation at a time, so the second one's screen reads fail until the first lets go (3 idle minutes with no event subscriber).
 
 The helper is required for UI tree, injected input, screenshots, logcat, browser CDP plumbing, and streams. Without it, capabilities shrink; wake/launch still have limited fallbacks.
 
