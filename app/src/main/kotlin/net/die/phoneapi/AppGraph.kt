@@ -386,9 +386,7 @@ class AppGraph(
     /** Puts [pkg] back in front, or goes home when it has no launcher entry, as a launcher. */
     private suspend fun bringBack(pkg: String) {
         try {
-            val launched = launchPackage(pkg)
-            if (!launched.ok || launched.stdout.contains("Error"))
-                input.key(KeyRequest(key = "HOME"))
+            putBack(pkg, ::launchPackage) { input.key(KeyRequest(key = "HOME")) }
         } catch (_: ApiException) {
             // The helper is gone; the holder's next result says to check the screen.
         }
