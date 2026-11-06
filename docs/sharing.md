@@ -168,7 +168,7 @@ Agents never take the screen over. They queue behind a viewer like anyone else.
 
 ## Tabs
 
-A tab belongs to the holder that opened it, or that claimed it. A tab Chrome opens for an `open_intent` or `app_launch` belongs to the session that made that call too: PhoneAPI notes Chrome's tabs before the call and claims the new ones that appear in the next 2 seconds, since Chrome handles the intent's URL after the activity starts.
+A tab belongs to the holder that opened it, or that claimed it. A tab Chrome opens for an `open_intent` or `app_launch` belongs to the session that made that call too: PhoneAPI notes Chrome's tabs before the call and claims the first new ones to appear in the next 2 seconds, since Chrome handles the intent's URL after the activity starts. A session that ends meanwhile claims none.
 
 A tab id that no longer works says why: the tab closed, as a session's tabs do when it ends, or it belongs to another session.
 

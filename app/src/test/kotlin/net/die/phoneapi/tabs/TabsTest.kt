@@ -7,9 +7,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.lease.Holder
@@ -59,18 +59,44 @@ class TabsTest {
     private val a = Holder.Session("a")
     private val b = Holder.Session("b")
 
-    private fun tabs(perSession: Int = 4, total: Int = 8, scope: CoroutineScope? = null) =
-        Tabs(browser, lease, inFront = { it == front }, store = store, perSession, total, scope)
+    private fun tabs(
+        perSession: Int = 4,
+        total: Int = 8,
+        scope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
+    ) = Tabs(browser, lease, inFront = { it == front }, store = store, perSession, total, scope)
 
     @Test
-    fun `intent tabs become yours`() = runBlocking {
-        val tabs = tabs(scope = CoroutineScope(Dispatchers.Default))
+    fun `intent tabs become yours`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
         lease.withScreen(a) {}
-        // Chrome opens the intent's tab itself, after the call that sent it.
-        tabs.screenCall(a, claimNew = true) { browser.add("from-intent") }
-        withTimeout(WAIT_MS) { while (tabs.count(a) == 0) delay(POLL_MS) }
+        // Chrome opens the intent's tab itself, a moment after the call that sent it.
+        tabs.screenCall(a, claimNew = true) {}
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        browser.add("from-intent")
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
         assertEquals(listOf(true), tabs.browserFor(a).targets().map { it.owned })
         assertEquals(setOf("chrome_devtools_remote~from-intent"), store.ids)
+        // Only the first new tab is the intent's; one that comes later is someone else's.
+        browser.add("later")
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS)
+        assertEquals(1, tabs.count(a))
+    }
+
+    @Test
+    fun `an ended session claims nothing`() = runTest {
+        // DevTools takes a while to answer, so a claim's checks run late.
+        browser.listMs = 300
+        val tabs = tabs(scope = backgroundScope)
+        lease.withScreen(a) {}
+        tabs.screenCall(a, claimNew = true) {}
+        tabs.end(a)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS - 100)
+        val late = browser.add("from-intent")
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS * 2)
+        assertEquals(0, tabs.count(a))
+        // The tab is unowned, so another session can use it.
+        tabs.browserFor(b).read(late, BrowserReadRequest())
+        assertEquals(1, tabs.count(b))
     }
 
     @Test
@@ -493,7 +519,13 @@ class TabsTest {
         private var pending: String? = null
         private var checks = 0
 
-        override suspend fun targets(): List<BrowserTarget> = open.toList()
+        /** How long listing the tabs takes, as DevTools on a busy phone can. */
+        var listMs = 0L
+
+        override suspend fun targets(): List<BrowserTarget> {
+            if (listMs > 0) delay(listMs)
+            return open.toList()
+        }
 
         /** Each capture call, as the tab and whether it turned recording on. */
         val captures = mutableListOf<Pair<String, Boolean>>()
@@ -588,7 +620,5 @@ class TabsTest {
     private companion object {
         val SCOPES = setOf(Scope.OBSERVE, Scope.BROWSER)
         const val CHROME = "com.android.chrome"
-        const val WAIT_MS = 3_000L
-        const val POLL_MS = 20L
     }
 }
