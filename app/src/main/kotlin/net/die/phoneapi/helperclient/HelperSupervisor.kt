@@ -13,6 +13,7 @@ import com.flyfishxu.kadb.cert.KadbCert
 import com.flyfishxu.kadb.cert.KadbCertPolicy
 import com.flyfishxu.kadb.exception.AdbAuthException
 import com.flyfishxu.kadb.exception.AdbPairAuthException
+import java.net.ConnectException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -157,28 +158,15 @@ internal class HelperSupervisor(
 
     data class PairOutcome(val paired: Boolean, val message: String)
 
-    @Suppress(
-        "TooGenericExceptionCaught"
-    ) // Kadb reports refused and auth failures as assorted exceptions.
     private suspend fun pairWith(code: String, port: Int) {
         val hosts = buildList {
             add("127.0.0.1")
             val lan = network.lanAddress.value?.hostAddress
             if (lan != null && lan != "127.0.0.1") add(lan)
         }
-        var failure: Exception? = null
-        for (host in hosts) {
-            try {
-                withContext(ioDispatcher) { Kadb.pair(host, port, code) }
-                return
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failure = e
-                Log.w(TAG, "Pairing $host:$port failed", e)
-            }
+        pairAtFirstListening(hosts) { host ->
+            withContext(ioDispatcher) { Kadb.pair(host, port, code) }
         }
-        throw failure ?: error("Wireless debugging pairing failed")
     }
 
     private fun idleStatus(): HelperStatus =
@@ -251,4 +239,24 @@ internal class HelperSupervisor(
                 }
             }
     }
+}
+
+/**
+ * Pairs at the first of [hosts] where something is listening. Only a refused connection moves on to
+ * the next host, since the pairing server may listen on one address and not another. Anything else,
+ * such as a wrong code, would fail the same way at every address, and sending a code twice only
+ * spends the dialog's attempts, so it is thrown at once.
+ */
+internal suspend fun pairAtFirstListening(hosts: List<String>, pair: suspend (String) -> Unit) {
+    var refused: ConnectException? = null
+    for (host in hosts) {
+        try {
+            pair(host)
+            return
+        } catch (e: ConnectException) {
+            // Nothing listens there. The last refusal is thrown, and pair() logs it.
+            refused = e
+        }
+    }
+    throw refused ?: IllegalArgumentException("No address to pair with")
 }
