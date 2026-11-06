@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import net.die.phoneapi.model.DisplayInfo
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -70,7 +71,10 @@ class StreamFramesTest {
     @Test
     fun `video header names the size`() {
         val json =
-            Json.parseToJsonElement(videoHeader(288, 640, VideoSpec(640, 30, 4_000_000))).jsonObject
+            Json.parseToJsonElement(
+                    videoHeader(288, 640, VideoSpec(640, 30, 4_000_000), screen(1080, 2400))
+                )
+                .jsonObject
         assertEquals("avc", json.getValue("codec").jsonPrimitive.content)
         assertEquals(288, json.getValue("width").jsonPrimitive.int)
         assertEquals(640, json.getValue("height").jsonPrimitive.int)
@@ -99,13 +103,46 @@ class StreamFramesTest {
 
     @Test
     fun `rotation changes encoder size`() {
-        assertEquals(false, shouldReconfigure(288, 640, 1080, 2400, 640))
-        assertEquals(true, shouldReconfigure(288, 640, 2400, 1080, 640))
+        val named = 1080 to 2400
+        assertEquals(
+            DisplayChange.NONE,
+            displayChange(288 to 640, named, screen(1080, 2400), 640),
+        )
+        assertEquals(
+            DisplayChange.ENCODER,
+            displayChange(288 to 640, named, screen(2400, 1080), 640),
+        )
         assertEquals(640 to 288, scaledSize(2400, 1080, 640))
     }
 
     @Test
     fun `same even size keeps encoder`() {
-        assertEquals(false, shouldReconfigure(100, 100, 100, 101, 1000))
+        assertEquals(
+            DisplayChange.NONE,
+            displayChange(100 to 100, 100 to 101, screen(100, 101), 1000),
+        )
     }
+
+    /** A resolution change that encodes at the same size still has to reach the viewer. */
+    @Test
+    fun `a new screen size at the same encoded size resends the header`() {
+        assertEquals(576 to 1280, scaledSize(1440, 3200, 1280))
+        assertEquals(
+            DisplayChange.HEADER,
+            displayChange(576 to 1280, 1080 to 2400, screen(1440, 3200), 1280),
+        )
+    }
+
+    @Test
+    fun `video header names the screen`() {
+        val json =
+            Json.parseToJsonElement(
+                    videoHeader(576, 1280, VideoSpec(1280, 30, 4_000_000), screen(1080, 2400))
+                )
+                .jsonObject
+        assertEquals(1080, json.getValue("displayWidth").jsonPrimitive.int)
+        assertEquals(2400, json.getValue("displayHeight").jsonPrimitive.int)
+    }
+
+    private fun screen(width: Int, height: Int) = DisplayInfo(width, height, 420, 0, 60f)
 }

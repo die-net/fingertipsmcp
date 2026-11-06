@@ -102,14 +102,12 @@ internal fun ApplicationCall.acceptsAccessTokenQuery(): Boolean {
 /**
  * The browser sends [VIEWER_COOKIE] on every request to this host, including requests a page on
  * another `127.0.0.1` port starts, so it stands in for the token only on what the viewer page uses:
- * the page itself, the device status it reads, and its sockets, which check `Origin`.
+ * the page itself and its sockets, which check `Origin`.
  */
 internal fun ApplicationCall.acceptsViewerCookie(): Boolean {
     if (isWebSocketUpgrade()) return true
-    return request.httpMethod == HttpMethod.Get && request.path() in VIEWER_COOKIE_PATHS
+    return request.httpMethod == HttpMethod.Get && request.path() == VIEWER_PATH
 }
-
-private val VIEWER_COOKIE_PATHS = setOf(VIEWER_PATH, "/v1/device")
 
 private fun ApplicationCall.isWebSocketUpgrade(): Boolean =
     request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true

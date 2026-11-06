@@ -3,6 +3,7 @@ package net.die.phoneapi.stream
 import kotlin.math.max
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.model.AudioHeader
+import net.die.phoneapi.model.DisplayInfo
 import net.die.phoneapi.model.VideoHeader
 
 internal const val FRAME_CONFIG = 1
@@ -27,11 +28,15 @@ internal const val MIN_BIT_RATE = 100_000
 internal const val MAX_BIT_RATE = 20_000_000
 internal const val DEFAULT_BIT_RATE = 4_000_000
 
-/** Text frame sent on the video socket before binary frames, and again when the size changes. */
-internal fun videoHeader(width: Int, height: Int, spec: VideoSpec): String =
+/**
+ * Text frame sent on the video socket before binary frames, and again when the encoded size or the
+ * screen's size changes. [screen] is the display the frames show, so the viewer maps its points
+ * without asking for it separately.
+ */
+internal fun videoHeader(width: Int, height: Int, spec: VideoSpec, screen: DisplayInfo): String =
     ApiJson.encodeToString(
         VideoHeader.serializer(),
-        VideoHeader("avc", width, height, spec.fps, spec.bitRate),
+        VideoHeader("avc", width, height, spec.fps, spec.bitRate, screen.widthPx, screen.heightPx),
     )
 
 private val AOPUS_MAGIC = "AOPUSHDR".encodeToByteArray()
@@ -94,17 +99,30 @@ internal fun scaledSize(width: Int, height: Int, maxSize: Int): Pair<Int, Int> {
 
 private fun even(value: Int): Int = (value and 1.inv()).coerceAtLeast(2)
 
-/** True when [scaledSize] of the display differs from the running encoder. */
-internal fun shouldReconfigure(
-    encodedWidth: Int,
-    encodedHeight: Int,
-    displayWidthPx: Int,
-    displayHeightPx: Int,
-    maxSize: Int,
-): Boolean {
-    val (width, height) = scaledSize(displayWidthPx, displayHeightPx, maxSize)
-    return width != encodedWidth || height != encodedHeight
+/** What a display change asks of a running video stream. */
+internal enum class DisplayChange {
+    NONE,
+    /** The screen's size changed but encodes at the same size, so only the header goes again. */
+    HEADER,
+    /** The encoded size changed, so the encoder and mirror are rebuilt, with a new header. */
+    ENCODER,
 }
+
+/**
+ * What the display, now [shown], needs from a stream that encodes at [encoded] for the screen size
+ * its last header named, [named]. Both are width to height in pixels.
+ */
+internal fun displayChange(
+    encoded: Pair<Int, Int>,
+    named: Pair<Int, Int>,
+    shown: DisplayInfo,
+    maxSize: Int,
+): DisplayChange =
+    when {
+        scaledSize(shown.widthPx, shown.heightPx, maxSize) != encoded -> DisplayChange.ENCODER
+        (shown.widthPx to shown.heightPx) != named -> DisplayChange.HEADER
+        else -> DisplayChange.NONE
+    }
 
 internal fun isAnnexB(data: ByteArray): Boolean {
     if (data.size >= START_CODE_4 && data[0] == 0.toByte() && data[1] == 0.toByte()) {
