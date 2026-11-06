@@ -22,7 +22,6 @@ internal class PageModel(startedMs: Long) {
     private var url: String? = null
     private var mainFrameId: String? = null
     private val lifecycle = HashSet<String>()
-    private var inflight = 0
     private var lastNetMs = startedMs
     private var lastLayerMs = startedMs
     private var dialog = false
@@ -71,11 +70,11 @@ internal class PageModel(startedMs: Long) {
     fun dialogShown() = synchronized(lock) { dialog = true }
 
     fun networkIdle(maxInflight: Int, quietMs: Long, now: Long): Check =
-        synchronized(lock) { quiet(inflight <= maxInflight, lastNetMs, quietMs, now) }
+        synchronized(lock) { quiet(open.size <= maxInflight, lastNetMs, quietMs, now) }
 
     fun settled(quietMs: Long, now: Long): Check =
         synchronized(lock) {
-            if (inflight > 0) {
+            if (open.isNotEmpty()) {
                 Check(satisfied = false)
             } else {
                 val quietAt = maxOf(lastNetMs, lastLayerMs) + quietMs
@@ -147,7 +146,6 @@ internal class PageModel(startedMs: Long) {
         val request = event.request ?: return
         val url = request.url ?: return
         open[id] = Request(url, request.method ?: "GET", status = null)
-        inflight++
         lastNetMs = now
     }
 
@@ -162,7 +160,6 @@ internal class PageModel(startedMs: Long) {
     private fun requestDone(params: JsonObject, now: Long, failed: Boolean) {
         val id = params.decodeCdp<RequestDone>()?.requestId ?: return
         val request = open.remove(id)
-        if (inflight > 0) inflight--
         lastNetMs = now
         if (!failed && request?.status != null) remember(finished, request)
     }
