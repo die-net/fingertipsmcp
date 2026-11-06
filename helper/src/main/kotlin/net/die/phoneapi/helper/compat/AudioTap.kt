@@ -3,6 +3,7 @@ package net.die.phoneapi.helper.compat
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.AttributionSource
+import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
 import android.media.AudioFormat
@@ -34,6 +35,7 @@ internal class AudioTap {
     private var record: AudioRecord? = null
     private var thread: Thread? = null
     private var writeEnd: ParcelFileDescriptor? = null
+    private val tasks by lazy { TopTask() }
 
     @Volatile private var running = false
 
@@ -53,7 +55,7 @@ internal class AudioTap {
             check(minimum > 0) { "No audio buffer for $sampleRate Hz" }
             // Android 11 only allows this capture while the shell uid is in the foreground, and
             // AudioRecord names a process with no application "uid:<n>", which AppOps rejects.
-            val poppedShell = bringShellForward()
+            val shellTask = bringShellForward()
             try {
                 useShellPackage()
                 val audio = newRecord(mask, sampleRate, minimum * 2)
@@ -77,7 +79,7 @@ internal class AudioTap {
                     }
                 pipe[0]
             } finally {
-                if (poppedShell) dismissShellActivity()
+                shellTask?.let(::dismissShellActivity)
             }
         }
 
@@ -163,10 +165,12 @@ internal class AudioTap {
     /**
      * On Android 11 the shell uid is treated as cached, and remote-submix capture then never leaves
      * standby. Marking this process important, and briefly opening the shell heap-dump activity
-     * where that activity exists, is what lets [AudioRecord.startRecording] attach.
+     * where that activity exists, is what lets [AudioRecord.startRecording] attach. Which of the
+     * two steps is needed has not been measured. Returns the task of the activity it opened, so the
+     * caller closes that task and nothing else of the shell package's.
      */
-    private fun bringShellForward(): Boolean {
-        if (Build.VERSION.SDK_INT != Build.VERSION_CODES.R) return false
+    private fun bringShellForward(): Int? {
+        if (Build.VERSION.SDK_INT != Build.VERSION_CODES.R) return null
         markProcessImportant()
         return startShellActivity()
     }
@@ -246,27 +250,49 @@ internal class AudioTap {
         }
     }
 
-    private fun startShellActivity(): Boolean {
-        val output =
-            runShell("am", "start", "-n", "$SHELL_PACKAGE/.HeapDumpActivity") ?: return false
-        val started = !output.contains("Error", ignoreCase = true)
-        if (started) Thread.sleep(SHELL_ACTIVITY_MS)
-        return started
+    /**
+     * Starts the shell heap-dump activity and returns its task once it is on top, or null. `am
+     * start -W` returns when the launch has completed, so the activity is resumed by then, and its
+     * exit status says whether it started.
+     */
+    private fun startShellActivity(): Int? {
+        val component = ComponentName(SHELL_PACKAGE, HEAP_DUMP_ACTIVITY)
+        val exit = runShell("am", "start", "-W", "-n", component.flattenToShortString())
+        if (exit != 0) {
+            Log.w(TAG, "The shell activity did not start (am exited $exit)")
+            return null
+        }
+        val task =
+            try {
+                tasks.taskShowing(component)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "Could not find the shell activity's task", e)
+                null
+            }
+        if (task == null) Log.w(TAG, "The shell activity started but is not on top")
+        return task
     }
 
-    private fun dismissShellActivity() {
-        runShell("am", "force-stop", SHELL_PACKAGE)
+    /** Closes only the task [startShellActivity] opened, not the rest of the shell package. */
+    private fun dismissShellActivity(task: Int) {
+        try {
+            if (!tasks.removeTask(task)) Log.w(TAG, "The shell activity's task was already gone")
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Could not close the shell activity", e)
+        }
     }
 
-    private fun runShell(vararg command: String): String? =
+    /** Runs [command] and returns its exit status, or null if it didn't finish. */
+    private fun runShell(vararg command: String): Int? =
         try {
             val process = ProcessBuilder(*command).redirectErrorStream(true).start()
-            val output = process.inputStream.readBytes().decodeToString()
-            if (!process.waitFor(SHELL_COMMAND_SECONDS, TimeUnit.SECONDS)) {
+            // Read so a full pipe can't block it; the exit status is the answer.
+            process.inputStream.use { it.readBytes() }
+            if (process.waitFor(SHELL_COMMAND_SECONDS, TimeUnit.SECONDS)) {
+                process.exitValue()
+            } else {
                 process.destroy()
                 null
-            } else {
-                output
             }
         } catch (e: IOException) {
             Log.i(TAG, command.joinToString(" "), e)
@@ -295,7 +321,7 @@ internal class AudioTap {
         const val TAG = "PhoneApiHelper"
         const val JOIN_MS = 500L
         const val EMPTY_READ_MS = 20L
-        const val SHELL_ACTIVITY_MS = 200L
+        const val HEAP_DUMP_ACTIVITY = "com.android.shell.HeapDumpActivity"
         const val SHELL_COMMAND_SECONDS = 2L
         const val PACKAGE_WAIT_SECONDS = 2L
         const val SHELL_PACKAGE = "com.android.shell"
