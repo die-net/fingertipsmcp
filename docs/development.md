@@ -40,7 +40,7 @@ scripts/phoneapi-dev setup            # build, install, grant, pair, server, hel
 scripts/phoneapi-dev setup --no-build # skip the Gradle build
 ```
 
-That installs the debug APK as `net.die.phoneapi.dev` (so it can sit next to a release build), optionally grants `WRITE_SECURE_SETTINGS` so the app can re-enable Wireless Debugging after reboot, writes `.dev/pairing.json`, exposes the server on localhost, and starts the helper.
+That installs the debug APK as `net.die.phoneapi.dev` (so it can sit next to a release build), grants `WRITE_SECURE_SETTINGS` so the app can re-enable Wireless Debugging after reboot, writes `.dev/pairing.json`, exposes the server on localhost, and starts the helper.
 
 To rebuild by hand:
 
@@ -55,9 +55,12 @@ The APK is `app/build/outputs/apk/debug/app-debug.apk`.
 ```sh
 scripts/phoneapi-dev pair --name laptop   # mint a token into .dev/pairing.json
 scripts/phoneapi-dev server               # adb-forward the API to localhost
-scripts/phoneapi-dev helper               # start listener + shell helper
-scripts/phoneapi-dev helper net.die.phoneapi  # same, for another package
+scripts/phoneapi-dev helper               # start listener + shell helper, wait until it runs
+PHONEAPI_PKG=net.die.phoneapi PAPI_PAIRING=~/.config/phoneapi/pairing.json \
+  scripts/phoneapi-dev helper             # same, for the release install
 ```
+
+`helper` checks the helper with the pairing's token, so it needs a pairing for the package it starts. It fails if a step fails or the app does not report the helper `running` within 30 s. `setup` waits up to 180 s for a booted device, and stops before `Ready` if the helper does not come up.
 
 Open the app for screen reading and taps, wireless debugging, and the computers that have access.
 
