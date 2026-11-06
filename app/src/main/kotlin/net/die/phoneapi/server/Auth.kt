@@ -22,6 +22,8 @@ import java.net.URISyntaxException
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.TokenInfo
+import net.die.phoneapi.model.openapi.ApiMethod
+import net.die.phoneapi.model.openapi.phoneApiEndpoints
 
 private val TokenKey = AttributeKey<TokenInfo>("phoneapi.token")
 
@@ -94,20 +96,30 @@ private inline fun decodedSecret(accepted: Boolean, read: () -> String?): String
     return secret?.trim()?.takeIf { it.isNotEmpty() }
 }
 
-internal fun ApplicationCall.acceptsAccessTokenQuery(): Boolean {
-    if (isWebSocketUpgrade()) return true
-    return request.httpMethod == HttpMethod.Get && request.path() == VIEWER_PATH
-}
+/**
+ * Whether `access_token` may stand in for the header: only on [VIEWER_PATH] and the WebSocket
+ * routes, decided by the route a request is for. A request's own `Upgrade` header can't decide it,
+ * or `POST /mcp` with one would take the query too.
+ */
+internal fun ApplicationCall.acceptsAccessTokenQuery(): Boolean = forViewerOrSocket()
 
 /**
  * The browser sends [VIEWER_COOKIE] on every request to this host, including requests a page on
  * another `127.0.0.1` port starts, so it stands in for the token only on what the viewer page uses:
- * the page itself and its sockets, which check `Origin`.
+ * the page itself and the WebSocket routes, whose upgrades check `Origin`.
  */
-internal fun ApplicationCall.acceptsViewerCookie(): Boolean {
-    if (isWebSocketUpgrade()) return true
-    return request.httpMethod == HttpMethod.Get && request.path() == VIEWER_PATH
-}
+internal fun ApplicationCall.acceptsViewerCookie(): Boolean = forViewerOrSocket()
+
+private fun ApplicationCall.forViewerOrSocket(): Boolean =
+    request.httpMethod == HttpMethod.Get &&
+        request.path().let { it == VIEWER_PATH || it in SOCKET_PATHS }
+
+/**
+ * The paths of the WebSocket routes, from the endpoint list the route test checks the routes
+ * against, so a new socket route is covered here too.
+ */
+private val SOCKET_PATHS =
+    phoneApiEndpoints.filter { it.method == ApiMethod.WEBSOCKET }.map { it.path }.toSet()
 
 private fun ApplicationCall.isWebSocketUpgrade(): Boolean =
     request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
