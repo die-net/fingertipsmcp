@@ -54,6 +54,12 @@ internal fun Application.installPhoneMcp(services: ServerServices, sessions: Mcp
                 val session = sessions.get(id)?.takeIf { it.tokenId == call.token.id }
                 when {
                     session == null -> call.respond(HttpStatusCode.NotFound, noSession())
+                    // Its tools were built for scopes the token no longer has, so it ends now,
+                    // not at the next sweep, and the client initializes again.
+                    !call.token.scopes.containsAll(session.scopes) -> {
+                        sessions.end(session.id, "its token lost a scope")
+                        call.respond(HttpStatusCode.NotFound, noSession())
+                    }
                     session.transport != null -> {
                         session.touch(sessions.clock())
                         serve(session, call)

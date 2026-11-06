@@ -479,7 +479,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.PATCH,
             "/v1/tokens/{id}",
             setOf(Scope.ADMIN),
-            "Replace a token's scopes. Its sessions that used a scope it lost end within 30 s.",
+            "Replace a token's scopes. Its MCP sessions that used a scope it lost end at their next request, or within 30 s.",
             serializer<UpdateTokenRequest>(),
             serializer<TokenInfo>(),
         ),

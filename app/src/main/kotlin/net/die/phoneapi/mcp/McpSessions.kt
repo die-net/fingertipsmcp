@@ -130,17 +130,32 @@ class McpSessions(
     /**
      * Ends idle sessions, those whose token no longer exists, and those whose tools need a scope
      * the token no longer has. A token that gains a scope leaves its sessions running; the new
-     * tools show up at the client's next `initialize`.
+     * tools show up at the client's next `initialize`. A session's own request ends it at once on a
+     * lost scope; this catches one that makes no request. A failure ending one session is logged
+     * and the sweep goes on, so it cannot stop idle expiry for the others.
      */
     suspend fun sweep() {
         val at = now()
         val live = tokens.list().associate { it.id to it.scopes }
         for (session in sessions.values.toList()) {
             val scopes = live[session.tokenId]
-            when {
-                scopes == null -> end(session.id, "its token was revoked")
-                !scopes.containsAll(session.scopes) -> end(session.id, "its token lost a scope")
-                at - session.lastActiveMs > idleMs -> end(session.id, "it was idle")
+            val why =
+                when {
+                    scopes == null -> "its token was revoked"
+                    !scopes.containsAll(session.scopes) -> "its token lost a scope"
+                    at - session.lastActiveMs > idleMs -> "it was idle"
+                    else -> continue
+                }
+            try {
+                end(session.id, why)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (
+                @Suppress(
+                    "TooGenericExceptionCaught"
+                ) // One session's cleanup must not stop the rest.
+                e: Exception) {
+                Log.w(TAG, "Ending MCP session ${hashOf(session.id)} failed", e)
             }
         }
     }
