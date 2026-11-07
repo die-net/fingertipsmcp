@@ -296,7 +296,7 @@ class AppGraph(
         )
 
     val server = ApiServer(services, socketName = context.packageName)
-    val serverController = ServerController(scope, server)
+    val serverController = ServerController(scope, server::start, server::stop)
 
     private suspend fun asset(name: String): ByteArray =
         withContext(ioDispatcher) { context.assets.open(name).use { it.readBytes() } }

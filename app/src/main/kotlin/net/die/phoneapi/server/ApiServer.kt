@@ -49,7 +49,10 @@ class ApiServer(
             embeddedServer(
                     AbstractHttpEngine,
                     env,
-                    configure = { this.socketName = this@ApiServer.socketName },
+                    configure = {
+                        socketName = this@ApiServer.socketName
+                        dispatcher = services.ioDispatcher
+                    },
                     module = { phoneApiModule(services) },
                 )
                 .also { it.start(wait = false) }
