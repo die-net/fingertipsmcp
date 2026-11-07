@@ -1,7 +1,7 @@
 package net.die.phoneapi.browser
 
 import java.io.IOException
-import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,16 +44,16 @@ internal data class TabHeard(
 internal class TabEvents(private val cdp: CdpSession) {
     private val heard = MutableStateFlow(Heard())
 
-    /** Page targets Chrome announced after [discover], in order. */
-    private val announced = Collections.synchronizedList(ArrayList<String>())
+    /** The tabs Chrome named as it answered [discover], so they are not new. */
+    private val replayed = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var discovered = false
 
     /** Events are read on the session's reader, so this must not wait. */
     fun apply(event: CdpEvent) {
         when (event.method) {
             "Target.targetCreated" -> {
                 val info = event.params.decodeCdp<TargetEvent>()?.targetInfo ?: return
-                if (info.type != "page") return
-                announced += info.targetId
+                if (!discovered && info.type == "page") replayed += info.targetId
                 retitle(info)
             }
             "Target.targetInfoChanged" -> {
@@ -72,12 +72,13 @@ internal class TabEvents(private val cdp: CdpSession) {
     }
 
     /**
-     * Starts Chrome's target events. Chrome names every tab it has before it answers, so that
-     * replay is dropped here: only a tab announced after this call is new.
+     * Starts Chrome's target events. Chrome names every tab it has before it answers, and those are
+     * kept as [replayed]. One named just after counts there too, which only leaves out a tab that
+     * can't be this session's, since it opens none before this returns.
      */
     suspend fun discover() {
         cdp.call("Target.setDiscoverTargets", buildJsonObject { put("discover", true) })
-        announced.clear()
+        discovered = true
     }
 
     /**
@@ -108,20 +109,21 @@ internal class TabEvents(private val cdp: CdpSession) {
                 .decodeCdp<CreatedTarget>()
                 ?.targetId
                 ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
-        return listedId(given) ?: throw unnamed(given)
+        if (!given.all(Char::isDigit)) return given
+        return listedId(url) ?: throw unnamed(given)
     }
 
     /**
-     * The id `Target.getTargets` lists a new tab under, once `Target.createTarget` has answered
-     * [given]. Chrome 91 and 109 answer with the Android tab's number, which is a second target for
-     * the same tab, and everything that compares ids, from who owns a tab to the startup sweep,
-     * needs one id per tab. They announce the tab's own target just before the number, as one step
-     * that another open can't come between, and both before they answer.
+     * The id `Target.getTargets` lists a new tab under, on a Chrome that answered `createTarget`
+     * with the Android tab's number, as Chrome 91 and 109 do. Everything that compares ids, from
+     * who owns a tab to the startup sweep, needs one id per tab. Chrome announces no link between
+     * the two, and a just-started Chrome 109 has the tab take over a target it made earlier, so it
+     * is the page on the list that discover did not replay. Another open, a popup, or a person's
+     * tab can come up meanwhile, and then only the URL tells them apart.
      */
-    private fun listedId(given: String): String? {
-        if (!given.all(Char::isDigit)) return given
-        val order = synchronized(announced) { announced.toList() }
-        return order.getOrNull(order.indexOf(given) - 1)
+    private suspend fun listedId(url: String): String? {
+        val new = chromePages(cdp.call("Target.getTargets")).filter { it.targetId !in replayed }
+        return (new.singleOrNull() ?: new.singleOrNull { it.url == url })?.targetId
     }
 
     /** The error for the tab [given], which has no listed id, closing it on the way. */
