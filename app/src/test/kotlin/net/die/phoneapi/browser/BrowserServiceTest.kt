@@ -433,6 +433,7 @@ class BrowserServiceTest {
         showPackage: suspend (String) -> Unit = {},
         pageDialog: suspend () -> Boolean = { false },
         openPrivateTab: suspend (String) -> Unit = {},
+        openProbe: ((String) -> DevtoolsSocket)? = null,
         listSockets: () -> String = { sockets },
         io: CoroutineDispatcher = clock,
     ) =
@@ -455,6 +456,7 @@ class BrowserServiceTest {
             showPackage = showPackage,
             pageDialog = pageDialog,
             openPrivateTab = openPrivateTab,
+            openProbe = openProbe?.let { probe -> { name: String -> probe(name) } },
         )
 
     /** Replies to a snapshot whose tree has link 9. */
