@@ -60,19 +60,24 @@ internal open class StallingSocket(
             override fun read(b: ByteArray, off: Int, len: Int): Int = readInto(b, off, len)
         }
 
-    override val output: OutputStream =
-        object : OutputStream() {
-            override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+    override val output: ClientOutput = ClientOutput()
 
-            override fun write(b: ByteArray, off: Int, len: Int) {
-                lock.withLock {
-                    if (closed) return
-                    client.write(b, off, len)
-                    readClient()
-                    release()
-                }
+    /** What the client writes, which the peer reads as it comes. */
+    inner class ClientOutput : OutputStream() {
+        /** Every byte the client has written, handshake included. */
+        fun toByteArray(): ByteArray = lock.withLock { client.toByteArray() }
+
+        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            lock.withLock {
+                if (closed) return
+                client.write(b, off, len)
+                readClient()
+                release()
             }
         }
+    }
 
     override fun close() = lock.withLock {
         closed = true
