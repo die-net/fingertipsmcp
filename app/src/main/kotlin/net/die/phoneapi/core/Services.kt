@@ -125,7 +125,8 @@ interface PowerService {
 
     /**
      * Called before every action. When [autoWake] is set and the screen is off, turns it on and
-     * returns whether that happened. Extends the awake lease. Leaves the keyguard up.
+     * returns whether that happened, or fails with `wake_failed` when it stays off. Extends the
+     * awake lease. Leaves the keyguard up.
      */
     suspend fun prepareForAction(autoWake: Boolean): Boolean
 }
