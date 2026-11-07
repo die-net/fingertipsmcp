@@ -230,6 +230,9 @@ class ScreenLease(
     /** Whether [holder] has the screen now. */
     fun holds(holder: Holder): Boolean = _state.value.holder == holder
 
+    /** `screen_taken`, for a call that would change what a person in the viewer sees. */
+    fun personHasScreen(): ApiException = taken(_state.value)
+
     /** A viewer's input: takes the screen if no one has it. False means someone else does. */
     suspend fun viewerInput(viewer: Holder.Viewer): Boolean = mutex.withLock {
         val current = _state.value.holder

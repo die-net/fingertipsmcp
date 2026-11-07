@@ -70,8 +70,15 @@ class Tabs(
     /** The tab Chrome shows when the screen holder has none forward. */
     @Volatile private var placeholder: String? = null
 
-    /** Whether [sweep] has closed the last run's tabs, so a helper restart closes no live ones. */
+    /** Whether [sweep] has dealt with the last run's tabs, so it closes no live ones later. */
     @Volatile private var swept = false
+
+    /**
+     * The tabs the last run left, as the store held them at start, until [sweep] closes them. Read
+     * under [mutex] before the first save, so a later sweep cannot take this run's tabs for them,
+     * and saved with this run's, so a stop before the sweep loses none. Null until read.
+     */
+    private var left: Set<String>? = null
 
     /** The tab each session last opened or brought forward. */
     private val fronts = ConcurrentHashMap<Holder.Session, String>()
@@ -161,23 +168,45 @@ class Tabs(
     }
 
     /**
-     * Closes tabs that sessions opened before the app last stopped. Runs whenever the helper
-     * connects, but closes them only once: after that, the saved tabs are live sessions' own.
+     * Closes tabs that sessions opened before the app last stopped. It needs Chrome's real list, so
+     * while Chrome is stopped or not answering this does nothing and the next try closes them. The
+     * helper connecting tries, and so does a session listing or opening tabs, which is the first
+     * anyone could use a leftover. It closes them once, and only those the store held at start,
+     * never a tab a session has since opened or claimed.
      */
     suspend fun sweep() {
-        if (swept) return
-        val left = store.load()
-        val open =
-            try {
-                base.targets().map { it.id }.toSet()
-            } catch (_: ApiException) {
-                // Chrome is not reachable yet; keep the list for the helper's next start.
-                return
-            }
-        swept = true
-        if (left.isEmpty()) return
-        for (id in left.filter { it in open }) closeQuietly(id)
+        if (swept || base.chromeStopped()) return
+        val open = chromeTabs()?.map { it.id }?.toSet() ?: return
+        val leftover = mutex.withLock {
+            if (swept) return
+            swept = true
+            (leftovers() - owners.keys).also { left = emptySet() }
+        }
+        for (id in leftover.filter { it in open }) closeQuietly(id)
         mutex.withLock { saveOpened() }
+    }
+
+    /**
+     * Forgets the tabs Chrome no longer has, which a person or Chrome closed without PhoneAPI
+     * hearing of it. Chrome stopped has none of them: a restarted Chrome gives every tab a new id.
+     * A tab that got an owner after the list was asked for may not be on it, so only tabs owned
+     * before count. When Chrome is not answering, nothing is known, and nothing changes.
+     */
+    suspend fun forgetClosed() {
+        val owned = owners.keys.toSet()
+        val open =
+            if (base.chromeStopped()) {
+                emptySet()
+            } else {
+                chromeTabs()?.map { it.id }?.toSet() ?: return
+            }
+        val gone = owned - open
+        if (gone.isEmpty()) return
+        mutex.withLock {
+            gone.forEach(owners::remove)
+            fronts.values.removeAll(gone)
+            saveOpened()
+        }
     }
 
     internal suspend fun opened(
@@ -187,9 +216,12 @@ class Tabs(
         incognito: Boolean = false,
         created: suspend (String) -> Unit = {},
     ): BrowserTarget {
-        mutex.withLock {
-            val opened = owners.values.filter { it.opened }
-            if (opened.count { it.holder == holder } >= perSession || opened.size >= total) {
+        sweep()
+        // Chrome on Android switches to a new tab while it is in front, whatever is asked of it.
+        if (personHolds() && chromeInFront()) throw lease.personHasScreen()
+        if (atLimit(holder)) {
+            forgetClosed()
+            if (atLimit(holder)) {
                 throw ApiException(
                     409,
                     "tab_limit",
@@ -226,18 +258,25 @@ class Tabs(
         }
     }
 
+    /** Whether [holder] may not open another tab, going by the owners on record. */
+    private suspend fun atLimit(holder: Holder.Session): Boolean = mutex.withLock {
+        val opened = owners.values.filter { it.opened }
+        opened.count { it.holder == holder } >= perSession || opened.size >= total
+    }
+
     /**
      * Leaves the new tab [id] where [holder] may have it. Chrome switches to a new tab while it is
      * in front, which must not show this session's page to whoever holds the screen. While it is in
      * the background there is nothing to fix. A failure means Chrome may be showing the tab, so
-     * [BrowserService.openTab] closes it.
+     * [BrowserService.openTab] closes it. A person who took the screen during the open gets that
+     * too: what they had on screen is not known, and closing the tab takes it off their screen.
      */
     private suspend fun place(holder: Holder.Session, id: String) {
         if (lease.holds(holder)) {
             fronts[holder] = id
             return
         }
-        if (!chromeInFront() || putBack()) return
+        if (!chromeInFront() || (!personHolds() && putBack())) return
         throw ApiException(
             409,
             "took_screen",
@@ -306,6 +345,61 @@ class Tabs(
                     "Close the popup.",
             )
         }
+    }
+
+    /** Whether a person in the viewer has the screen, so what Chrome shows is theirs to choose. */
+    private fun personHolds(): Boolean = lease.state.value.holder is Holder.Viewer
+
+    /**
+     * Fails with `screen_taken` when [id] is the tab a person in the viewer has on screen, or may
+     * have, so a call without the screen cannot change the page they are using. Hidden tabs go on
+     * working in the background.
+     */
+    internal suspend fun requireOffPersonsScreen(id: String) {
+        if (!personHolds() || !chromeInFront()) return
+        if (base.showing(id) != false) throw lease.personHasScreen()
+    }
+
+    /**
+     * Runs [holder]'s call [block] on its tab [id] without the screen, leaving a person's screen as
+     * it was. A page can answer the call with a popup, which Chrome shows even from a hidden tab,
+     * so the tab they had on screen is noted before the call and selected again after one. Their
+     * own tab changes are theirs, so only a popup of [holder]'s puts anything back. That fails the
+     * call with `took_screen`, as [afterInput] does for a session's screen.
+     */
+    internal suspend fun <T> besidePerson(
+        holder: Holder.Session,
+        id: String,
+        block: suspend () -> T,
+    ): T {
+        requireOffPersonsScreen(id)
+        if (!personHolds() || !chromeInFront()) return block()
+        val before = chromeTabs().orEmpty()
+        val shown = before.firstOrNull { base.showing(it.id) == true }?.id
+        val value = block()
+        val after = chromeTabs().orEmpty()
+        adoptPopups(after)
+        val known = before.map { it.id }.toSet()
+        val popup = after.firstOrNull { it.id !in known && owners[it.id]?.holder == holder }
+        if (popup == null || base.showing(popup.id) == false) return value
+        val back =
+            shown != null &&
+                personHolds() &&
+                run {
+                    base.activate(shown)
+                    settled(FRONT_MS) { base.showing(shown) == true }
+                }
+        throw ApiException(
+            409,
+            "took_screen",
+            "Chrome showed a tab this session's page opened, over what a person in the viewer " +
+                "was using. " +
+                if (back) {
+                    "PhoneAPI switched back."
+                } else {
+                    "PhoneAPI could not switch back, so close the popup."
+                },
+        )
     }
 
     /**
@@ -431,10 +525,11 @@ class Tabs(
     /**
      * With Chrome in front, selects [holder]'s tab, or the placeholder, if Chrome shows another
      * session's. Selecting a tab can bring Chrome forward, so this does nothing while it is hidden.
-     * True when Chrome shows nothing it should not.
+     * True when Chrome shows nothing it should not. A person in the viewer may look at any tab, so
+     * nothing is selected for them: Chrome shows what they chose, not a tab that is another's.
      */
     private suspend fun showFor(holder: Holder?): Boolean {
-        if (!inFront(CHROME_PACKAGE)) return true
+        if (holder is Holder.Viewer || !inFront(CHROME_PACKAGE)) return true
         val front = (holder as? Holder.Session)?.let { fronts[it] }
         if (front != null && base.showing(front) == true) return true
         // A popup a page opened on its own, since the last listing, is its opener's too.
@@ -549,9 +644,15 @@ class Tabs(
     internal fun ownedByOthers(holder: Holder.Session, id: String): Boolean =
         owners[id]?.let { it.holder != holder } == true
 
+    /** With [mutex] held. */
     private fun saveOpened() {
-        store.save(owners.filterValues { it.opened }.keys + listOfNotNull(placeholder))
+        store.save(
+            owners.filterValues { it.opened }.keys + listOfNotNull(placeholder) + leftovers()
+        )
     }
+
+    /** With [mutex] held: the last run's tabs that [sweep] has not dealt with. */
+    private fun leftovers(): Set<String> = left ?: store.load().also { left = it }
 
     private suspend fun stopCapture(id: String) {
         try {

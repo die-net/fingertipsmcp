@@ -12,23 +12,71 @@ import net.die.phoneapi.model.Rect
  */
 internal object ContentFrame {
     private const val MIN_EDGE = 20
+    private const val COMPOSITOR_ID = "/compositor_view_holder"
 
     fun find(windows: List<AccessibilityWindowInfo>, packageName: String): Rect {
         val wanted = packageName.takeIf { it.isNotEmpty() }
         var best: AndroidRect? = null
         var shown = false
+        var off = false
         for (window in windows) {
             val root = ownedRoot(window, wanted) ?: continue
             shown = true
             try {
                 best = larger(best, search(root))
+                off = off || (best == null && bridgeOff(root))
             } finally {
                 NodeCompat.recycle(root)
             }
         }
-        val found = best ?: throw unavailable(shown)
+        val found = best ?: throw if (off) pageNodesOff() else unavailable(shown)
         return Rect(found.left, found.top, found.right, found.bottom)
     }
+
+    /**
+     * Whether Chrome has turned off the page's accessibility nodes, which leaves the page on screen
+     * with no node to say where. Chrome 133 does this about 5 s after a read of a new tab, since no
+     * accessibility service is listed, as docs/device-notes.md records. Its content view then
+     * stands alone under the compositor view, childless and the same size. Chrome's description of
+     * it is translated, so the shape decides, and the description only has to be there.
+     */
+    private fun bridgeOff(node: AccessibilityNodeInfo): Boolean {
+        if (node.viewIdResourceName?.endsWith(COMPOSITOR_ID) == true) return holdsBareView(node)
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            try {
+                if (bridgeOff(child)) return true
+            } finally {
+                NodeCompat.recycle(child)
+            }
+        }
+        return false
+    }
+
+    private fun holdsBareView(holder: AccessibilityNodeInfo): Boolean {
+        val box = AndroidRect().also(holder::getBoundsInScreen)
+        for (index in 0 until holder.childCount) {
+            val child = holder.getChild(index) ?: continue
+            try {
+                val rect = AndroidRect().also(child::getBoundsInScreen)
+                val bare = child.childCount == 0 && !child.contentDescription.isNullOrEmpty()
+                if (bare && child.isVisibleToUser && rect == box) return true
+            } finally {
+                NodeCompat.recycle(child)
+            }
+        }
+        return false
+    }
+
+    /** The page is on screen, but the tree cannot place it. The app recovers from this one. */
+    private fun pageNodesOff(): ApiException =
+        ApiException(
+            409,
+            "page_nodes_off",
+            "Chrome turned off its accessibility nodes for this page, so PhoneAPI cannot place " +
+                "a touch on it. The page itself is fine: browser_read and input cdp still work. " +
+                "Starting Chrome with app_launch, or switching tabs and back, turns them on again.",
+        )
 
     /**
      * Why there is no page to tap. When the browser has a window on screen but none shows the page,

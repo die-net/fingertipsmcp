@@ -14,7 +14,8 @@ class BrowserChromeStartTest {
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opening starts chrome`() {
         val shown = mutableListOf<String>()
-        val sockets = ArrayDeque(listOf(harness.created(), harness.committedPage()))
+        val sockets =
+            ArrayDeque(listOf(harness.created(), harness.ownTarget(), harness.committedPage()))
         val service =
             harness.service(
                 byteArrayOf(),

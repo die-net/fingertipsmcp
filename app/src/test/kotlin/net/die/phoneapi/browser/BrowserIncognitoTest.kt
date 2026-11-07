@@ -21,6 +21,7 @@ class BrowserIncognitoTest {
                 listOf(
                     // A blank tab, to learn the normal tabs' context, and closing it.
                     created("blank"),
+                    harness.ownTarget("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
                     reply("""{"success":true}"""),
                     // Before and after the shortcut, then loading the page.
@@ -60,6 +61,7 @@ class BrowserIncognitoTest {
             ArrayDeque(
                 listOf(
                     created("blank"),
+                    harness.ownTarget("blank"),
                     targets(page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(),
@@ -155,6 +157,7 @@ class BrowserIncognitoTest {
             ArrayDeque(
                 listOf(
                     created("blank"),
+                    harness.ownTarget("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(page("a", "normal"), page("inc", "private")),
@@ -179,6 +182,7 @@ class BrowserIncognitoTest {
         replies +=
             listOf(
                     created("blank"),
+                    harness.ownTarget("blank"),
                     targets(page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(),

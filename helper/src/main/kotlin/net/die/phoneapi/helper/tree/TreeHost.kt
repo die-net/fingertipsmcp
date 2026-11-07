@@ -134,7 +134,11 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
             }
             "contentBounds" -> {
                 val call = json.decodeFromString(serializer<TreePackageCall>(), body)
-                json.encodeToString(withWindows { ContentFrame.find(it, call.packageName) })
+                // Through the cache's age limit, or a tab just brought forward reads as the page
+                // that was there before, which is no page at all.
+                json.encodeToString(
+                    nodeCache.read { withWindows { ContentFrame.find(it, call.packageName) } }
+                )
             }
             "windowTitle" -> {
                 val call = json.decodeFromString(serializer<TreeTitleCall>(), body)
@@ -303,7 +307,9 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     }
 
     private fun selectFocused(): TreeFocusedText {
-        val node = focusedField() ?: return TreeFocusedText()
+        // A focused node that takes no text says nothing about a field. Chrome's page with its
+        // nodes off is one, and reading it as an empty field made clear report success.
+        val node = focusedField()?.takeIf { it.isEditable } ?: return TreeFocusedText()
         try {
             val length = if (node.isShowingHintText) 0 else node.text?.length ?: 0
             if (length == 0) return TreeFocusedText(0)

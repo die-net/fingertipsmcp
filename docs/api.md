@@ -125,16 +125,17 @@ Authenticated errors are JSON:
 | 409 | `offscreen` | The node or element has no box on screen, or a touch swipe or gesture point is off the page |
 | 409 | `obscured` | Something, such as the keyboard, covers the node. `force` taps the part that shows |
 | 409 | `content_unavailable` | A `touch` tap on a page that is not on screen, or that a dialog, menu, or the tab switcher of the browser covers. Also a call to a page that timed out while Chrome shows a page's dialog, such as an alert, which holds the page until someone dismisses it |
+| 409 | `page_nodes_off` | A `touch` call on a page Chrome has turned off its accessibility nodes for, which PhoneAPI's own restart of Chrome did not undo. The page is fine, and reads and `cdp` input work |
 | 409 | `not_visible` | `cdp` touch input into a tab that is not on screen, since Chrome holds it until the tab shows, or `touch` input into a tab Chrome would not bring forward, or whose app did not come on screen |
 | 409 | `intent_refused` | Android refused the intent, for example an activity that is not exported |
 | 409 | `intent_failed` | Android could not start the intent for another reason, or did not finish in time; the message says which |
 | 409 | `stop_failed` / `clear_failed` | `am force-stop` or `pm clear` failed; the message has its output |
 | 409 | `screen_busy` | Someone else held the screen for the whole 60 s wait |
-| 409 | `screen_taken` | A person in the viewer took the screen from this session |
+| 409 | `screen_taken` | A person in the viewer took the screen from this session, or has Chrome in front and the call would change what they see: opening a tab, or navigating, closing, or sending input or script to the tab on screen |
 | 409 | `download_saved` | The URL a tab opened on was a download, which Chrome saved rather than opened, so there is no page. A PDF is read in a tab of PhoneAPI's own instead, except in an incognito tab, which would need the phone's logins to leave its profile |
 | 409 | `tab_limit` | A session has 4 tabs it opened, or all sessions 8 |
 | 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so PhoneAPI could not check which tab Chrome shows; a new tab from `browser_open` is closed |
-| 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, so nothing was typed |
+| 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, or could not see it, so nothing was typed |
 | 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it |
 | 409 | `tab_reloaded` | Chrome had unloaded the hidden tab, so PhoneAPI reloaded it instead of sending input or script to a page the caller has not seen. Also a read whose reloaded page had not loaded within 10 s |
 | 409 | `tab_frozen` | `cdp` or `cdp-mouse` input into a tab Chrome has paused, or whose timers it has stopped, as it does to tabs hidden in the background. Also a wait on such a tab. Bring it forward with `touch` or `show`, or reload it |
@@ -228,7 +229,7 @@ The clipboard calls need the shell helper (`clipboard`), which reads the clip as
 
 Target ids look like `chrome_devtools_remote~<pageId>`. Chrome's tabs are listed with DevTools' `Target.getTargets`, so a tab has the same id however it was found, and `openerId` names the tab that opened a popup. Tabs Chrome has unloaded can be missing from the list, and the blank placeholder tab PhoneAPI keeps for the screen is left out.
 
-A session, from MCP or REST, owns the tabs it opens, popups they open, and unowned tabs it claims by using them; `browser_targets` lists those and unowned tabs, with `owned`, and leaves out other sessions' tabs, which every browser tool refuses as `not_found`. A session can have 4 tabs it opened and all sessions 8; past either, opening fails with `tab_limit`. When a session ends, the tabs it opened close and those it claimed go back to being unowned; tabs left by a restart close when the helper next starts. The screen holder can also use the WebViews of the app in front. A tab Chrome unloaded to save memory is reloaded in the background when used: reads, finds, and snapshots return the fresh page with `reloaded` true, and input and `eval` fail with `tab_reloaded`. Chrome must publish DevTools; Android 11+ needs Wireless Debugging; Android 10 needs the USB tunnel from `phoneapi helper`.
+A session, from MCP or REST, owns the tabs it opens, popups they open, and unowned tabs it claims by using them; `browser_targets` lists those and unowned tabs, with `owned`, and leaves out other sessions' tabs, which every browser tool refuses as `not_found`. A session can have 4 tabs it opened and all sessions 8; past either, opening fails with `tab_limit`. When a session ends, the tabs it opened close and those it claimed go back to being unowned; tabs left by a restart close once Chrome can list its tabs, when the helper starts or at the first listing or open after that. The screen holder can also use the WebViews of the app in front. A tab Chrome unloaded to save memory is reloaded in the background when used: reads, finds, and snapshots return the fresh page with `reloaded` true, and input and `eval` fail with `tab_reloaded`. Chrome must publish DevTools; Android 11+ needs Wireless Debugging; Android 10 needs the USB tunnel from `phoneapi helper`.
 
 | Method | Path | Scope | Summary |
 | --- | --- | --- | --- |
