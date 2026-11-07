@@ -202,6 +202,12 @@ With that build on the Android 11 test phone with Chrome 156, on 2026-11-06:
 - A plain page saw `history.length` 1, as a tab opened on its URL does.
 - A URL PhoneAPI remembered opened in 3.2 s.
 
+The merged code, at `e25a1dc`, did the same on that phone on 2026-11-07, with Chrome 156.0.8078.79 and arXiv PDFs it had not opened before:
+
+- Three first opens with Chrome hidden returned `savedPdf` true in 6.3 to 10.2 s, three with Chrome in front in 3.9 to 4.8 s, and a `capture` open in front in 6.7 s. A remembered URL opened in 3.3 s. Each read as `pdf` in 1.0 to 2.3 s.
+- No dialog showed on the opens in front, nothing but Chrome or the launcher came forward, and nothing reached Downloads. A plain page saw `history.length` 1.
+- The first hidden open was the slowest, and Chrome was on top when it returned, then the launcher. That fits PhoneAPI starting Chrome, which takes the screen and gives it back, after the phone sat asleep. Whether Chrome was running before that open was not checked.
+
 Chrome 145 on the Android 17 emulator, opened this way, saved a PDF rather than showing its viewer, and the event and the cancel worked as on Chrome 156.
 
 With the same build on the Android 16 emulator with Chrome 133 and Drive, on 2026-11-06, 21 opens that reached Chrome gave no `START` line for Drive, and nothing reached Downloads: one with Chrome long hidden, three just after it left, thirteen with it in front, and four with `capture`, two of those in front. `capture` still navigates, so the cancel is what stops Drive there.
@@ -359,6 +365,8 @@ On the Android 11 test phone on 2026-11-06, Gboard typed mixed case and symbols.
 - `keyboard_show` with a selector raised the keyboard in 0.5 to 1.5 s, both times it was tried.
 
 `KeyMatcher` now knows those two names, and `looksLikeKeyboard` counts every key that types a character, by literal or spoken label. Reading the literal character from a key's child node is not safe: the letter keys' children include the digit they give on a long press, so `q` has `q` and `1`. With that build on 2026-11-06, on the Android 16 emulator and on the Android 11 test phone, `a^b|c` was exact, and text after `50%` typed in both `keyboard` and `auto` modes. On the phone a 46-character string with every ASCII symbol was exact in 17.9 s.
+
+The merged code typed the same cases exactly on the Android 11 test phone on 2026-11-07: `^`, `|`, `a^b|c`, `50%` then ` done` in `keyboard` mode, `5%` then ` Next 7` in `auto`, and a 46-character string of letters, digits, and every symbol in 18.4 s.
 
 `keyboard_show` on the Android 16 emulator on 2026-11-06: without a selector, with a field focused, the keyboard came up in 1.5 s. With a selector, one try said `The keyboard did not appear`, two worked, and three failed `not_found`, the Chrome node collapse above being the likely cause.
 
