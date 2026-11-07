@@ -191,7 +191,7 @@ Authenticated errors are JSON:
 | `POST` | `/v1/input/key` | control | `KeyRequest` (`BACK`, `HOME`, `KEYCODE_*`, …) |
 | `POST` | `/v1/input/text` | control | `TextRequest`; `mode` `auto` / `keyboard` / `keyevent` / `setText` |
 | `POST` | `/v1/ime/hide` | control | Hide soft keyboard |
-| `POST` | `/v1/ime/show` | control | Focus editable + show IME (`ImeShowRequest`) |
+| `POST` | `/v1/ime/show` | control | Tap an editable field, or the focused one, to show the IME (`ImeShowRequest`) |
 | `POST` | `/v1/clipboard/read` | control | `ClipboardReadRequest` → `ClipboardContent`: the clip's text, MIME types, and whether the copying app marked it `sensitive`. `copy` presses `KEYCODE_COPY` first and waits up to 1 s; `changed` says whether the clip changed |
 | `POST` | `/v1/clipboard/write` | control | `ClipboardWriteRequest`: plain text, up to 100000 characters. `paste` presses `KEYCODE_PASTE` after |
 | `GET` | `/v1/clipboard/image` | control | The clip's image, in the type the copying app gave it; 404 when it holds none |
