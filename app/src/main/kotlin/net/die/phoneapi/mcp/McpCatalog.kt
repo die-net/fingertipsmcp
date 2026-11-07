@@ -11,8 +11,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
 import net.die.phoneapi.model.BrowserCaptureRequest
+import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserGestureRequest
 import net.die.phoneapi.model.BrowserKeyRequest
+import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserSnapshotOptions
 import net.die.phoneapi.model.BrowserSwipeRequest
 import net.die.phoneapi.model.BrowserTapRequest
@@ -33,6 +35,7 @@ import net.die.phoneapi.model.NodeRefArg
 import net.die.phoneapi.model.OpenTabRequest
 import net.die.phoneapi.model.OrientationRequest
 import net.die.phoneapi.model.PackageArg
+import net.die.phoneapi.model.PageArg
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.ScreenReleaseRequest
 import net.die.phoneapi.model.SessionArg
@@ -441,7 +444,7 @@ private val TOOLS: List<McpTool> =
                 "Read a page's text as markdown, a slice at a time. Works in the background. scope article (default) is the main content without navigation, footers, and ads. page is all visible text. selector reads every element it matches, in page order, such as a table. A PDF that Chrome shows in its own viewer reads the same way: its outline comes from its bookmarks, or else from font size and section numbers, running headers and footers are left out, and tables come out as plain lines. The header gives the total length, a version, and nextOffset for the next slice, and flags a page that looks blocked or still loading. It also names the page's feeds, its canonical URL, and its next page when it links to them. Pass version from an earlier read to get only the header when the content has not changed. Pages built by scripts often embed their data as JSON, which the header's data line names. Read it with scope data: without a path you get an outline whose lines each start with a path to pass back; path reads one value; a * in a path reads that field from every item, such as __NEXT_DATA__/props/pageProps/items/*/name; and paths reads several values in one call. Prefer these to paging through a large blob. Data a page fetches after it loads is not embedded; browser_capture records those responses, and a scope data read with url records them for you. outline returns only headings with their offsets, cheaply. Pass url instead of target to open a new tab and read it in one call, and close true to close the tab afterwards, so a one-look read is a single call. To read more of it, pass the target the read returned, not url, which opens a new tab each time. A tab that is not on screen is not drawn, so content that loads when drawn may be missing; the header says so, and show brings the tab forward first.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
-            arguments = listOf(serializer<BrowserReadArgs>()),
+            arguments = listOf(serializer<PageArg>(), serializer<BrowserReadRequest>()),
             screen = ToolScreen.READ,
             annotations = changes,
             call = { graph, scopes, request -> browserRead(graph, scopes, request) },
@@ -452,7 +455,7 @@ private val TOOLS: List<McpTool> =
                 "Find text or links in a page's content, with offsets browser_read takes when given the same scope, selector, and format. Works in the background. kind text returns each match with context and its nearest heading. To look for several things, or for something whose wording you can only guess, pass queries: up to 20, each searched on its own, with a no-matches line for the ones not there. Listing likely wordings and synonyms in one call costs far less than a find per guess. Matching is a plain substring that ignores case, so list wordings, not capitalizations, and use regex with \\b for whole words. kind links returns each link's text, URL, and whether it is same-origin, filtered by query and hrefContains, each URL once and without tracking parameters. With scope data it searches the page's embedded JSON and gives each match's path, which browser_read's path takes; path, * allowed, limits the search to part of it. Pass url instead of target to open the page in a new tab first, and close true to close the tab afterwards.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
-            arguments = listOf(serializer<BrowserFindArgs>()),
+            arguments = listOf(serializer<PageArg>(), serializer<BrowserFindRequest>()),
             screen = ToolScreen.READ,
             annotations = changes,
             call = { graph, scopes, request -> browserFind(graph, scopes, request) },

@@ -352,6 +352,32 @@ class PageDataTest {
     }
 
     @Test
+    fun `find clips past listed blobs`() {
+        val readable = extract.copy(blobs = extract.blobs.take(2))
+        val more = readable.copy(more = 30)
+        val request = BrowserFindRequest(query = "a", scope = ReadScope.DATA)
+        assertTrue(findData(more, request).clipped)
+        assertTrue(findData(more, request.copy(path = "*/n")).clipped)
+        // A search of one listed blob is whole, however many the page has.
+        assertFalse(findData(more, request.copy(path = "ld+json-1")).clipped)
+        assertFalse(findData(readable, request).clipped)
+    }
+
+    @Test
+    fun `find clips at the value cap`() {
+        val many = "[" + "0,".repeat(100_000) + "0]"
+        val page =
+            DataExtract(blobs = listOf(DataBlobText("many", "window.many", many.length, many)))
+        val found =
+            findData(
+                page,
+                BrowserFindRequest(query = "0", scope = ReadScope.DATA, path = "many/*"),
+            )
+        assertEquals(100_000, found.total)
+        assertTrue(found.clipped)
+    }
+
+    @Test
     fun `clips a star read at its cap`() {
         val many = "[" + "0,".repeat(100_000) + "0]"
         val page =

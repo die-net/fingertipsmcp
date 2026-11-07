@@ -52,6 +52,9 @@ test("blobs past the most a read takes are counted", () => {
   const found = pageData(scripts(...tags), null);
   assert.equal(found.blobs.length, 50);
   assert.equal(found.more, 30);
+  const read = pageRead(scripts(...tags), { scope: "page" });
+  assert.equal(read.data.length, 50);
+  assert.equal(read.moreData, 30);
 });
 
 test("blob names are unique, whatever ids the page uses", () => {

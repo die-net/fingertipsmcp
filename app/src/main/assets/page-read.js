@@ -412,6 +412,7 @@ if (!walked) walked = { blocks: [], clipped: false };
 
 const related = relations();
 
+const embedded = pageData(null);
 return {
   title: document.title || null,
   // Chrome's own error page is at chrome-error://, but its navigation still names the URL that failed.
@@ -426,7 +427,8 @@ return {
   feeds: related.feeds,
   next: related.next,
   canonical: related.canonical,
-  data: pageData(null).blobs,
+  data: embedded.blobs,
+  moreData: embedded.more,
   pageChars: bodyText.trim().length,
   links: document.links.length,
   tables: document.querySelectorAll("table").length,

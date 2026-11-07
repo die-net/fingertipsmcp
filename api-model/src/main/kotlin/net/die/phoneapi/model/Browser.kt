@@ -324,7 +324,7 @@ public data class BrowserReadRequest(
     @Doc(READ_SELECTOR_DOC) val selector: String? = null,
     @Doc(READ_FORMAT_DOC) val format: ReadFormat = ReadFormat.MARKDOWN,
     @Doc(
-        "Return headings with their offsets, and counts of links, tables, and forms, instead of the content."
+        "Return headings with their offsets, and counts of links, tables, and forms, instead of the content. Cheap."
     )
     val outline: Boolean = false,
     @Doc("Character offset to start at, such as nextOffset or a match's offset.")
@@ -378,6 +378,8 @@ public data class BrowserReadResult(
     val canonical: String? = null,
     @Doc("The JSON the page embeds, which scope data reads.")
     val data: List<DataBlob> = emptyList(),
+    @Doc("How many blobs the page has past the most data lists. They cannot be read.")
+    val moreData: Int = 0,
     @Doc(PENDING_DOC) val pending: List<String> = emptyList(),
     @Doc(SHOWN_DOC) val shown: Boolean? = null,
     @Doc(RELOADED_DOC) val reloaded: Boolean = false,
@@ -504,6 +506,10 @@ public data class BrowserFindResult(
     )
     val repeats: Int = 0,
     @Doc(RELOADED_DOC) val reloaded: Boolean = false,
+    @Doc(
+        "The page has more text, blobs, or values than a search takes, so the results and total leave them out."
+    )
+    val clipped: Boolean = false,
 )
 
 /**

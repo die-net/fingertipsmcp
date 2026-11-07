@@ -10,6 +10,7 @@ import net.die.phoneapi.model.PageLink
 import net.die.phoneapi.model.QueryMatches
 import net.die.phoneapi.model.TextMatch
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 
 class McpReadingTest {
@@ -219,6 +220,39 @@ class McpReadingTest {
             readText(read.copy(data = listOf(DataBlob("response", "the response", 1_234_567))))
                 .lines()[1],
         )
+    }
+
+    @Test
+    fun `read notes blobs past the list`() {
+        val blobs = List(50) { DataBlob("blob$it", "script#blob$it", 900) }
+        assertEquals(
+            "# data: 50 embedded JSON blobs: blob0 900 chars, blob1 900 chars, blob2 900 chars, " +
+                "blob3 900 chars, blob4 900 chars, and 45 more; read with scope data; 30 more " +
+                "blobs past these can't be read",
+            readText(read.copy(data = blobs, moreData = 30)).lines()[1],
+        )
+    }
+
+    @Test
+    fun `find notes a clipped result`() {
+        val found =
+            BrowserFindResult(
+                extracted = "data",
+                version = "1",
+                totalChars = 50,
+                total = 0,
+                matches = emptyList(),
+                clipped = true,
+            )
+        val note =
+            "# clipped: the page has more data than one read takes, so blobs or values past it " +
+                "are left out"
+        assertEquals(note, matchesText(found).lines()[1])
+        assertEquals(
+            "# clipped: the page has more text than reading takes",
+            linksText(found.copy(extracted = "page", matches = null)).lines()[1],
+        )
+        assertFalse(matchesText(found.copy(clipped = false)).contains("clipped"))
     }
 
     @Test

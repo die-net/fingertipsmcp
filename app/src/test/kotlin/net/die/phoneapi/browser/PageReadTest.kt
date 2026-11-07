@@ -166,6 +166,16 @@ class PageReadTest {
     }
 
     @Test
+    fun `reports what caps left out`() {
+        val capped = extract.copy(moreData = 30, clipped = true)
+        assertEquals(30, readPage(capped, BrowserReadRequest()).moreData)
+        assertEquals(0, readPage(extract, BrowserReadRequest()).moreData)
+        assertTrue(findInPage(capped, BrowserFindRequest(query = "first")).clipped)
+        assertTrue(findInPage(capped, BrowserFindRequest(kind = FindKind.LINKS)).clipped)
+        assertFalse(findInPage(extract, BrowserFindRequest(query = "first")).clipped)
+    }
+
+    @Test
     fun `outline has only headings`() {
         val outline = readPage(extract, BrowserReadRequest(outline = true))
         assertNull(outline.content)
