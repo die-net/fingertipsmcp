@@ -111,7 +111,7 @@ Authenticated errors are JSON:
 | --- | --- | --- |
 | 400 | `bad_request` | Bad JSON, enum, or query |
 | 403 | `forbidden` | Missing scope |
-| 404 | `not_found` | Unknown id, tab, session hash, or package (authenticated), or nothing handles an intent. Also a tab that closes during the call |
+| 404 | `not_found` | Unknown id, tab, session hash, or package (authenticated), or nothing handles an intent. Also a tab that closes during the call, a `POST /v1/wait` on it included |
 | 404 | `session_not_found` | The session a call names ended, even during the call, or belongs to another token. Start a new one. On MCP the same code names a `session` argument that is not the caller's own or one it started, and answers `/mcp` for an unknown session id |
 | 404 | `stale_ref` | A UI node ref no longer points at a node, or a browser snapshot ref is from a document the tab has since replaced, or its node has left the page; take a new snapshot |
 | 404 | *(empty body)* | Missing/invalid Bearer |
