@@ -28,12 +28,15 @@ import net.die.phoneapi.browser.CdpSession
 import net.die.phoneapi.browser.DEVTOOLS_CLOSED
 import net.die.phoneapi.browser.DevtoolsSocket
 import net.die.phoneapi.browser.FrameTreeResult
+import net.die.phoneapi.browser.WebSocketRefused
 import net.die.phoneapi.browser.decodeCdp
 import net.die.phoneapi.browser.documentNode
+import net.die.phoneapi.browser.dropped
 import net.die.phoneapi.browser.evaluateInFrame
 import net.die.phoneapi.browser.firstMatch
 import net.die.phoneapi.browser.parseBrowserTargetId
 import net.die.phoneapi.browser.rejected
+import net.die.phoneapi.browser.tabClosed
 import net.die.phoneapi.browser.withNodeIds
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.model.ApiException
@@ -75,6 +78,8 @@ internal class BrowserWatch(
      */
     private val setup = CoroutineScope(SupervisorJob() + io)
     private val pages = ConcurrentHashMap<String, PageSession>()
+    /** Tabs whose session dropped and which Chrome then refused a new connection to. */
+    private val closedPages = ConcurrentHashMap.newKeySet<String>()
     private val targets = TargetModel()
     /** Sockets, sessions, and listeners, in the order they opened. Guarded by itself. */
     private val held = ArrayList<Closeable>()
@@ -116,6 +121,7 @@ internal class BrowserWatch(
         }
 
     private suspend fun look(page: PageSession, condition: WaitCondition): Check {
+        if (page.id in closedPages) throw tabClosed(page.id)
         val model = page.model
         return when (condition) {
             is WaitCondition.BrowserUrl ->
@@ -213,6 +219,7 @@ internal class BrowserWatch(
         return pages.first().id
     }
 
+    /** Connects to the tab [id], which reads as a closed tab does elsewhere if it has gone. */
     @Suppress("MissingUseCall") // The watch closes every socket it opened.
     private suspend fun openPage(id: String, conditions: List<WaitCondition>) {
         // Until the server answers, a connection is held or shows a blank page that seems loaded.
@@ -220,8 +227,53 @@ internal class BrowserWatch(
         val (socketName, chromeId) = parseBrowserTargetId(id)
         val devtools = openSocket(socketName)
         val session = hold(CdpSession(devtools.input, devtools.output, io))
-        val model = PageModel(now())
-        val page = PageSession(model, session)
+        val page = PageSession(id, PageModel(now()), session)
+        try {
+            connectPage(page, chromeId, conditions)
+        } catch (e: WebSocketRefused) {
+            throw if (e.targetGone) tabClosed(id) else e
+        } catch (e: ApiException) {
+            throw if (e.dropped && hasClosed(socketName, chromeId)) tabClosed(id) else e
+        }
+        pages[id] = page
+        setup.launch {
+            session.awaitClosed()
+            if (hasClosed(socketName, chromeId)) {
+                closedPages += id
+                signals.tryEmit(Unit)
+            }
+        }
+    }
+
+    /**
+     * Whether Chrome refuses a new connection to the tab [chromeId], as for one that closed. A
+     * session dropping says only that something ended it.
+     */
+    @Suppress("MissingUseCall") // The watch closes every socket it opened.
+    private suspend fun hasClosed(socketName: String, chromeId: String): Boolean =
+        try {
+            val devtools = openSocket(socketName)
+            CdpSession(devtools.input, devtools.output, io).use {
+                it.open("/devtools/page/$chromeId")
+            }
+            false
+        } catch (e: WebSocketRefused) {
+            e.targetGone
+        } catch (_: IOException) {
+            false
+        } catch (_: ApiException) {
+            false
+        }
+
+    @Suppress("MissingUseCall") // The watch closes every socket it opened.
+    private suspend fun connectPage(
+        page: PageSession,
+        chromeId: String,
+        conditions: List<WaitCondition>,
+    ) {
+        val id = page.id
+        val session = page.cdp
+        val model = page.model
         // Before the reader starts, since a listener hears only what comes after it.
         hold(
             session.listen { event ->
@@ -251,7 +303,6 @@ internal class BrowserWatch(
             enable(session, domains, lifecycle)
             seed(session, model, load)
         }
-        pages[id] = page
     }
 
     /** Whether Chrome shows a dialog from the page [id] is on, by the host its title names. */
@@ -421,7 +472,7 @@ internal class BrowserWatch(
     private fun needsLoad(condition: WaitCondition): Boolean =
         condition is WaitCondition.BrowserLoaded || condition is WaitCondition.BrowserSettled
 
-    private data class PageSession(val model: PageModel, val cdp: CdpSession)
+    private data class PageSession(val id: String, val model: PageModel, val cdp: CdpSession)
 
     @Serializable
     private data class SearchStarted(val resultCount: Int = 0, val searchId: String? = null)
