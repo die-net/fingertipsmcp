@@ -52,7 +52,6 @@ internal class CdpSession(
 ) : Closeable {
     private val socket = ChromeSocket(input, output, dispatcher, newKey)
     private val pending = HashMap<Int, CompletableDeferred<CdpReply>>()
-    private val early = HashMap<Int, Result<CdpReply>>()
     private val gate = Any()
     // Set once the reader stops, so a later command fails instead of waiting for its timeout.
     private var closedBy: IOException? = null
@@ -144,19 +143,15 @@ internal class CdpSession(
     private suspend fun roundTrip(method: String, params: JsonObject?): CdpReply {
         val id = nextId.incrementAndGet()
         val deferred = CompletableDeferred<CdpReply>()
-        val ready =
-            synchronized(gate) {
-                early.remove(id)
-                    // A session that has already stopped has nowhere to send to.
-                    ?: closedBy?.let { throw IOException(it.message, it) }
-                    ?: run {
-                        pending[id] = deferred
-                        null
-                    }
-            }
+        synchronized(gate) {
+            // A session that has already stopped has nowhere to send to.
+            closedBy?.let { throw IOException(it.message, it) }
+            // Listed before the command goes out, so its reply always finds it.
+            pending[id] = deferred
+        }
         try {
             socket.sendText(command(id, method, params))
-            return ready?.getOrThrow() ?: deferred.await()
+            return deferred.await()
         } finally {
             synchronized(gate) { pending.remove(id) }
         }
@@ -200,15 +195,9 @@ internal class CdpSession(
         deliver(id, Result.success(CdpReply(message.result ?: JsonObject(emptyMap()), eventsRead)))
     }
 
+    /** Hands a reply to its call. One whose call has given up, as on a timeout, is dropped. */
     private fun deliver(id: Int, result: Result<CdpReply>) {
-        val waiter =
-            synchronized(gate) {
-                pending.remove(id)
-                    ?: run {
-                        early[id] = result
-                        null
-                    }
-            } ?: return
+        val waiter = synchronized(gate) { pending.remove(id) } ?: return
         result.fold(onSuccess = waiter::complete, onFailure = waiter::completeExceptionally)
     }
 

@@ -48,15 +48,15 @@ internal class ChromeSocket(
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
-    /** Sends a text frame. On a socket that has closed, this fails with an IOException. */
-    suspend fun sendText(text: String) {
-        val frame = Frame.Text(text)
-        val outgoing = socket().outgoing
-        // close() cancels this socket's scope, and a suspending send would then throw a
-        // cancellation, as if the caller had been cancelled. trySend reports it as closed.
-        val sent = outgoing.trySend(frame)
-        if (sent.isClosed || !scope.isActive) throw IOException(DEVTOOLS_CLOSED)
-        if (sent.isFailure) outgoing.send(frame)
+    /**
+     * Queues a text frame for Ktor's writer. On a socket that has closed, this fails with an
+     * IOException. It never waits: RawWebSocket's outgoing queue has no limit by default, so a
+     * frame is refused only once the socket has closed, and nothing can suspend here for close() to
+     * cancel, which would look like the caller being cancelled.
+     */
+    fun sendText(text: String) {
+        val sent = socket().outgoing.trySend(Frame.Text(text))
+        if (!sent.isSuccess || !scope.isActive) throw IOException(DEVTOOLS_CLOSED)
     }
 
     /** Text frames in order. Ping frames are answered and not delivered. */
