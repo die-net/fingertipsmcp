@@ -2,7 +2,9 @@ package net.die.phoneapi.browser
 
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineDispatcher
+import net.die.phoneapi.helper.TouchscreenInfo
 import net.die.phoneapi.input.SwipeSpec
+import net.die.phoneapi.input.fallbackTouchscreen
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserInput
@@ -431,6 +433,7 @@ class BrowserServiceTest {
         pageDialog: suspend () -> Boolean = { false },
         openPrivateTab: suspend (String) -> Unit = {},
         openProbe: ((String) -> DevtoolsSocket)? = null,
+        touchscreen: suspend () -> TouchscreenInfo = { fallbackTouchscreen() },
         listSockets: () -> String = { sockets },
         io: CoroutineDispatcher = clock,
     ) =
@@ -454,6 +457,7 @@ class BrowserServiceTest {
             pageDialog = pageDialog,
             openPrivateTab = openPrivateTab,
             openProbe = openProbe?.let { probe -> { name: String -> probe(name) } },
+            touchscreen = touchscreen,
         )
 
     /** Replies to a snapshot whose tree has link 9. */
