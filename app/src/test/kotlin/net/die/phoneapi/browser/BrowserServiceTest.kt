@@ -50,7 +50,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab`() {
-        val sockets = ArrayDeque(listOf(created(), ownTarget(), committedPage()))
+        val sockets = ArrayDeque(listOf(opened(), ownTarget(), committedPage()))
         val service =
             service(byteArrayOf(), sockets = CHROME, open = { socket(sockets.removeFirst()) })
         val target = virtual { service.openTab("https://example.com/") }
@@ -62,7 +62,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab behind`() {
-        val sockets = ArrayDeque(listOf(created(), ownTarget(), committedPage()))
+        val sockets = ArrayDeque(listOf(opened(), ownTarget(), committedPage()))
         val service =
             service(
                 byteArrayOf(),
@@ -513,6 +513,12 @@ class BrowserServiceTest {
             touchscreen = touchscreen,
         )
 
+    /** A browser socket's replies to an open: download events on, then the new tab [id]. */
+    internal fun opened(id: String = "abc"): ByteArray =
+        switched() +
+            serverTextFrame("""{"id":1,"result":{}}""") +
+            serverTextFrame("""{"id":2,"result":{"targetId":"$id"}}""")
+
     /** A browser socket's reply to `Target.createTarget`, for a tab with Chrome id [id]. */
     internal fun created(id: String = "abc"): ByteArray =
         switched() + serverTextFrame("""{"id":1,"result":{"targetId":"$id"}}""")
@@ -521,19 +527,9 @@ class BrowserServiceTest {
     internal fun ownTarget(id: String = "abc"): ByteArray =
         switched() + serverTextFrame("""{"id":1,"result":{"targetInfo":{"targetId":"$id"}}}""")
 
-    /** A new tab's page socket, through a navigation that commits at once. */
+    /** A new tab's page socket, on a page already committed when the service attaches. */
     internal fun committedPage(): ByteArray =
-        switched() +
-            serverTextFrame("""{"id":1,"result":{}}""") +
-            serverTextFrame(
-                """{"id":2,"result":{"frameTree":{"frame":{"id":"F","url":"about:blank",""" +
-                    """"loaderId":"L0"}}}}"""
-            ) +
-            serverTextFrame("""{"id":3,"result":{"frameId":"F","loaderId":"L1"}}""") +
-            serverTextFrame(
-                """{"method":"Page.frameNavigated","params":{"frame":{"id":"F",""" +
-                    """"url":"https://example.com/","loaderId":"L1"}}}"""
-            )
+        switched() + serverTextFrame("""{"id":1,"result":{}}""") + frameTree(2)
 
     /** Replies to a snapshot whose tree has link 9. */
     internal fun snapshotFrames(): ByteArray =

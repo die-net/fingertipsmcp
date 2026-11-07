@@ -2,9 +2,11 @@ package net.die.phoneapi.browser
 
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,25 +67,26 @@ internal class TabOpener(
         if (savedPdf(tab.url.orEmpty())) standIn(tab, created) else null
 
     /**
-     * Takes the just-made [tab], which holds no page of its URL yet, to that URL, first running
-     * [created] on it. A failure closes the tab, since no caller has its id yet. A URL Chrome saves
-     * moves to a stand-in tab, except when [incognito], since a normal tab would read the file with
-     * the phone's logins. An incognito tab opens on Chrome's new tab page, so even a blank URL
-     * loads there.
+     * Takes the just-made [tab] to its page, first running [created] on it, and navigating it when
+     * [navigate] is set. A failure closes the tab, since no caller has its id yet. A URL Chrome
+     * saves moves to a stand-in tab, except when [incognito], since a normal tab would read the
+     * file with the phone's logins. [save] says when Chrome starts saving the tab's URL.
      */
     suspend fun follow(
         tab: BrowserTarget,
+        navigate: Boolean,
         incognito: Boolean,
+        save: TabSave,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
         val url = tab.url.orEmpty()
         val opening =
             closingOnFailure(tab.id) {
                 created(tab.id)
-                if (url == BLANK_PAGE && !incognito) {
-                    TabOpening.COMMITTED
-                } else {
-                    awaitOpening(tab.id, url)
+                when {
+                    navigate -> awaitOpening(tab.id, url, save)
+                    url == BLANK_PAGE -> TabOpening.COMMITTED
+                    else -> awaitOpening(tab.id, null, save)
                 }
             }
         return when (opening) {
@@ -102,13 +105,14 @@ internal class TabOpener(
 
     /**
      * Follows the new tab [id]'s navigation, as [awaitCommit] says. A tab that goes meanwhile
-     * counts as saved, since that is why Chrome closes a tab it just opened.
+     * counts as saved, since that is why Chrome closes a tab it just opened. A failure once a save
+     * has begun is that closing too, and Chrome's list can still show the tab then.
      */
-    private suspend fun awaitOpening(id: String, url: String): TabOpening =
+    private suspend fun awaitOpening(id: String, url: String?, save: TabSave): TabOpening =
         try {
-            onPage(id) { awaitCommit(it, url) }
+            onPage(id) { awaitCommit(it, url, save.await) }
         } catch (e: ApiException) {
-            if (!closedDuring(id, e)) throw e
+            if (!save.started() && !closedDuring(id, e)) throw e
             TabOpening.SAVED
         }
 
@@ -164,31 +168,48 @@ private fun downloadSaved() =
     )
 
 /**
- * Starts a new tab's navigation to [url] on [cdp], a session on the tab, and follows it until it
- * commits, turns out to be a download, or [COMMIT_MS] pass. `Page.enable` comes first, so no save
- * or commit can happen unseen. The session ending fails this with `cdp_error`, as it does when
- * Chrome closes the tab.
+ * Follows a new tab's navigation on [cdp], a session on the tab, until it commits, turns out to be
+ * a download, or [COMMIT_MS] pass. With [url], the navigation is started here, for a tab that had
+ * to open on another page. Without it, the tab opened on its URL, since Chrome was seen to bring
+ * Google Drive's PDF viewer forward when it saved a PDF an open tab navigated to, and not for a new
+ * tab, so this only watches.
+ *
+ * Without [url], a save can happen before `Page.enable`, so this session never hears of it.
+ * [saving], from the browser session, says so instead. The session ending fails this with
+ * `cdp_error`, as it does when Chrome closes the tab.
  */
-internal suspend fun awaitCommit(cdp: CdpSession, url: String): TabOpening = coroutineScope {
+internal suspend fun awaitCommit(
+    cdp: CdpSession,
+    url: String?,
+    saving: suspend () -> Unit,
+): TabOpening = coroutineScope {
     val watch = OpenWatch()
     val closing = launch {
         cdp.awaitClosed()
         watch.ended()
     }
+    val saved = launch {
+        saving()
+        watch.downloading()
+    }
     try {
         cdp.listen(watch::apply).use { follow(cdp, watch, url) }
     } finally {
         closing.cancel()
+        saved.cancel()
     }
 }
 
-private suspend fun follow(cdp: CdpSession, watch: OpenWatch, url: String): TabOpening {
+private suspend fun follow(cdp: CdpSession, watch: OpenWatch, url: String?): TabOpening {
     cdp.call("Page.enable")
     val first = mainFrame(cdp).url
+    // The commit came before Page.enable, so its event was not sent. A new tab's frame starts on
+    // about:blank, or with no URL at all on Chrome 156.
+    if (url == null && !first.isNullOrEmpty() && first != BLANK_PAGE) return TabOpening.COMMITTED
     watch.startedOn(first)
     val seen =
         withTimeoutOrNull(COMMIT_MS) {
-            navigate(cdp, watch, url)
+            if (url != null) navigate(cdp, watch, url)
             watch.await { it.download || watch.committed(it) }
         } ?: watch.now()
     if (watch.committed(seen)) return TabOpening.COMMITTED
@@ -222,6 +243,103 @@ private suspend fun navigate(cdp: CdpSession, watch: OpenWatch, url: String) {
     withTimeoutOrNull(SAVE_MS) { watch.await { it.download } }
         ?: throw ApiException.badRequest(error)
 }
+
+/** What the browser session knows of one tab: [await] returns once Chrome starts saving in it. */
+internal data class TabSave(val started: () -> Boolean, val await: suspend () -> Unit)
+
+/** For a tab no browser session is watching, as an incognito one, whose saves it would not hear. */
+internal val NO_SAVE = TabSave(started = { false }, await = { awaitCancellation() })
+
+/**
+ * Runs [block] on the tab [open] makes on [cdp], a session on the browser, with Chrome's downloads
+ * being heard from before the tab exists. A PDF's save is cancelled from the moment Chrome names
+ * the tab, which [block] gets as the id it was given.
+ */
+internal suspend fun <T> withTabSaves(
+    cdp: CdpSession,
+    open: suspend () -> String,
+    block: suspend (String, TabSaves) -> T,
+): T {
+    val saves = TabSaves(cdp)
+    return cdp.listen(saves::apply).use {
+        saves.enable()
+        val given = open()
+        coroutineScope {
+            val cancelling = launch { saves.cancelPdf(given) }
+            try {
+                block(given, saves)
+            } finally {
+                cancelling.cancel()
+            }
+        }
+    }
+}
+
+/**
+ * Chrome's downloads, as heard on [cdp], a session on the browser. That session is listening before
+ * a new tab exists, so it hears a save that begins before a session on the tab can.
+ */
+internal class TabSaves(private val cdp: CdpSession) {
+    private val started = MutableStateFlow(emptyList<DownloadStart>())
+
+    /** Events are read on the session's reader, so this must not wait. */
+    fun apply(event: CdpEvent) {
+        if (event.method != "Browser.downloadWillBegin") return
+        val start = event.params.decodeCdp<DownloadStart>() ?: return
+        started.update { it + start }
+    }
+
+    /**
+     * Asks Chrome for download events, leaving what it does with downloads as it is. A Chrome that
+     * refuses leaves a save seen only as far as the tab's own session can.
+     */
+    suspend fun enable() {
+        try {
+            cdp.call(
+                "Browser.setDownloadBehavior",
+                buildJsonObject {
+                    put("behavior", "default")
+                    put("eventsEnabled", true)
+                },
+            )
+        } catch (e: ApiException) {
+            if (e.rejected == null) throw e
+        }
+    }
+
+    /** The save in the tab [chromeId], whose frame has the same id. */
+    fun forTab(chromeId: String): TabSave =
+        TabSave(
+            started = { started.value.any { it.frameId == chromeId } },
+            await = { await(chromeId) },
+        )
+
+    private suspend fun await(chromeId: String): DownloadStart =
+        started.mapNotNull { all -> all.firstOrNull { it.frameId == chromeId } }.first()
+
+    /**
+     * Cancels a PDF's save in the tab [chromeId] when one starts, since a stand-in reads it. That
+     * also stops Chrome asking where to save it, or opening it in another app. Chrome names the
+     * file but gives no type, so only the name says it is a PDF, and another file is left to save.
+     */
+    suspend fun cancelPdf(chromeId: String) {
+        val start = await(chromeId)
+        if (start.suggestedFilename?.endsWith(".pdf", ignoreCase = true) != true) return
+        try {
+            cdp.call("Browser.cancelDownload", buildJsonObject { put("guid", start.guid) })
+        } catch (e: ApiException) {
+            // The save carries on, which costs a copy in Downloads and not the read.
+            if (e.rejected == null && e.error != "cdp_error") throw e
+        }
+    }
+}
+
+@Serializable
+internal data class DownloadStart(
+    val guid: String,
+    val frameId: String? = null,
+    val suggestedFilename: String? = null,
+)
 
 /** What a tab's main frame has done, from the session's events. */
 private class OpenWatch {

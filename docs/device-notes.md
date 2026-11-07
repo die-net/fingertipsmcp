@@ -184,12 +184,35 @@ On the Android 11 test phone with Chrome 156.0.8078.73 on 2026-11-06, through Ph
 - The stand-in works on this Chrome. `capture` true opens a blank tab and navigates it, which sees `isDownload`. It returned `savedPdf` true in 6 to 9 s, with Chrome hidden and with it in front. No dialog was on screen after it, and Chrome saved the file each time. `read` of the 15-page paper took 2.1 s, `extracted` `pdf`, 38,965 characters, with the right title. A `find` for "attention" took 0.2 s with 90 matches. `read` of the 1810.04805 paper took 1.6 s, 64,220 characters. So the Fetch domain answers the navigation to a PDF here, and the page's fetch is served.
 - A URL PhoneAPI remembers needs no `capture`: `browser_read` with `url` of the first paper then took 8.1 s, and read it.
 
-So every tab now opens blank and is navigated, which is the route `capture` took, and `Page.enable` comes before the navigation. Checked with that build on the Android 16 emulator with Chrome 133 on 2026-11-06, with Chrome hidden, with Google Drive installed:
+Opening every tab blank and navigating it, tried for that on 2026-11-06, was wrong, and a tab now opens on its URL again. On the Android 16 emulator with Chrome 133, whose PDF handler is Drive's `PdfViewerActivity`, over raw DevTools, three tries of each:
 
-- Chrome 133 answers `Page.navigate` for a PDF with `net::ERR_ABORTED` and no `isDownload`, and the save follows. So a navigation that fails gets 2 s for the save to show before it is a 400, which a host that does not resolve then waits out.
-- A first plain open of four arXiv PDFs returned `savedPdf` true in 3.5 to 7.2 s, and each read as `pdf` in 0.9 to 2.5 s. The launcher stayed in front each time, so Drive's viewer did not come forward, as it did once when an open tab navigated to a PDF.
-- A plain page opened in 0.6 s, and saw `history.length` 2, as it does after a person types a URL into a new tab. A host that does not resolve was a 400 in 2.3 s, with the tab closed.
-- A second save of a file by the same name, with Chrome hidden, left Chrome's "Download file again?" dialog waiting. It showed when Chrome next came forward, and covered the page until cancelled. PhoneAPI forgets what it saved when it restarts, so this needs a restart between the two opens.
+| | Chrome left a second ago | Chrome in front |
+| --- | --- | --- |
+| `Target.createTarget` on the URL | no start of Drive | no start of Drive |
+| A blank tab, then `Page.navigate` | Drive on screen, 3 of 3 | Drive on screen, 3 of 3 |
+
+With Chrome hidden for longer, Chrome still asks: through PhoneAPI, ten first opens of PDFs gave 18 `START` lines for Drive in `ActivityTaskManager`, and the launcher stayed in front. Android blocks a start from the background, and lets it through for some seconds after an app was in front. So an earlier check that saw nothing come forward with Chrome long hidden proved nothing.
+
+What works is a browser session listening first. `Browser.setDownloadBehavior` with `behavior` `default` and `eventsEnabled` true leaves Chrome's handling as it was, and `Browser.downloadWillBegin` then reaches that session before a tab session could attach, 0.1 to 0.5 s after `Target.createTarget`, on Chrome 133, 145, and 156. Its `frameId` is the new tab's target id, so a person's own download can be told apart. `Browser.cancelDownload` on that event, on the Android 11 test phone with Chrome in front, gave `canceled` within 30 ms, no dialog, no file, and the tab closed. `behavior` `deny` did the same, but for every download while it is set. Without a cancel, the dialog stayed on screen after the tab closed, and the file was saved.
+
+With that build on the Android 11 test phone with Chrome 156, on 2026-11-06:
+
+- Three first opens with Chrome hidden returned `savedPdf` true in 7 to 9 s, and three with Chrome in front in 4 to 4.5 s. Each read as `pdf` in 1.3 to 2.9 s. A `capture` open in front did the same in 6.3 s.
+- No dialog showed, nothing but Chrome or the launcher came forward, and nothing reached Downloads.
+- A plain page saw `history.length` 1, as a tab opened on its URL does.
+- A URL PhoneAPI remembered opened in 3.2 s.
+
+Chrome 145 on the Android 17 emulator, opened this way, saved a PDF rather than showing its viewer, and the event and the cancel worked as on Chrome 156.
+
+With the same build on the Android 16 emulator with Chrome 133 and Drive, on 2026-11-06, 21 opens that reached Chrome gave no `START` line for Drive, and nothing reached Downloads: one with Chrome long hidden, three just after it left, thirteen with it in front, and four with `capture`, two of those in front. `capture` still navigates, so the cancel is what stops Drive there.
+
+Other things seen while checking, on the Android 16 emulator:
+
+- The cancel closes the tab, so the tab's session can drop while `Target.getTargets` still lists it. So a save already heard settles what that drop was.
+- 3 of 25 opens in a row with Chrome in front failed `cdp_error`, two of them read as `No node with given id found`, from `PdfReader.ownPage`. `Page.navigate` returns before the commit, so `DOM.getDocument` can name the old document and `DOM.resolveNode` then fails. This is on the stand-in's path, not the open's, and did not happen in 7 opens on the Android 11 test phone. A new open worked.
+- 1 of those 25, with Chrome in front and no session holding the screen, failed `took_screen`: `Chrome showed the new tab on screen and would not switch back`.
+- Chrome 133 answers `Page.navigate` for a PDF with `net::ERR_ABORTED` and no `isDownload`, and the save follows. So a navigation that fails, for `capture` or incognito, gets 2 s for the save to show before it is a 400.
+- A second save of a file by the same name, with Chrome hidden, left Chrome's "Download file again?" dialog waiting. It showed when Chrome next came forward, and covered the page until cancelled.
 - A fresh Chrome's "Chrome notifications make things easier" prompt also covered the page when Chrome came forward, and `touch` input got `content_unavailable` until it was dismissed.
 
 Checked through PhoneAPI on the Android 16 emulator, Chrome 133 with `AndroidOpenPdfInline` on, on 2026-11-05, against 22 public PDFs and the scoring in `pdftotext`. Word recall against `pdftotext` was 95 to 100% for papers in one and two columns, menus, the RFC, a Census report whose table pages carry `/Rotate 90`, an IRS form, a Supreme Court opinion, slides, a designed annual report, and Chinese and Arabic reports. Running headers and footers, which `pdftotext` keeps, account for most of the rest.
@@ -335,7 +358,7 @@ On the Android 11 test phone on 2026-11-06, Gboard typed mixed case and symbols.
 - With the page's nodes present, `clear` emptied the field, in a 3.5 s call that typed 8 characters after it, `setText` worked, and `keyevent` typed `Key Ev3nt!`.
 - `keyboard_show` with a selector raised the keyboard in 0.5 to 1.5 s, both times it was tried.
 
-`KeyMatcher` now knows those two names, and `looksLikeKeyboard` counts every key that types a character, by literal or spoken label. Reading the literal character from a key's child node is not safe: the letter keys' children include the digit they give on a long press, so `q` has `q` and `1`. On the Android 16 emulator with Gboard on 2026-11-06, with that build, `a^b|c` was exact, `50%` then ` d` both typed in `keyboard` mode, and `5%` then ` N7` both typed in `auto`.
+`KeyMatcher` now knows those two names, and `looksLikeKeyboard` counts every key that types a character, by literal or spoken label. Reading the literal character from a key's child node is not safe: the letter keys' children include the digit they give on a long press, so `q` has `q` and `1`. With that build on 2026-11-06, on the Android 16 emulator and on the Android 11 test phone, `a^b|c` was exact, and text after `50%` typed in both `keyboard` and `auto` modes. On the phone a 46-character string with every ASCII symbol was exact in 17.9 s.
 
 `keyboard_show` on the Android 16 emulator on 2026-11-06: without a selector, with a field focused, the keyboard came up in 1.5 s. With a selector, one try said `The keyboard did not appear`, two worked, and three failed `not_found`, the Chrome node collapse above being the likely cause.
 
@@ -463,8 +486,8 @@ Before this, a `browser.dialog` wait on a page that did not answer failed `cdp_t
 - What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
 - That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
-- That a first plain open of a PDF reads on the Android 11 test phone with tabs opened blank, with Chrome in front and hidden, and that Chrome's download dialog stays away, as it did for `capture`. On Chrome 145, which shows PDFs in its viewer, that the same open gives the viewer's tab rather than a stand-in.
-- That `^`, `|`, and typing after `%` work on the Android 11 test phone's Gboard, which so far has run only the build before those fixes.
+- What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
+- That `PdfReader.ownPage` is not caught by a commit still to come on the phone, as it was 3 times in 25 on the Android 16 emulator.
 - That the PIN field and delete key read the same on the Android 11 and 12 phones and any OEM keyguard: a visible node with the password flag whose text length is the digit count. An unlock refuses when no such field is found, so a keyguard that hides it, as a PIN auto-confirm or PIN-shape setting may, can't be unlocked with a stored PIN. Also a real cancelled entry cleared on the phone, and whether 1.5 s covers its bouncer coming up.
 - That the shared mDNS walk finds the pairing dialog and the connect port on the Android 11 and 12 phones, below API 34, where a hung resolve can't be cancelled and `FAILURE_ALREADY_ACTIVE` is what a search waits out. Only the Android 17 emulator has run it. With another device's record on the LAN and the serial known, its record should never be resolved. With the serial not known yet, as on a first pairing, every record is, so a hung foreign one still blocks that search. Also a bare connect to the pairing port leaving the dialog working there, which `pairingPort()` does.
 - That PIN unlock works on the phone, which has only run it on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.

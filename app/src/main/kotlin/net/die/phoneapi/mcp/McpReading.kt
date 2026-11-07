@@ -121,7 +121,7 @@ private suspend fun loaded(
 
 private fun savedPdfLine(target: String, closing: Boolean): String = buildString {
     append("# opened target=").append(target)
-    append("; Chrome saves this PDF to Downloads rather than showing it, so this tab holds it")
+    append("; Chrome does not show this PDF, so this tab holds it")
     if (!closing) append("; close it with browser_close when done")
 }
 

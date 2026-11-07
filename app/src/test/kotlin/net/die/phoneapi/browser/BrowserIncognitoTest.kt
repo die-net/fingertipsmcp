@@ -134,6 +134,45 @@ class BrowserIncognitoTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `an aborted load can be a save`() {
+        // Chrome 133 answers with the error alone, and the save's event follows it.
+        val page =
+            harness.switched() +
+                harness.serverTextFrame("""{"id":1,"result":{}}""") +
+                ntp(2) +
+                harness.serverTextFrame("""{"id":3,"result":{"errorText":"net::ERR_ABORTED"}}""") +
+                harness.serverTextFrame(
+                    """{"method":"Page.downloadWillBegin","params":{"frameId":"F","guid":"G",""" +
+                        """"url":"$PAGE","suggestedFilename":"report.pdf"}}"""
+                ) +
+                ntp(4)
+        val service = opening(harness.socket(page))
+        val error = harness.virtual {
+            harness.failure { service.openTab(PAGE, incognito = true) }
+        }
+        assertEquals("download_saved", error)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a failed load is an error`() {
+        val page =
+            harness.switched() +
+                harness.serverTextFrame("""{"id":1,"result":{}}""") +
+                ntp(2) +
+                harness.serverTextFrame(
+                    """{"id":3,"result":{"errorText":"net::ERR_NAME_NOT_RESOLVED"}}"""
+                )
+        val service = opening(harness.socket(page))
+        val error = harness.virtual {
+            harness.failure { service.openTab(PAGE, incognito = true) }
+        }
+        assertEquals("bad_request", error)
+        assertEquals(listOf("Target.closeTarget"), closing.methods())
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `a slow navigate is no failure`() {
         // Page.navigate waits for the server, past the wait for it but short of a call's limit, so
         // the tab comes back waiting rather than closed.
