@@ -15,7 +15,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import net.die.phoneapi.core.ApiJson
@@ -155,7 +157,19 @@ internal class FakeApi(
     val pointerSessions = Channel<List<PointerFrame>>(capacity = Channel.UNLIMITED)
     /** Runs after a pointer stream's channel closes and before the pointer call returns. */
     @Volatile var afterPointer: suspend () -> Unit = {}
-    @Volatile var cleanups = 0
+    private val cleanupCount = MutableStateFlow(0)
+
+    /** How many times the lease ran cleanup, which it does on its own scope after a release. */
+    var cleanups: Int
+        get() = cleanupCount.value
+        set(value) {
+            cleanupCount.value = value
+        }
+
+    /** Waits until cleanup has run [count] times in all. */
+    suspend fun awaitCleanups(count: Int) {
+        cleanupCount.first { it >= count }
+    }
 
     /** The autoWake of the last prepareForAction, which only the viewer's take calls here. */
     @Volatile var prepared: Boolean? = null

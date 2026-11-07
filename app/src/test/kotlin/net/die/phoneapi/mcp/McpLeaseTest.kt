@@ -13,10 +13,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
-import kotlinx.coroutines.delay
+import net.die.phoneapi.lease.Holder
+import net.die.phoneapi.model.BrowserReadRequest
+import net.die.phoneapi.model.BrowserReadResult
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.server.FAILING_SELECTOR
 import net.die.phoneapi.server.FakeApi
+import net.die.phoneapi.server.FakeBrowser
 import net.die.phoneapi.server.apiClient
 import net.die.phoneapi.server.bearer
 import net.die.phoneapi.server.phoneApiModule
@@ -37,7 +40,7 @@ class McpLeaseTest {
         apiClient().use { http ->
             val first = initialize(http)
             val second = initialize(http)
-            assertFalse(call(http, first, "tap", """{"x":1,"y":2}""").contains("isError\":true"))
+            assertTrue(call(http, first, "tap", """{"x":1,"y":2}""").contains("isError\":false"))
 
             val busy = call(http, second, "tap", """{"x":1,"y":2}""")
             assertTrue(busy.contains("screen_busy"), busy)
@@ -46,10 +49,10 @@ class McpLeaseTest {
             assertTrue(listed.contains("\"holdsScreen\":true"), listed)
 
             http.delete("/mcp") { headers(first) }
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
             val turn = call(http, second, "tap", """{"x":1,"y":2}""")
-            assertFalse(turn.contains("isError\":true"), turn)
+            assertTrue(turn.contains("isError\":false"), turn)
         }
     }
 
@@ -61,10 +64,10 @@ class McpLeaseTest {
             val second = initialize(http)
             call(http, first, "tap", """{"x":1,"y":2}""")
             assertTrue(call(http, first, "screen_release", "{}").contains("Released the screen"))
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
             val turn = call(http, second, "tap", """{"x":1,"y":2}""")
-            assertFalse(turn.contains("isError\":true"), turn)
+            assertTrue(turn.contains("isError\":false"), turn)
             assertTrue(call(http, first, "screen_release", "{}").contains("did not hold"))
         }
     }
@@ -81,8 +84,8 @@ class McpLeaseTest {
                     "browser_open",
                     """{"url":"https://a.test/","incognito":true}""",
                 )
-            assertFalse(opened.contains("isError\":true"), opened)
-            settle { api.cleanups == 1 }
+            assertTrue(opened.contains("isError\":false"), opened)
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
             assertEquals(null, api.lease.state.value.holder)
         }
@@ -95,8 +98,8 @@ class McpLeaseTest {
         apiClient().use { http ->
             val session = initialize(http)
             val opened = call(http, session, "browser_open", """{"url":"https://a.test/"}""")
-            assertFalse(opened.contains("isError\":true"), opened)
-            settle { api.cleanups == 1 }
+            assertTrue(opened.contains("isError\":false"), opened)
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
             assertEquals(null, api.lease.state.value.holder)
         }
@@ -120,7 +123,7 @@ class McpLeaseTest {
             assertTrue(busy.bodyAsText().contains("screen_busy"))
 
             http.delete("/mcp") { headers(session) }
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             val taps = api.inputTaps
             val free =
                 http.post("/v1/input/tap") {
@@ -147,10 +150,9 @@ class McpLeaseTest {
             assertTrue(read.contains("not_found"), read)
             val mine =
                 call(http, first, "browser_read", """{"target":"chrome_devtools_remote~t"}""")
-            assertFalse(mine.contains("isError\":true"), mine)
+            assertTrue(mine.contains("isError\":false"), mine)
             assertEquals(setOf("chrome_devtools_remote~t"), api.tabStore.ids)
             http.delete("/mcp") { headers(first) }
-            settle { api.tabStore.ids.isEmpty() }
             assertEquals(emptySet<String>(), api.tabStore.ids)
         }
     }
@@ -169,6 +171,36 @@ class McpLeaseTest {
         }
     }
 
+    /** A url read opens a page, which could launch an app, so it is watched as browser input is. */
+    @Test
+    fun `a url read that brings an app forward took the screen`() = testApplication {
+        var onRead = {}
+        val launching =
+            FakeApi(
+                browser =
+                    object : FakeBrowser() {
+                        override suspend fun read(
+                            id: String,
+                            request: BrowserReadRequest,
+                        ): BrowserReadResult {
+                            onRead()
+                            return super.read(id, request)
+                        }
+                    }
+            )
+        onRead = { launching.top = "com.example.maps" }
+        launching.tokens.issue(token, Scope.entries.toSet())
+        application { phoneApiModule(launching.services) }
+        apiClient().use { http ->
+            val session = initialize(http)
+            val read = call(http, session, "browser_read", """{"url":"https://a.test/"}""")
+            assertTrue(read.contains("took_screen: com.example.maps came forward"), read)
+            assertEquals(listOf("com.example.maps"), launching.tookScreen)
+            // No one held the screen, so the session that caused it now does.
+            assertTrue(launching.lease.holds(Holder.Session(session)))
+        }
+    }
+
     @Test
     fun `subagents take turns`() = testApplication {
         application { phoneApiModule(api.services) }
@@ -176,7 +208,7 @@ class McpLeaseTest {
             val parent = initialize(http)
             val child = start(http, parent)
             val tap = """{"x":1,"y":2,"session":"$child"}"""
-            assertFalse(call(http, parent, "tap", tap).contains("isError\":true"))
+            assertTrue(call(http, parent, "tap", tap).contains("isError\":false"))
             // The parent does not queue behind its own subagent: it is told at once.
             val busy = call(http, parent, "tap", """{"x":1,"y":2}""")
             assertTrue(busy.contains("session_conflict"), busy)
@@ -186,8 +218,8 @@ class McpLeaseTest {
 
             val ended = call(http, parent, "session_end", """{"session":"$child"}""")
             assertTrue(ended.contains("Ended the session"), ended)
-            settle { api.cleanups == 1 }
-            assertFalse(call(http, parent, "tap", """{"x":1,"y":2}""").contains("isError\":true"))
+            api.awaitCleanups(1)
+            assertTrue(call(http, parent, "tap", """{"x":1,"y":2}""").contains("isError\":false"))
             val gone = call(http, parent, "tap", tap)
             assertTrue(gone.contains("No such session"), gone)
         }
@@ -199,7 +231,7 @@ class McpLeaseTest {
         apiClient().use { http ->
             val parent = initialize(http)
             val child = start(http, parent)
-            assertFalse(call(http, parent, "tap", """{"x":1,"y":2}""").contains("isError\":true"))
+            assertTrue(call(http, parent, "tap", """{"x":1,"y":2}""").contains("isError\":false"))
             val mixed = call(http, parent, "tap", """{"x":1,"y":2,"session":"$child"}""")
             assertTrue(mixed.contains("session_conflict"), mixed)
             assertTrue(mixed.contains("Your own session holds the screen"), mixed)
@@ -242,7 +274,7 @@ class McpLeaseTest {
             val stranger = call(http, initialize(http), "browser_read", "{$target}")
             assertTrue(stranger.contains("No browser target"), stranger)
             val mine = call(http, parent, "browser_read", """{$target,"session":"$child"}""")
-            assertFalse(mine.contains("isError\":true"), mine)
+            assertTrue(mine.contains("isError\":false"), mine)
         }
     }
 
@@ -258,7 +290,6 @@ class McpLeaseTest {
             val direct = http.post("/mcp") { headers(child) }
             assertEquals(HttpStatusCode.NotFound, direct.status)
             http.delete("/mcp") { headers(parent) }
-            settle { !http.get("/v1/sessions") { bearer(token) }.bodyAsText().contains("parent") }
             val listed = http.get("/v1/sessions") { bearer(token) }.bodyAsText()
             assertFalse(listed.contains(PARENT), listed)
         }
@@ -314,13 +345,6 @@ class McpLeaseTest {
         header(HttpHeaders.Accept, "application/json, text/event-stream")
         header("MCP-Protocol-Version", "2025-06-18")
         if (id != null) header("Mcp-Session-Id", id)
-    }
-
-    private suspend fun settle(done: suspend () -> Boolean) {
-        repeat(50) {
-            if (done()) return
-            delay(20)
-        }
     }
 
     private companion object {

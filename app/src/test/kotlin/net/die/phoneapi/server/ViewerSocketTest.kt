@@ -8,7 +8,7 @@ import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -67,8 +67,8 @@ class ViewerSocketTest {
                 assertEquals(listOf(1, 1), seen.map { it.id })
             }
         }
-        settle { api.services.lease.holds(agent) }
-        assertTrue(api.services.lease.holds(agent))
+        // The socket lets go as it closes, which hands the screen back.
+        withTimeout(5.seconds) { api.services.lease.state.first { it.holder == agent } }
         assertEquals(0, api.cleanups)
     }
 
@@ -126,11 +126,11 @@ class ViewerSocketTest {
                 client.webSocket("/v1/input/pointer", { bearer(secret) }) {
                     lease(this)
                     send(Frame.Text("""{"op":"take"}"""))
-                    settle { api.prepared != null }
+                    handled(this)
                     assertEquals(true, api.prepared)
                     api.prepared = null
                     send(Frame.Text("""{"op":"take","autoWake":false}"""))
-                    settle { api.prepared != null }
+                    handled(this)
                     assertEquals(false, api.prepared)
                 }
             }
@@ -145,7 +145,7 @@ class ViewerSocketTest {
                 client.webSocket("/v1/input/pointer", { bearer(secret) }) {
                     lease(this)
                     send(Frame.Text("""{"op":"orientation","orientation":"90"}"""))
-                    settle { api.orientation != null }
+                    handled(this)
                 }
             }
         }
@@ -160,7 +160,7 @@ class ViewerSocketTest {
                 client.webSocket("/v1/input/pointer", { bearer(secret) }) {
                     lease(this)
                     send(Frame.Text("""{"op":"paste","text":"from the computer"}"""))
-                    settle { api.clipWrite != null }
+                    handled(this)
                 }
             }
         }
@@ -221,7 +221,7 @@ class ViewerSocketTest {
                 client.webSocket("/v1/input/pointer", { bearer(secret) }) {
                     lease(this)
                     send(Frame.Binary(true, png))
-                    settle { api.clipImage != null }
+                    handled(this)
                 }
             }
         }
@@ -272,10 +272,18 @@ class ViewerSocketTest {
 
     private fun JsonObject.holder(): String? = this["holder"]?.jsonPrimitive?.content
 
-    private suspend fun settle(done: () -> Boolean) {
-        repeat(50) {
-            if (done()) return
-            delay(20)
+    /**
+     * Returns once the server has handled every frame sent before it. The socket handles frames in
+     * order and answers a copy that has an id, with the clip or an error, so the answer to one sent
+     * now comes after all of them.
+     */
+    private suspend fun handled(socket: DefaultClientWebSocketSession) {
+        socket.send(Frame.Text("""{"op":"copy","id":"handled"}"""))
+        while (true) {
+            val frame = socket.incoming.receive()
+            if (frame !is Frame.Text) continue
+            val message = Json.parseToJsonElement(frame.readText()).jsonObject
+            if (message["id"]?.jsonPrimitive?.content == "handled") return
         }
     }
 }
