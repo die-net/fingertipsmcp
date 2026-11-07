@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -46,7 +47,7 @@ data class Screened<T>(val value: T, val notes: List<String>)
 
 /**
  * The one exclusive screen lease. A holder keeps it until [release]. Others wait first come, first
- * served for up to [waitMs], then fail with `screen_busy`. A holder has one place in the queue,
+ * served for up to [WAIT_MS], then fail with `screen_busy`. A holder has one place in the queue,
  * however many of its calls wait, and they all get the screen together. Releasing runs [cleanup]
  * before the next holder gets the screen, and the steps that failed reach that holder as notes.
  *
@@ -59,7 +60,7 @@ data class Screened<T>(val value: T, val notes: List<String>)
  * holder finds the screen as the person left it, with a note. A session can let the screen go the
  * same way with [releaseAsIs].
  *
- * A session that has made no screen call for [graceMs] while someone waits loses the screen to
+ * A session that has made no screen call for [GRACE_MS] while someone waits loses the screen to
  * them, with cleanup, and is told on its next screen call, which waits like any other. So a client
  * that keeps its session open between tasks cannot keep others off the screen.
  *
@@ -82,8 +83,6 @@ class ScreenLease(
     private val cleanup: suspend (lock: Boolean) -> List<String>,
     private val lockedNow: () -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
-    private val waitMs: Long = WAIT_MS,
-    private val graceMs: Long = GRACE_MS,
     private val ready: suspend () -> List<String> = { emptyList() },
 ) {
     /** A holder's place in the queue, which every one of its waiting [calls] shares. */
@@ -318,7 +317,7 @@ class ScreenLease(
 
     /**
      * With [mutex] held: while someone waits, gives the screen up for an idle session holder after
-     * [graceMs]. The watch forgets itself under [mutex] when it stops, so a grant made as it stops
+     * [GRACE_MS]. The watch forgets itself under [mutex] when it stops, so a grant made as it stops
      * starts a new one.
      */
     private fun watchIdle() {
@@ -343,14 +342,14 @@ class ScreenLease(
     }
 
     /**
-     * With [mutex] held: how long until the session holder has been idle for [graceMs] while
+     * With [mutex] held: how long until the session holder has been idle for [GRACE_MS] while
      * someone waits, 0 once it has, or null when no one waits or the holder is not a session.
      */
     private fun idleLeft(): Long? {
         val holder = _state.value.holder as? Holder.Session ?: return null
         if (queue.isEmpty()) return null
-        if (running[holder].orEmpty().isNotEmpty()) return graceMs
-        return (lastCallMs + graceMs - now()).coerceAtLeast(0)
+        if (running[holder].orEmpty().isNotEmpty()) return GRACE_MS
+        return (lastCallMs + GRACE_MS - now()).coerceAtLeast(0)
     }
 
     private fun yieldIdle() {
@@ -358,7 +357,7 @@ class ScreenLease(
         note(
             holder,
             "The screen went to another client after this session made no screen call for " +
-                "${graceMs / MS_PER_S} s while it waited, and was cleaned up: keyboard hidden " +
+                "${GRACE_MS / MS_PER_S} s while it waited, and was cleaned up: keyboard hidden " +
                 "and home. Your next call that needs the screen waits for it. Check the screen " +
                 "before acting.",
         )
@@ -529,17 +528,22 @@ class ScreenLease(
     }
 
     /**
-     * Waits up to [waitMs] for [waiter] to be granted. A caller that stops waiting early, as when
-     * it is cancelled, leaves, and gives back a screen granted meanwhile that none of [holder]'s
-     * other calls is using.
+     * Waits up to [WAIT_MS] for [waiter] to be granted, timed on [scope] as the idle watch is. A
+     * caller that stops waiting early, as when it is cancelled, leaves, and gives back a screen
+     * granted meanwhile that none of [holder]'s other calls is using.
      */
     private suspend fun awaitGrant(holder: Holder, waiter: Waiter, work: Job): Boolean {
         var waited = false
+        val timer = scope.launch { delay(WAIT_MS) }
         try {
-            val granted = withTimeoutOrNull(waitMs) { waiter.granted.await() } != null
+            val granted = select {
+                waiter.granted.onAwait { true }
+                timer.onJoin { false }
+            }
             waited = true
             return granted
         } finally {
+            timer.cancel()
             if (!waited)
                 withContext(NonCancellable) { mutex.withLock { abandon(holder, waiter, work) } }
         }

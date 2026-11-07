@@ -13,6 +13,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserReadResult
@@ -31,7 +33,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class McpLeaseTest {
-    private val api = FakeApi(leaseWaitMs = 200)
+    private val api = FakeApi()
     private val token = api.tokens.issue("all", Scope.entries.toSet())
 
     @Test
@@ -42,7 +44,11 @@ class McpLeaseTest {
             val second = initialize(http)
             assertTrue(call(http, first, "tap", """{"x":1,"y":2}""").contains("isError\":false"))
 
-            val busy = call(http, second, "tap", """{"x":1,"y":2}""")
+            val busy = coroutineScope {
+                val waiting = async { call(http, second, "tap", """{"x":1,"y":2}""") }
+                api.outwaitLease { call(http, first, "tap", """{"x":1,"y":2}""") }
+                waiting.await()
+            }
             assertTrue(busy.contains("screen_busy"), busy)
             assertTrue(call(http, second, "device_info", "{}").contains("phoneapi-fake"))
             val listed = http.get("/v1/sessions") { bearer(token) }.bodyAsText()
@@ -112,13 +118,18 @@ class McpLeaseTest {
             val session = initialize(http)
             val script = startSession(http, token)
             call(http, session, "tap", """{"x":1,"y":2}""")
-            val busy =
-                http.post("/v1/input/tap") {
-                    bearer(token)
-                    session(script)
-                    contentType(ContentType.Application.Json)
-                    setBody("""{"x":1,"y":2}""")
+            val busy = coroutineScope {
+                val waiting = async {
+                    http.post("/v1/input/tap") {
+                        bearer(token)
+                        session(script)
+                        contentType(ContentType.Application.Json)
+                        setBody("""{"x":1,"y":2}""")
+                    }
                 }
+                api.outwaitLease { call(http, session, "tap", """{"x":1,"y":2}""") }
+                waiting.await()
+            }
             assertEquals(HttpStatusCode.Conflict, busy.status)
             assertTrue(busy.bodyAsText().contains("screen_busy"))
 
