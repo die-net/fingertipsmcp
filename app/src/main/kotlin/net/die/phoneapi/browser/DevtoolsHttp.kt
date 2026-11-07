@@ -35,12 +35,27 @@ internal fun handshakeWebSocket(
     if (status != SWITCHING_PROTOCOLS) {
         // Chrome says why in a short body, such as "No such target id: ..." for a closed tab.
         val why = runCatching { input.readBody(headers, MAX_REFUSAL).decodeToString().trim() }
-        val detail = why.getOrNull()?.takeIf { it.isNotEmpty() }?.let { ": $it" }.orEmpty()
-        throw IOException("DevTools WebSocket was refused ($status)$detail")
+        throw WebSocketRefused(status, why.getOrNull().orEmpty())
     }
     if (headers["sec-websocket-accept"] != websocketAccept(key)) {
         throw IOException("DevTools WebSocket accept key did not match")
     }
+}
+
+/**
+ * DevTools answered the WebSocket upgrade with [status] instead of 101, saying why in [detail]. It
+ * is the cause of the `cdp_error` a caller sees.
+ */
+internal class WebSocketRefused(val status: Int, val detail: String) :
+    IOException(
+        "DevTools WebSocket was refused ($status)" + if (detail.isEmpty()) "" else ": $detail"
+    ) {
+    /**
+     * Whether the refusal means the target has closed. Chrome 133 answers 500 "No such target id";
+     * some releases answer 404. It sends no code of its own, so the body is all there is to read.
+     */
+    val targetGone: Boolean
+        get() = status == HTTP_NOT_FOUND || detail.startsWith(NO_TARGET)
 }
 
 internal fun websocketKey(): String {
@@ -154,6 +169,8 @@ private val EOL = charArrayOf('\r', '\n').concatToString()
 private const val CR = '\r'.code
 private const val LF = '\n'.code
 private const val HTTP_OK = 200
+private const val HTTP_NOT_FOUND = 404
+private const val NO_TARGET = "No such target id"
 private const val SWITCHING_PROTOCOLS = 101
 private const val KEY_BYTES = 16
 private const val MAX_HEADER = 16 * 1024

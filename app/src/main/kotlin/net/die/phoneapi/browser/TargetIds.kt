@@ -40,12 +40,8 @@ private fun acceptable(url: String): Boolean {
 
 private const val MAX_URL = 2_000
 
-/**
- * Whether [message], a refused DevTools connection, means the tab has closed. Chrome 133 answers
- * 500 "No such target id"; some releases answer 404.
- */
-internal fun tabGone(message: String?): Boolean =
-    message.orEmpty().let { it.contains("No such target id") || it.contains("refused (404)") }
+/** Whether [e] is DevTools refusing a connection to a target because it has closed. */
+internal fun tabGone(e: ApiException): Boolean = (e.cause as? WebSocketRefused)?.targetGone == true
 
 /** A tab that closed, whoever closed it. */
 internal fun tabClosed(id: String): ApiException =

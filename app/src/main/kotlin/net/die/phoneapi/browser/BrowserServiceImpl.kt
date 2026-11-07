@@ -650,7 +650,7 @@ internal class BrowserServiceImpl(
                 block(cdp)
             }
         } catch (e: ApiException) {
-            if (!started && tabGone(e.message)) throw tabClosed(browserTargetId(socket, chromeId))
+            if (!started && tabGone(e)) throw tabClosed(browserTargetId(socket, chromeId))
             if (e.error != "cdp_timeout" || socket != CHROME_SOCKET) throw e
             if (pageDialog()) throw dialogOpen(e)
             // A page that never answered the handshake: Chrome as a whole may not answer.

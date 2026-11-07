@@ -137,6 +137,29 @@ class NetworkCaptureTest {
         }
 
     @Test
+    fun `a broken session is not a missing body`() {
+        // The answer to the body request breaks the session, as a dropped socket does: that is not
+        // Chrome saying it no longer has the body.
+        val page =
+            harness.socket(
+                harness.switched() +
+                    reply(1, "{}") +
+                    frame(received("r1", "https://a.test/one", "application/json")) +
+                    frame(finished("r1")) +
+                    harness.serverTextFrame("""{"id":2,"result":"not an object"}""")
+            )
+        val capture = capture(page)
+        val error =
+            harness.clock.run {
+                capture.start(TAB)
+                withTimeout(WAIT_MS) { while (capture.listed(TAB).isEmpty()) delay(10) }
+                harness.failure { capture.blobs(TAB, null, DATA_BUDGET) }
+            }
+        assertEquals("cdp_error", error)
+        assertEquals(listOf("Network.enable", "Network.getResponseBody"), page.methods())
+    }
+
+    @Test
     fun `reads wanted bodies in budget`() =
         harness.clock.run {
             val page =

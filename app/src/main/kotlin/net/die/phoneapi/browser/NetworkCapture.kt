@@ -244,7 +244,8 @@ internal class NetworkCapture(
                     buildJsonObject { put("requestId", r.requestId) },
                 )
             } catch (e: ApiException) {
-                if (e.error != "cdp_error") throw e
+                // Chrome refuses a body it no longer has; a broken connection is not that.
+                if (e.rejected == null) throw e
                 return blob(r, missing = gone(r))
             }
         val body = reply.decodeCdp<Body>() ?: return blob(r, missing = gone(r))
@@ -337,7 +338,7 @@ internal fun pageLinker(
         PageLink(cdp, devtools)
     } catch (e: ApiException) {
         devtools.close()
-        throw if (tabGone(e.message)) tabClosed(id) else e
+        throw if (tabGone(e)) tabClosed(id) else e
     }
 }
 

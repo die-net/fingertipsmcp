@@ -3,6 +3,7 @@ package net.die.phoneapi.browser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -52,7 +53,7 @@ class DevtoolsHandshakeTest {
                 "Content-Type:text/html",
             ) + body.toByteArray()
         val error =
-            assertThrows(IOException::class.java) {
+            assertThrows(WebSocketRefused::class.java) {
                 handshakeWebSocket(
                     ByteArrayInputStream(response),
                     ByteArrayOutputStream(),
@@ -60,8 +61,12 @@ class DevtoolsHandshakeTest {
                 )
             }
         assertEquals("DevTools WebSocket was refused (500): $body", error.message)
-        assertTrue(tabGone(error.message))
-        assertFalse(tabGone("DevTools WebSocket was refused (500)"))
+        assertTrue(error.targetGone)
+        assertTrue(tabGone(ApiException(502, "cdp_error", error.message, cause = error)))
+        assertTrue(WebSocketRefused(404, "").targetGone)
+        assertFalse(WebSocketRefused(500, "Another client is attached").targetGone)
+        // Only a refusal says a tab closed, not a message that happens to read like one.
+        assertFalse(tabGone(ApiException(502, "cdp_error", "DevTools WebSocket was refused (404)")))
     }
 
     @Test
