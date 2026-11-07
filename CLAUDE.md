@@ -6,10 +6,10 @@ The modules are `app/` (Ktor server, MCP, CDP, encoders; `AppGraph` is the compo
 
 ## Checks
 
-- Before work is done, run what CI runs: `./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleDebug buildHealth --continue`. It passes clean, including issues you did not cause. Kotlin and Lint warnings are errors.
+- Before work is done, run what CI runs: `./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleDebug buildHealth --continue`. It passes clean, including issues you did not cause. Kotlin and Lint warnings are errors. A change only to `docs/` or a top-level `.md` file skips this, since nothing in it reads them.
 - Format with `./gradlew spotlessApply` (ktfmt, kotlinlang style). Don't hand-format around it.
 - `buildHealth` fails on an unused dependency or one used but not declared. Declare what a module uses directly, in that module.
-- Unit tests can't show what a phone does. A change whose behavior depends on Android, Chrome, or the helper is checked on an emulator or a phone before it is called done, or is listed as unchecked in `docs/device-notes.md`'s "Still to check on the phone". What a check finds about Android or Chrome goes in `docs/device-notes.md`, with its date; the doc that describes the behavior says only what PhoneAPI does and why.
+- Unit tests can't show what a phone does. A change whose behavior depends on Android, Chrome, or the helper is checked on an emulator or a phone before it is called done, or is listed as unchecked under "Still to check" at the end of its topic's section in `docs/device-notes.md`. What a check finds about Android or Chrome goes in that section, with its date, and a list of what passed goes in the PR; the doc that describes the behavior says only what PhoneAPI does and why.
 
 ## Trust boundary
 
