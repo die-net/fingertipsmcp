@@ -4,6 +4,7 @@ import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserReadRequest
+import net.die.phoneapi.model.EvalResult
 import net.die.phoneapi.model.FeedLink
 import net.die.phoneapi.model.FindKind
 import net.die.phoneapi.model.ReadFormat
@@ -314,6 +315,19 @@ class PageReadTest {
         val (total, matches) = matchesIn("axbxx", emptyList(), Regex("x*"), 1, 10)
         assertEquals(2, total)
         assertEquals(listOf("x", "xx"), matches.map { it.match })
+    }
+
+    @Test
+    fun `a bad selector is the caller's mistake, by the script's word`() {
+        val bad = EvalResult(value = ApiJson.parseToJsonElement("""{"badSelector":true}"""))
+        val error = assertThrows(ApiException::class.java) { decodeExtract(bad) }
+        assertEquals("bad_request", error.error)
+        // A page whose own script error happens to mention selectors is still the page's failure.
+        val thrown = EvalResult(exception = "Error: 'x' is not a valid selector")
+        assertEquals(
+            "page_error",
+            assertThrows(ApiException::class.java) { decodeExtract(thrown) }.error,
+        )
     }
 
     @Test

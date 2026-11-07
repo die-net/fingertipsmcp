@@ -51,6 +51,11 @@ test("an article is read through Readability", () => {
   assert.deepEqual(read.blocks, [{ k: "p", r: [{ t: "The article" }] }]);
 });
 
+test("a selector that is not CSS says so", () => {
+  assert.deepEqual(pageRead(listing(), { scope: "page", selector: "a[[" }), { badSelector: true });
+  assert.deepEqual(pageRead(listing(), { scope: "page", selector: "table" }), { missing: true });
+});
+
 test("prose in a part the page names as not its article does not count", () => {
   const body = h(
     "body",

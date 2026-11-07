@@ -307,7 +307,14 @@ let walked = null;
 let articlePublished = null;
 let selected = null;
 if (options.selector) {
-  const matches = document.querySelectorAll(options.selector);
+  let matches;
+  try {
+    matches = document.querySelectorAll(options.selector);
+  } catch (e) {
+    // A selector that is not valid CSS is the caller's mistake, not the page's.
+    if (e.name === "SyntaxError") return { badSelector: true };
+    throw e;
+  }
   if (matches.length === 0) return { missing: true };
   // Matches come in document order, so one inside an earlier match is inside the last one kept.
   // It is left out, since its text is already in that one.
