@@ -361,7 +361,8 @@ internal class PageInput(
                 val boxes = quads(cdp, id, focus)
                 val rect =
                     screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
-                val tapped = touchAt(rect, false)
+                // Humanized like any other touch: the request has no switch for it.
+                val tapped = touchAt(rect, true)
                 if (!tapped.ok) {
                     throw ApiException(409, "gesture_cancelled", "The system cancelled the touch")
                 }

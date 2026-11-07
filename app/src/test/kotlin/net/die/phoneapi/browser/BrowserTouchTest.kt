@@ -3,8 +3,11 @@ package net.die.phoneapi.browser
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserInput
+import net.die.phoneapi.model.BrowserInput.TOUCH
 import net.die.phoneapi.model.BrowserKeyRequest
 import net.die.phoneapi.model.BrowserTapRequest
+import net.die.phoneapi.model.BrowserTextRequest
+import net.die.phoneapi.model.Rect
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
@@ -43,6 +46,38 @@ class BrowserTouchTest {
         // One session: the tab is selected, and the page's text is not waited on.
         assertEquals(1, opens)
         assertEquals(listOf("Page.bringToFront") + SHOWING, page.methods())
+    }
+
+    @Test
+    fun `the tap that focuses a field is humanized`() {
+        val page =
+            harness.socket(
+                harness.switched() +
+                    empty(1) +
+                    harness.visibility(2, "visible") +
+                    harness.serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
+                    harness.serverTextFrame("""{"id":6,"result":{"nodeId":4}}""") +
+                    empty(7) +
+                    harness.serverTextFrame(harness.quad(8)) +
+                    harness.serverTextFrame(harness.metrics(9))
+            )
+        val taps = mutableListOf<Boolean>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = { Rect(0, 283, 1080, 2339) },
+                touch = { _, humanize ->
+                    taps += humanize
+                    ActionResult(ok = true, backend = "inject")
+                },
+                type = { ActionResult(ok = true, backend = "inject") },
+            )
+        harness.virtual {
+            service.text(TAB, BrowserTextRequest(text = "hi", selector = "input", input = TOUCH))
+        }
+        assertEquals(listOf(true), taps)
     }
 
     @Test
