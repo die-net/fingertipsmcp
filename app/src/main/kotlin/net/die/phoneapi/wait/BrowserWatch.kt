@@ -178,6 +178,7 @@ internal class BrowserWatch(
         }
         val onThisPage = conditions.filter { onPage(it, id) }
         val domains = domainsFor(onThisPage)
+        val lifecycle = onThisPage.any { it is WaitCondition.BrowserLifecycle }
         if (onThisPage.any { it is WaitCondition.BrowserDialog } && dialogShown(id)) {
             // A page showing a dialog answers nothing, Page.enable included, until the dialog
             // goes, and Chrome reports no dialog that opened before Page was enabled. So the
@@ -186,7 +187,7 @@ internal class BrowserWatch(
             jobs +=
                 CoroutineScope(currentCoroutineContext()).launch {
                     try {
-                        enable(session, domains)
+                        enable(session, domains, lifecycle)
                         seed(session, model)
                     } catch (_: ApiException) {
                         // The page went away; the dialog already counts, and other conditions
@@ -194,7 +195,7 @@ internal class BrowserWatch(
                     }
                 }
         } else {
-            enable(session, domains)
+            enable(session, domains, lifecycle)
             seed(session, model)
         }
         pages[id] = page
@@ -330,8 +331,18 @@ internal class BrowserWatch(
             false
         }
 
-    private suspend fun enable(session: CdpSession, domains: Set<String>) {
+    /**
+     * Enables what [domains] the conditions need. Chrome sends Page.lifecycleEvent only after
+     * Page.setLifecycleEventsEnabled, so [lifecycle] asks for it.
+     */
+    private suspend fun enable(session: CdpSession, domains: Set<String>, lifecycle: Boolean) {
         if ("Page" in domains) session.call("Page.enable")
+        if (lifecycle) {
+            session.call(
+                "Page.setLifecycleEventsEnabled",
+                buildJsonObject { put("enabled", true) },
+            )
+        }
         // A wait never reads a body, so Chrome is asked to keep none.
         if ("Network" in domains) {
             session.call(

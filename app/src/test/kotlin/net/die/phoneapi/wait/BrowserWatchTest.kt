@@ -71,8 +71,58 @@ class BrowserWatchTest {
         assertFalse(satisfied)
     }
 
+    @Test
+    fun `lifecycle waits turn the events on`() = runBlocking {
+        val page =
+            KeyedSocket(
+                harness.serverTextFrame("""{"id":1,"result":{}}""") +
+                    harness.serverTextFrame("""{"id":2,"result":{}}""") +
+                    harness.serverTextFrame(
+                        """{"id":3,"result":{"frameTree":{"frame":{"id":"F"}}}}"""
+                    )
+            )
+        val load = WaitCondition.BrowserLifecycle(target = TAB, name = "load")
+        val watch = BrowserWatch(browser, Dispatchers.IO, { _, _ -> page }) { false }
+        withTimeout(WAIT_MS) {
+            watch.open(listOf(load), timeoutMs = 60_000)
+            watch.check(load).also { watch.close() }
+        }
+        assertEquals(
+            listOf("Page.enable", "Page.setLifecycleEventsEnabled", "Page.getFrameTree"),
+            sentMethods(page.output.toByteArray()),
+        )
+    }
+
+    /** The CDP methods in a client's masked WebSocket frames, after its handshake. */
+    private fun sentMethods(bytes: ByteArray): List<String> {
+        var at = String(bytes, Charsets.ISO_8859_1).indexOf("\r\n\r\n") + HEADER_END
+        val methods = mutableListOf<String>()
+        while (at + 2 <= bytes.size) {
+            var length = bytes[at + 1].toInt() and LENGTH_BITS
+            var header = 2
+            if (length == LENGTH_16) {
+                length = (bytes[at + 2].toUByte().toInt() shl 8) or bytes[at + 3].toUByte().toInt()
+                header = 4
+            }
+            val start = at + header + MASK_BYTES
+            val payload =
+                ByteArray(length) { i ->
+                    val mask = bytes[at + header + i % MASK_BYTES].toInt()
+                    (bytes[start + i].toInt() xor mask).toByte()
+                }
+            METHOD.find(payload.decodeToString())?.let { methods += it.groupValues[1] }
+            at = start + length
+        }
+        return methods
+    }
+
     private companion object {
         const val TAB = "${CHROME_SOCKET}~T1"
         const val WAIT_MS = 5_000L
+        const val HEADER_END = 4
+        const val LENGTH_BITS = 0x7f
+        const val LENGTH_16 = 126
+        const val MASK_BYTES = 4
+        val METHOD = Regex(""""method":"([^"]+)"""")
     }
 }
