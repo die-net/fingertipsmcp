@@ -375,20 +375,29 @@ internal class BrowserServiceImpl(
 
     override suspend fun closeTab(id: String): ActionResult {
         recorder?.stop(id)
-        val (socket, chromeId) = parseBrowserTargetId(id)
-        val closed =
-            useCdp(socket, "/devtools/browser") { cdp ->
-                cdp.call("Target.closeTarget", buildJsonObject { put("targetId", chromeId) })
-            }
+        val closed = onTarget(id, "Target.closeTarget")
         axTrees.remove(id)
         val ok = closed.decodeCdp<ClosedTarget>()?.success != false
         return ActionResult(ok = ok, backend = "cdp", seq = sequence())
     }
 
     override suspend fun activate(id: String) {
+        onTarget(id, "Target.activateTarget")
+    }
+
+    /**
+     * Runs a browser-wide [method] on [id]'s target. Chrome refuses these only for a target it does
+     * not have, so a refusal is the tab having closed, as for a page call.
+     */
+    private suspend fun onTarget(id: String, method: String): JsonObject {
         val (socket, chromeId) = parseBrowserTargetId(id)
-        useCdp(socket, "/devtools/browser") { cdp ->
-            cdp.call("Target.activateTarget", buildJsonObject { put("targetId", chromeId) })
+        return try {
+            useCdp(socket, "/devtools/browser") { cdp ->
+                cdp.call(method, buildJsonObject { put("targetId", chromeId) })
+            }
+        } catch (e: ApiException) {
+            if (e.rejected == null) throw e
+            throw tabClosed(id)
         }
     }
 
@@ -541,9 +550,7 @@ internal class BrowserServiceImpl(
             throw ApiException.badRequest("timeoutMs must be 0..$MAX_CONSOLE_MS")
         }
         val (socket, chromeId) = parseBrowserTargetId(id)
-        return useCdp(socket, "/devtools/page/$chromeId") { cdp ->
-            collectLogs(cdp, request.timeoutMs)
-        }
+        return usePage(socket, chromeId) { cdp -> collectLogs(cdp, request.timeoutMs) }
     }
 
     override suspend fun snapshot(id: String, options: BrowserSnapshotOptions): BrowserSnapshot {
