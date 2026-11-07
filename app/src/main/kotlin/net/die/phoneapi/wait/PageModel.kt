@@ -21,6 +21,11 @@ internal class PageModel(startedMs: Long) {
     private val lock = Any()
     private var url: String? = null
     private var mainFrameId: String? = null
+    /** The DevTools loader id of the main frame's document. */
+    private var loader: String? = null
+    /** Whether that document has loaded. */
+    private var loaded = false
+    private var loadedMs = startedMs
     private val lifecycle = HashSet<String>()
     private var lastNetMs = startedMs
     private var lastLayerMs = startedMs
@@ -29,17 +34,27 @@ internal class PageModel(startedMs: Long) {
     private val finished = ArrayDeque<Request>()
     private val logs = ArrayDeque<LogHit>()
 
-    fun seed(frameId: String?, frameUrl: String?) =
+    /** A commit event that came first knows the document better, so [frameLoader] does not win. */
+    fun seed(frameId: String?, frameUrl: String?, frameLoader: String? = null) =
         synchronized(lock) {
             if (frameId != null) mainFrameId = frameId
             if (!frameUrl.isNullOrBlank()) url = frameUrl
+            if (loader == null) loader = frameLoader
         }
+
+    /**
+     * Counts the document with [frameLoader] as loaded, as for one that loaded before the wait
+     * began, which Chrome reports no event for. A document that has replaced it stays as it is.
+     */
+    fun alreadyLoaded(frameLoader: String?) =
+        synchronized(lock) { if (loader == frameLoader) loaded = true }
 
     fun apply(method: String, params: JsonObject, now: Long) =
         synchronized(lock) {
             when (method) {
                 "Page.frameNavigated" -> frameNavigated(params)
                 "Page.navigatedWithinDocument" -> navigatedWithin(params)
+                "Page.loadEventFired" -> documentLoaded(now)
                 "Page.lifecycleEvent" -> lifecycle(params)
                 "Page.javascriptDialogOpening" -> dialog = true
                 "Page.javascriptDialogClosed" -> dialog = false
@@ -64,6 +79,8 @@ internal class PageModel(startedMs: Long) {
 
     fun sawLifecycle(name: String): Boolean = synchronized(lock) { name in lifecycle }
 
+    fun hasLoaded(): Boolean = synchronized(lock) { loaded }
+
     fun dialogOpen(): Boolean = synchronized(lock) { dialog }
 
     /** Counts a dialog seen on screen, which opened before Chrome would report it. */
@@ -74,10 +91,10 @@ internal class PageModel(startedMs: Long) {
 
     fun settled(quietMs: Long, now: Long): Check =
         synchronized(lock) {
-            if (open.isNotEmpty()) {
+            if (!loaded || open.isNotEmpty()) {
                 Check(satisfied = false)
             } else {
-                val quietAt = maxOf(lastNetMs, lastLayerMs) + quietMs
+                val quietAt = maxOf(lastNetMs, lastLayerMs, loadedMs) + quietMs
                 if (now >= quietAt) Check(true) else Check(false, recheckAtMs = quietAt)
             }
         }
@@ -124,6 +141,13 @@ internal class PageModel(startedMs: Long) {
         if (frame.parentId != null && frame.id != mainFrameId) return
         frame.id?.let { mainFrameId = it }
         frame.url?.let { url = it }
+        loader = frame.loaderId
+        loaded = false
+    }
+
+    private fun documentLoaded(now: Long) {
+        loaded = true
+        loadedMs = now
     }
 
     private fun navigatedWithin(params: JsonObject) {
@@ -186,6 +210,7 @@ internal class PageModel(startedMs: Long) {
         val id: String? = null,
         val url: String? = null,
         val parentId: String? = null,
+        val loaderId: String? = null,
     )
 
     @Serializable
@@ -268,6 +293,7 @@ internal fun isBrowserCondition(condition: WaitCondition): Boolean =
         is WaitCondition.BrowserDialog,
         is WaitCondition.BrowserNewTarget,
         is WaitCondition.BrowserLog,
+        is WaitCondition.BrowserLoaded,
         is WaitCondition.BrowserSettled -> true
         is WaitCondition.Node,
         is WaitCondition.Window,
@@ -294,6 +320,7 @@ internal fun browserTarget(condition: WaitCondition): String? =
         is WaitCondition.BrowserDialog -> condition.target
         is WaitCondition.BrowserNewTarget -> null
         is WaitCondition.BrowserLog -> condition.target
+        is WaitCondition.BrowserLoaded -> condition.target
         is WaitCondition.BrowserSettled -> condition.target
         is WaitCondition.Node,
         is WaitCondition.Window,
@@ -319,6 +346,7 @@ internal fun validateBrowser(condition: WaitCondition) {
             if (condition.quietMs < 0) bad("quietMs must not be negative")
         is WaitCondition.BrowserDialog,
         is WaitCondition.BrowserNewTarget,
+        is WaitCondition.BrowserLoaded,
         is WaitCondition.Node,
         is WaitCondition.Window,
         is WaitCondition.Ime,
@@ -370,10 +398,12 @@ private fun addDomains(domains: MutableSet<String>, condition: WaitCondition) {
     when (condition) {
         is WaitCondition.BrowserUrl,
         is WaitCondition.BrowserLifecycle,
+        is WaitCondition.BrowserLoaded,
         is WaitCondition.BrowserDialog -> domains += "Page"
         is WaitCondition.BrowserNetworkIdle,
         is WaitCondition.BrowserRequest -> domains += "Network"
         is WaitCondition.BrowserSettled -> {
+            domains += "Page"
             domains += "Network"
             domains += "LayerTree"
         }

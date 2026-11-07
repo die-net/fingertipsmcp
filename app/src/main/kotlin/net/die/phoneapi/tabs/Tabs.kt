@@ -185,6 +185,7 @@ class Tabs(
         url: String,
         capture: Boolean = false,
         incognito: Boolean = false,
+        created: suspend (String) -> Unit = {},
     ): BrowserTarget {
         mutex.withLock {
             val opened = owners.values.filter { it.opened }
@@ -197,64 +198,65 @@ class Tabs(
                 )
             }
         }
-        val tab =
-            if (incognito) {
-                incognitoMutex.withLock {
-                    freshIncognito(holder)
-                    base.openTab(url, capture, incognito = true).also { own(holder, it) }
+        val made = ArrayList<String>()
+        var kept: String? = null
+        // Opening waits for the page, so the tab is owned and off the screen before that: nobody
+        // else may claim it, or see it, meanwhile.
+        val placing: suspend (String) -> Unit = { id ->
+            made += id
+            own(holder, id)
+            place(holder, id)
+            created(id)
+        }
+        try {
+            val tab =
+                if (incognito) {
+                    incognitoMutex.withLock {
+                        freshIncognito(holder)
+                        base.openTab(url, capture, incognito = true, created = placing)
+                    }
+                } else {
+                    base.openTab(url, capture, created = placing)
                 }
-            } else {
-                base.openTab(url, capture).also { own(holder, it) }
-            }
-        if (lease.holds(holder)) {
-            fronts[holder] = tab.id
-            return tab
+            kept = tab.id
+            return if (lease.holds(holder)) tab else tab.copy(tookScreen = false)
+        } finally {
+            // Any other tab has closed: it failed, or a saved PDF moved to a tab of its own.
+            withContext(NonCancellable) { made.filter { it != kept }.forEach { closed(it) } }
         }
-        // Chrome switches to a new tab while it is in front, which must not show this session's
-        // page to whoever holds the screen. While it is in the background there is nothing to fix.
-        if (!chromeInFront()) return tab.copy(tookScreen = false)
-        val shown =
-            try {
-                putBack()
-            } catch (e: ApiException) {
-                // Whether Chrome shows the new tab is not known, so it goes.
-                closeQuietly(tab.id)
-                closed(tab.id)
-                throw e
-            }
-        if (!shown) {
-            closeQuietly(tab.id)
-            closed(tab.id)
-            throw ApiException(
-                409,
-                "took_screen",
-                "Chrome showed the new tab on screen and would not switch back, so PhoneAPI " +
-                    "closed it. Try again once Chrome is in the background.",
-            )
-        }
-        return tab.copy(tookScreen = false)
     }
 
     /**
-     * Gives [holder] the [tab] it just opened, or closes it when [holder] ended meanwhile. Ending
-     * an MCP session cancels its calls, so this finishes whatever happens to the call: nothing else
-     * knows the tab exists.
+     * Leaves the new tab [id] where [holder] may have it. Chrome switches to a new tab while it is
+     * in front, which must not show this session's page to whoever holds the screen. While it is in
+     * the background there is nothing to fix. A failure means Chrome may be showing the tab, so
+     * [BrowserService.openTab] closes it.
      */
-    private suspend fun own(holder: Holder.Session, tab: BrowserTarget) =
-        withContext(NonCancellable) {
-            val kept = mutex.withLock {
-                live(holder).also {
-                    if (it) {
-                        owners[tab.id] = Owner(holder, opened = true)
-                        saveOpened()
-                    }
-                }
-            }
-            if (!kept) {
-                closeQuietly(tab.id)
-                throw ended()
-            }
+    private suspend fun place(holder: Holder.Session, id: String) {
+        if (lease.holds(holder)) {
+            fronts[holder] = id
+            return
         }
+        if (!chromeInFront() || putBack()) return
+        throw ApiException(
+            409,
+            "took_screen",
+            "Chrome showed the new tab on screen and would not switch back, so PhoneAPI closed " +
+                "it. Try again once Chrome is in the background.",
+        )
+    }
+
+    /**
+     * Gives [holder] the tab [id] it just opened. When [holder] ended meanwhile this fails, and
+     * [BrowserService.openTab] closes the tab, as it does when ending the session cancels the call.
+     */
+    private suspend fun own(holder: Holder.Session, id: String) {
+        mutex.withLock {
+            if (!live(holder)) throw ended()
+            owners[id] = Owner(holder, opened = true)
+            saveOpened()
+        }
+    }
 
     /**
      * Before [holder] opens an incognito tab. Chrome has one incognito profile, kept until its last

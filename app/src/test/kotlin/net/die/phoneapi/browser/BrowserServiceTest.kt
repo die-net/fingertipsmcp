@@ -2,6 +2,9 @@ package net.die.phoneapi.browser
 
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import net.die.phoneapi.helper.TouchscreenInfo
 import net.die.phoneapi.input.SwipeSpec
 import net.die.phoneapi.input.fallbackTouchscreen
@@ -45,12 +48,11 @@ class BrowserServiceTest {
     }
 
     @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab`() {
+        val sockets = ArrayDeque(listOf(created(), committedPage()))
         val service =
-            service(
-                switched() + serverTextFrame("""{"id":1,"result":{"targetId":"abc"}}"""),
-                sockets = CHROME,
-            )
+            service(byteArrayOf(), sockets = CHROME, open = { socket(sockets.removeFirst()) })
         val target = virtual { service.openTab("https://example.com/") }
         assertEquals("chrome_devtools_remote~abc", target.id)
         assertEquals("https://example.com/", target.url)
@@ -58,12 +60,15 @@ class BrowserServiceTest {
     }
 
     @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab behind`() {
+        val sockets = ArrayDeque(listOf(created(), committedPage()))
         val service =
             service(
-                switched() + serverTextFrame("""{"id":1,"result":{"targetId":"abc"}}"""),
+                byteArrayOf(),
                 sockets = CHROME,
                 inFront = { false },
+                open = { socket(sockets.removeFirst()) },
             )
         val target = virtual { service.openTab("https://example.com/") }
         assertEquals(false, target.tookScreen)
@@ -425,6 +430,25 @@ class BrowserServiceTest {
     /** Runs [block] on [clock], so a wait in the service costs no real time. */
     internal fun <T> virtual(block: suspend () -> T): T = clock.run { block() }
 
+    /**
+     * Runs [open], and once it has waited [waitMs] of virtual time, which it must not have finished
+     * in, runs [meanwhile], as for a page that answers late. Time moves only when nothing can run,
+     * so [open] is by then waiting for what [meanwhile] does.
+     */
+    internal fun <T> answering(
+        waitMs: Long,
+        open: suspend () -> T,
+        meanwhile: suspend () -> Unit,
+    ): T = virtual {
+        coroutineScope {
+            val opening = async { open() }
+            delay(waitMs)
+            assertFalse(opening.isCompleted)
+            meanwhile()
+            opening.await()
+        }
+    }
+
     /** The error code [block] fails with, or "no error". */
     internal suspend fun failure(block: suspend () -> Unit): String =
         try {
@@ -488,6 +512,14 @@ class BrowserServiceTest {
             openProbe = openProbe?.let { probe -> { name: String -> probe(name) } },
             touchscreen = touchscreen,
         )
+
+    /** A browser socket's reply to `Target.createTarget`, for a tab with Chrome id [id]. */
+    internal fun created(id: String = "abc"): ByteArray =
+        switched() + serverTextFrame("""{"id":1,"result":{"targetId":"$id"}}""")
+
+    /** A new tab's page socket, on a page already committed when the service attaches. */
+    internal fun committedPage(): ByteArray =
+        switched() + serverTextFrame("""{"id":1,"result":{}}""") + frameTree(2)
 
     /** Replies to a snapshot whose tree has link 9. */
     internal fun snapshotFrames(): ByteArray =

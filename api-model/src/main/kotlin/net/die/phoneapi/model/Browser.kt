@@ -20,6 +20,14 @@ public data class BrowserTarget(
         "Set when a tab is opened. True when Chrome was on screen, so it switched to the new tab and the call took the screen. False when the tab opened in the background."
     )
     val tookScreen: Boolean? = null,
+    @Doc(
+        "Set when a tab is opened and its server has not answered within 12 s. The tab is still waiting for the page and shows nothing yet. browser.settled matches once the page has loaded."
+    )
+    val loading: Boolean? = null,
+    @Doc(
+        "Set when a tab is opened on a PDF that Chrome saved to Downloads rather than showed. This tab holds the PDF for reading and finding, and shows a blank page."
+    )
+    val savedPdf: Boolean? = null,
     @Doc("The tab that opened this one, as for a popup or a link opened in a new tab.")
     val openerId: String? = null,
     @Doc(

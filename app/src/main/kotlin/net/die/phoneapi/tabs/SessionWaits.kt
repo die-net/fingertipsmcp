@@ -81,6 +81,7 @@ private fun targeted(condition: WaitCondition): Targeted? =
             Targeted(condition.target) { condition.copy(target = it) }
         is WaitCondition.BrowserDialog -> Targeted(condition.target) { condition.copy(target = it) }
         is WaitCondition.BrowserLog -> Targeted(condition.target) { condition.copy(target = it) }
+        is WaitCondition.BrowserLoaded -> Targeted(condition.target) { condition.copy(target = it) }
         is WaitCondition.BrowserSettled ->
             Targeted(condition.target) { condition.copy(target = it) }
         is WaitCondition.BrowserNewTarget,

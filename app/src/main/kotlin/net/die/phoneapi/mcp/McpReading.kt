@@ -1,12 +1,10 @@
 package net.die.phoneapi.mcp
 
-import android.util.Log
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import kotlin.time.TimeSource
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import net.die.phoneapi.browser.MAX_FIND_RESULTS
 import net.die.phoneapi.browser.checkFind
@@ -21,7 +19,6 @@ import net.die.phoneapi.model.BrowserTarget
 import net.die.phoneapi.model.DATA_PATHS_DOC
 import net.die.phoneapi.model.DATA_PATH_DOC
 import net.die.phoneapi.model.DataBlob
-import net.die.phoneapi.model.EvalRequest
 import net.die.phoneapi.model.FIND_PATH_DOC
 import net.die.phoneapi.model.FIND_QUERIES_DOC
 import net.die.phoneapi.model.FIND_QUERY_DOC
@@ -146,11 +143,6 @@ private suspend fun onTarget(
         val id = target.orEmpty()
         return closingAfter(services, id, close, opened = false) { block(id) }
     }
-    if (services.browser.savedPdf(url)) {
-        pdfTab(services, url, close)?.let {
-            return onOpened(services, it, close, block)
-        }
-    }
     val opened = open(services, scopes, url, close, scope == ReadScope.DATA)
     return onOpened(services, opened, close, block)
 }
@@ -168,11 +160,9 @@ private suspend fun onOpened(
 
 /**
  * Opens [url] in a new tab, which records its responses first when [capture] is set, and waits for
- * that navigation's page to load and settle. Chrome closes a new tab when it saves the PDF the tab
- * opened rather than showing it, so a tab that goes while it loads holds a PDF to read in a tab
- * PhoneAPI takes over. The tab opens on [url] rather than blank and then navigated, since Chrome
- * was seen to bring Google Drive's PDF viewer forward when it saved a PDF an existing tab navigated
- * to, and not for a new tab.
+ * its page to load and settle. Opening returns once the navigation has committed, and the load
+ * shares [OPEN_LOAD_MS] with it. A PDF Chrome saved has nothing to wait for: PhoneAPI's own page
+ * holds it.
  */
 private suspend fun open(
     services: ServerServices,
@@ -181,65 +171,26 @@ private suspend fun open(
     closing: Boolean,
     capture: Boolean,
 ): Opened {
+    val started = TimeSource.Monotonic.markNow()
     val tab = services.browser.openTab(url, capture)
-    val loaded =
-        try {
-            withTimeoutOrNull(OPEN_LOAD_MS) { awaitLoad(services, tab.id) } != null
-        } catch (e: ApiException) {
-            if (!tabGone(services, tab.id, e)) cleaningUp(services, tab.id, closing) { throw e }
-            return pdfTab(services, url, closing) ?: throw e
-        }
     return cleaningUp(services, tab.id, closing) {
-        settled(services, scopes, tab, closing, capture, loaded)
+        if (tab.savedPdf == true) {
+            Opened(tab.id, savedPdfLine(tab.id, closing))
+        } else {
+            val left = OPEN_LOAD_MS - started.elapsedNow().inWholeMilliseconds
+            val loaded = tab.loading != true && loaded(services, scopes, tab.id, left)
+            settled(services, scopes, tab, closing, capture, loaded)
+        }
     }
 }
 
-/**
- * Waits for the tab's navigation to load, on the page's own load event rather than by polling it. A
- * new tab shows an empty `about:blank` until its navigation commits, and the commit replaces the
- * document and the wait's isolated world with it, so the wait starts again, after a short pause, on
- * the next document; so it does when a script redirect replaces a page while it loads. A tab that
- * went fails the wait.
- */
-private suspend fun awaitLoad(services: ServerServices, id: String) {
-    while (true) {
-        val result =
-            try {
-                services.browser.evaluate(id, EvalRequest(LOAD_WAIT, awaitPromise = true))
-            } catch (e: ApiException) {
-                if (e.error != "cdp_error" || tabGone(services, id, e)) throw e
-                null
-            }
-        if (result != null && result.exception == null) return
-        delay(LOAD_RETRY_MS)
-    }
-}
-
-/** Whether [e] came from the tab [id] closing, rather than from anything it was asked. */
-private suspend fun tabGone(services: ServerServices, id: String, e: ApiException): Boolean {
-    if (e.error != "cdp_error" && e.error != "not_found") return false
-    return try {
-        services.browser.targets().none { it.id == id }
-    } catch (listing: ApiException) {
-        Log.d(TAG, "Listing tabs failed: ${listing.error}")
-        false
-    }
-}
-
-/**
- * A new tab holding the PDF at [url], which Chrome saves rather than shows. Null when [url] is not
- * a PDF, with the tab closed again.
- */
-private suspend fun pdfTab(services: ServerServices, url: String, closing: Boolean): Opened? {
-    val tab = services.browser.openTab(BLANK)
-    val loaded =
-        cleaningUp(services, tab.id, closing = true) { services.browser.loadPdf(tab.id, url) }
-    if (!loaded) {
-        closeQuietly(services, tab.id)
-        return null
-    }
-    return Opened(tab.id, savedPdfLine(tab.id, closing))
-}
+/** Waits up to [timeoutMs] for the tab's page to load. True when it did. */
+private suspend fun loaded(
+    services: ServerServices,
+    scopes: Set<Scope>,
+    target: String,
+    timeoutMs: Long,
+): Boolean = matches(services, scopes, WaitCondition.BrowserLoaded(target), maxOf(timeoutMs, 0))
 
 private fun savedPdfLine(target: String, closing: Boolean): String = buildString {
     append("# opened target=").append(target)
@@ -317,9 +268,8 @@ private suspend fun closeQuietly(services: ServerServices, target: String): Stri
  * The line that names the new [tab], once its navigation [loaded], or did not within
  * [OPEN_LOAD_MS], and after up to [AFTER_LOAD_SETTLE_MS] more for a loaded page to settle. A busy
  * page, with ads, tracking requests, or carousels, never goes quiet, so a long settle wait would
- * cost every read of it the whole wait while its content was already there. Load comes first
- * because a settle wait alone can match before the page has loaded: requests from before the wait
- * started are not seen.
+ * cost every read of it the whole wait while its content was already there. So load has its own
+ * wait first, and the settle wait stays short.
  */
 @Suppress("LongParameterList") // The open's own arguments, and how its load went.
 private suspend fun settled(
@@ -348,15 +298,16 @@ private suspend fun settled(
 
 /** Waits up to [AFTER_LOAD_SETTLE_MS] for the tab to settle. True when it did. */
 private suspend fun settle(services: ServerServices, scopes: Set<Scope>, target: String): Boolean =
-    services.waits
-        .wait(
-            WaitRequest(
-                all = listOf(WaitCondition.BrowserSettled(target = target)),
-                timeoutMs = AFTER_LOAD_SETTLE_MS,
-            ),
-            scopes,
-        )
-        .matched
+    matches(services, scopes, WaitCondition.BrowserSettled(target = target), AFTER_LOAD_SETTLE_MS)
+
+/** Waits up to [timeoutMs] for [condition]. True when it matched. */
+private suspend fun matches(
+    services: ServerServices,
+    scopes: Set<Scope>,
+    condition: WaitCondition,
+    timeoutMs: Long,
+): Boolean =
+    services.waits.wait(WaitRequest(all = listOf(condition), timeoutMs = timeoutMs), scopes).matched
 
 internal suspend fun browserFind(
     services: ServerServices,
@@ -667,28 +618,8 @@ private const val MAX_LISTED_BLOBS = 5
 private const val DATA_OFFSETS =
     "Each match shows its path, and @ is its offset into the JSON browser_read returns for that " +
         "blob, or for find's path when one was given"
-private const val TAG = "PhoneApiMcp"
-private const val BLANK = "about:blank"
 
-/**
- * Resolves once the page's document has loaded, and never on a new tab's empty first document,
- * which its navigation replaces. It runs in an isolated world, so its listener is not the page's to
- * see.
- */
-private const val LOAD_WAIT =
-    """new Promise((resolve) => {
-  if (location.href === "$BLANK") return;
-  if (document.readyState === "complete") resolve(true);
-  else addEventListener("load", () => resolve(true), { once: true });
-})"""
-
-/**
- * How long a new tab's navigation has to load. Under a DevTools call's own 15 s limit, so the wait,
- * not the call, ends first.
- */
+/** How long a new tab has to open and load, for a read that opens one. */
 private const val OPEN_LOAD_MS = 12_000L
 private const val AFTER_LOAD_SETTLE_MS = 5_000L
 private const val MS_PER_S = 1_000
-
-/** The pause before waiting again on a document that replaced the one waited on. */
-private const val LOAD_RETRY_MS = 250L

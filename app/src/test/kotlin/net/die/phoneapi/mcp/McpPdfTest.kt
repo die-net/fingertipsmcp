@@ -10,15 +10,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
-import kotlinx.serialization.json.JsonPrimitive
+import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.model.ApiException
-import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserReadResult
 import net.die.phoneapi.model.BrowserTarget
-import net.die.phoneapi.model.EvalRequest
-import net.die.phoneapi.model.EvalResult
 import net.die.phoneapi.model.Scope
+import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.server.FakeApi
 import net.die.phoneapi.server.FakeBrowser
 import net.die.phoneapi.server.apiClient
@@ -48,15 +46,11 @@ class McpPdfTest {
     }
 
     @Test
-    fun `saves a PDF only once`() = testApplication {
+    fun `no wait on a saved PDF`() = testApplication {
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
-            val session = initialize(http)
-            repeat(3) { _ ->
-                call(http, session, "browser_read", """{"url":"$PDF","close":true}""")
-            }
-            assertEquals(1, chrome.opens.count { it == PDF })
-            assertEquals(3, chrome.loads.size)
+            call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
+            assertEquals(0, api.waits.calls)
         }
     }
 
@@ -71,31 +65,43 @@ class McpPdfTest {
     }
 
     @Test
-    fun `keeps a non-PDF error`() = testApplication {
+    fun `keeps a download's error`() = testApplication {
         chrome.pdf = false
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
             val read = call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
-            assertTrue(read.contains("DevTools closed the WebSocket"), read)
-            assertEquals(listOf(SECOND), chrome.closed)
+            assertTrue(read.contains("rather than opening it"), read)
+            assertTrue(read.contains("isError\":true"), read)
         }
     }
 
     @Test
-    fun `waits through the commit`() = testApplication {
-        // A new tab shows about:blank, already loaded, until its navigation commits, and the commit
-        // replaces the document the first wait was on. The wait starts again on the page.
-        chrome.commits = 1
+    fun `waits for load, then settle`() = testApplication {
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
             val read = call(http, initialize(http), "browser_read", """{"url":"$PAGE"}""")
             assertTrue(read.contains("page text"), read)
             assertFalse(read.contains("not loaded"), read)
             assertEquals(
-                listOf("open $PAGE", "load $FIRST", "load $FIRST", "read $FIRST"),
-                chrome.calls,
+                listOf(
+                    WaitCondition.BrowserLoaded(FIRST),
+                    WaitCondition.BrowserSettled(FIRST),
+                ),
+                api.waits.requests.map { it.all.single() },
             )
-            assertEquals(emptyList<String>(), chrome.loads)
+            assertEquals(listOf("open $PAGE", "read $FIRST"), chrome.calls)
+        }
+    }
+
+    @Test
+    fun `says when no page came`() = testApplication {
+        // The server had not answered when the tab came back, so there is no load to wait for.
+        chrome.answers = false
+        application { phoneApiModule(api.services) }
+        apiClient().use { http ->
+            val read = call(http, initialize(http), "browser_read", """{"url":"$PAGE"}""")
+            assertTrue(read.contains("not loaded after 12 s"), read)
+            assertEquals(0, api.waits.calls)
         }
     }
 
@@ -108,7 +114,7 @@ class McpPdfTest {
             val read = call(http, initialize(http), "browser_read", args)
             assertTrue(read.contains("No element matches"), read)
             assertTrue(read.contains("isError\":true"), read)
-            assertEquals(emptyList<String>(), chrome.loads)
+            assertEquals(listOf("open $PAGE", "read $FIRST"), chrome.calls)
             assertEquals(listOf(FIRST), chrome.closed)
         }
     }
@@ -152,18 +158,16 @@ class McpPdfTest {
         if (id != null) header("Mcp-Session-Id", id)
     }
 
-    /** A Chrome that closes a new tab on [PDF] at once, as it does when it saves the file. */
+    /** A browser whose open of [PDF] ends as [BrowserService.openTab] says for a saved file. */
     private class SavingBrowser : FakeBrowser() {
+        /** Whether [PDF] is a PDF, rather than another download. */
         var pdf = true
 
-        /** How many load waits find their document replaced, as a navigation's commit does. */
-        var commits = 0
+        /** Whether a page's server answers in time. */
+        var answers = true
         val calls = ArrayList<String>()
-        val opens = ArrayList<String>()
-        val loads = ArrayList<String>()
         val closed = ArrayList<String>()
         private val open = LinkedHashMap<String, String>()
-        private val saved = HashSet<String>()
 
         override suspend fun targets() = open.map { (id, url) -> target(id, url) }
 
@@ -171,12 +175,18 @@ class McpPdfTest {
             url: String,
             capture: Boolean,
             incognito: Boolean,
+            created: suspend (String) -> Unit,
         ): BrowserTarget {
-            val id = if (opens.isEmpty()) FIRST else SECOND
-            opens += url
             calls += "open $url"
-            if (url != PDF) open[id] = url
+            if (url == PDF && !pdf) throw ApiException(409, "download_saved", SAVED_ERROR)
+            val id = if (url == PDF) SECOND else FIRST
+            open[id] = url
+            created(id)
             return target(id, url)
+                .copy(
+                    savedPdf = true.takeIf { url == PDF },
+                    loading = true.takeIf { !answers },
+                )
         }
 
         override suspend fun closeTab(id: String) =
@@ -184,27 +194,6 @@ class McpPdfTest {
                 open -= id
                 closed += id
             }
-
-        override fun savedPdf(url: String) = url in saved
-
-        override suspend fun loadPdf(id: String, url: String): Boolean {
-            loads += "$id $url"
-            if (pdf) saved += url
-            return pdf
-        }
-
-        override suspend fun evaluate(id: String, request: EvalRequest): EvalResult {
-            if (id !in open) throw closed()
-            calls += "load $id"
-            if (commits > 0) {
-                commits--
-                throw ApiException(502, "cdp_error", "Execution context was destroyed.")
-            }
-            return EvalResult(value = JsonPrimitive(true))
-        }
-
-        override suspend fun find(id: String, request: BrowserFindRequest) =
-            if (id !in open) throw closed() else super.find(id, request)
 
         override suspend fun read(id: String, request: BrowserReadRequest): BrowserReadResult {
             calls += "read $id"
@@ -217,12 +206,9 @@ class McpPdfTest {
                 offset = 0,
                 returnedChars = 8,
                 truncated = false,
-                content = if (loads.isEmpty()) "page text" else "pdf text",
+                content = if (id == SECOND) "pdf text" else "page text",
             )
         }
-
-        /** What a call to a tab gets when Chrome closes the tab under it. */
-        private fun closed() = ApiException(502, "cdp_error", "DevTools closed the WebSocket")
 
         private fun target(id: String, url: String) =
             BrowserTarget(id = id, type = "page", url = url, socket = "chrome_devtools_remote")
@@ -230,6 +216,7 @@ class McpPdfTest {
 
     private companion object {
         const val PDF = "https://example.com/report"
+        const val SAVED_ERROR = "Chrome saved this URL to Downloads rather than opening it"
         const val PAGE = "https://example.com/"
         const val FIRST = "chrome_devtools_remote~first"
         const val SECOND = "chrome_devtools_remote~second"

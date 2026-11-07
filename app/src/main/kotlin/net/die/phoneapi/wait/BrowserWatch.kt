@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import net.die.phoneapi.browser.CHROME_SOCKET
@@ -23,6 +24,7 @@ import net.die.phoneapi.browser.DEVTOOLS_CLOSED
 import net.die.phoneapi.browser.DevtoolsSocket
 import net.die.phoneapi.browser.FrameTreeResult
 import net.die.phoneapi.browser.decodeCdp
+import net.die.phoneapi.browser.evaluateInFrame
 import net.die.phoneapi.browser.parseBrowserTargetId
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.model.ApiException
@@ -110,6 +112,7 @@ internal class BrowserWatch(
             is WaitCondition.BrowserNewTarget -> Check(targets.matches(condition.urlContains))
             is WaitCondition.BrowserLog ->
                 Check(session(condition).model.logMatched(condition.level, condition.textContains))
+            is WaitCondition.BrowserLoaded -> Check(session(condition).model.hasLoaded())
             is WaitCondition.BrowserSettled ->
                 session(condition).model.settled(condition.quietMs, SystemClock.uptimeMillis())
             is WaitCondition.Node,
@@ -179,6 +182,7 @@ internal class BrowserWatch(
         val onThisPage = conditions.filter { onPage(it, id) }
         val domains = domainsFor(onThisPage)
         val lifecycle = onThisPage.any { it is WaitCondition.BrowserLifecycle }
+        val load = id.takeIf { onThisPage.any(::needsLoad) }
         if (onThisPage.any { it is WaitCondition.BrowserDialog } && dialogShown(id)) {
             // A page showing a dialog answers nothing, Page.enable included, until the dialog
             // goes, and Chrome reports no dialog that opened before Page was enabled. So the
@@ -188,7 +192,7 @@ internal class BrowserWatch(
                 CoroutineScope(currentCoroutineContext()).launch {
                     try {
                         enable(session, domains, lifecycle)
-                        seed(session, model)
+                        seed(session, model, load)
                     } catch (_: ApiException) {
                         // The page went away; the dialog already counts, and other conditions
                         // on this page have no events to match.
@@ -196,7 +200,7 @@ internal class BrowserWatch(
                 }
         } else {
             enable(session, domains, lifecycle)
-            seed(session, model)
+            seed(session, model, load)
         }
         pages[id] = page
     }
@@ -358,12 +362,26 @@ internal class BrowserWatch(
         if ("DOM" in domains) session.call("DOM.enable")
     }
 
-    private suspend fun seed(session: CdpSession, model: PageModel) {
+    /**
+     * Gives [model] the page as it is now. With [load], the id of a tab whose conditions need to
+     * know, it also counts a document that loaded before the wait, since Chrome sends no load event
+     * for one. Page is enabled first, so one that loads after this looks still gets its event.
+     */
+    private suspend fun seed(session: CdpSession, model: PageModel, load: String?) {
         val frame =
             session.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()?.frameTree?.frame
                 ?: return
-        model.seed(frame.id, frame.url)
+        model.seed(frame.id, frame.url, frame.loaderId)
+        val frameId = frame.id
+        if (load == null || frameId == null) return
+        // A tab still waiting for its server shows a blank page that is complete but is not it.
+        if (frame.url == BLANK && browser.awaitingPage(load)) return
+        val state = evaluateInFrame(session, frameId, READY_STATE, awaitPromise = false).value
+        if ((state as? JsonPrimitive)?.content == "complete") model.alreadyLoaded(frame.loaderId)
     }
+
+    private fun needsLoad(condition: WaitCondition): Boolean =
+        condition is WaitCondition.BrowserLoaded || condition is WaitCondition.BrowserSettled
 
     private class PageSession(val model: PageModel, val cdp: CdpSession) {
         @Volatile var rootId: Int? = null
@@ -388,5 +406,7 @@ internal class BrowserWatch(
 
     private companion object {
         const val SOCKET_SLACK_MS = 20_000L
+        const val BLANK = "about:blank"
+        const val READY_STATE = "document.readyState"
     }
 }

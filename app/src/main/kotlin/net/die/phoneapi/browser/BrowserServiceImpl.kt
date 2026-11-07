@@ -7,13 +7,9 @@ import java.util.LinkedHashMap
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -118,16 +114,22 @@ internal class BrowserServiceImpl(
     private val refreshHz: () -> Float = { 60f },
     private val touchscreen: suspend () -> TouchscreenInfo = { fallbackTouchscreen() },
     /** Starts Chrome's incognito shortcut in the package given, which opens an incognito tab. */
-    private val openPrivateTab: suspend (String) -> Unit = {
+    openPrivateTab: suspend (String) -> Unit = {
         throw ApiException.unavailable("browser_unavailable", "Incognito tabs need the helper")
     },
     /** Where background timer checks run. Null checks nothing. */
     scope: CoroutineScope? = null,
 ) : BrowserService {
     private val axTrees = newAxCache()
-    private val incognitoOpen = Mutex()
-    /** Chrome's pid and the browser context of its normal tabs, from [normalContext]. */
-    @Volatile private var normal: Pair<Int, String>? = null
+    private val privateTabs =
+        IncognitoTabs(
+            targets = { socket ->
+                useCdp(socket, "/devtools/browser") { it.call("Target.getTargets") }
+            },
+            createBlank = { socket -> createTab(socket, BLANK) },
+            close = { id -> closeQuietly(id) },
+            openPrivateTab = openPrivateTab,
+        )
     private val locator = ElementLocator(axTrees)
     private val probe = openProbe?.let { TabProbe(io, it, websocketKey) }
     private val timers = scope?.let {
@@ -156,6 +158,18 @@ internal class BrowserServiceImpl(
                 }
             Evaluated(result, reloaded)
         }
+    private val opener =
+        TabOpener(
+            createBlank = { socket -> createTab(socket, BLANK) },
+            onPage = { id, block ->
+                val (socket, chromeId) = parseBrowserTargetId(id)
+                usePage(socket, chromeId, block)
+            },
+            listed = { targets() },
+            close = { id -> closeQuietly(id) },
+            savedPdf = { url -> reader.savedPdf(url) },
+            loadPdf = { id, url -> reader.loadPdf(id, url) },
+        )
     @Volatile private var stateSource: String? = null
     private val pageInput: PageInput by lazy {
         PageInput(
@@ -182,7 +196,9 @@ internal class BrowserServiceImpl(
             throw ApiException.unavailable("browser_unavailable", devtoolsGap(BrowserGap.NONE))
         }
         val found = queryTargets(sockets)
-        axTrees.retain(found.map { it.id }.toSet())
+        val live = found.map { it.id }.toSet()
+        axTrees.retain(live)
+        opener.retain(live)
         return found
     }
 
@@ -227,11 +243,13 @@ internal class BrowserServiceImpl(
             SocketList.Failed(e)
         }
 
-    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean): BrowserTarget {
+    override suspend fun openTab(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget {
         val pageUrl = webUrl(url)
-        // Recording has to start before the page loads, so the tab opens blank and loads after.
-        // The blank page stays in the tab's history, so the page sees history.length 2, not 1.
-        val recording = capture && pageUrl != BLANK
         val chrome =
             startedChrome(::socketList, { showPackage(CHROME_PACKAGE) }) {
                 devtoolsGap(BrowserGap.CHROME)
@@ -241,44 +259,44 @@ internal class BrowserServiceImpl(
         // shortcut always brings it forward.
         val tookScreen =
             incognito || browserPackage(chrome, chrome.name)?.let { inFront(it) } == true
+        val tab =
+            BrowserTarget(
+                id = "",
+                type = "page",
+                url = pageUrl,
+                socket = chrome.name,
+                pid = chrome.pid,
+                packageName = chrome.packageName,
+                tookScreen = tookScreen,
+            )
+        val remembered = if (incognito) null else opener.remembered(tab, created)
+        if (remembered != null) return remembered
+        // Recording has to start before the page loads, so the tab opens blank and loads after.
+        // The blank page stays in the tab's history, so the page sees history.length 2, not 1.
+        val recording = capture && pageUrl != BLANK
         val chromeId =
             if (incognito) {
-                incognitoTab(chrome)
+                privateTabs.open(chrome, browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE)
             } else {
                 createTab(chrome.name, if (recording) BLANK else pageUrl)
             }
         val id = browserTargetId(chrome.name, chromeId)
-        // An incognito tab opens on Chrome's new tab page, so it loads the page after too.
-        if (recording || incognito) {
-            var loading = false
-            try {
-                if (recording) capture(id, on = true)
-                navigate(id, pageUrl)
-                loading = true
-            } finally {
-                // An unowned tab would outlive the session that asked for it.
-                if (!loading) withContext(NonCancellable) { closeQuietly(id) }
-            }
-        }
-        return BrowserTarget(
-            id = id,
-            type = "page",
-            url = pageUrl,
-            socket = chrome.name,
-            pid = chrome.pid,
-            packageName = chrome.packageName,
-            tookScreen = tookScreen,
+        return opener.follow(
+            tab.copy(id = id),
+            // An incognito tab opens on Chrome's new tab page, so it loads the page after too.
+            navigate = recording || incognito,
+            incognito,
+            created = {
+                created(it)
+                // A stand-in holds PhoneAPI's own page, so it has no responses to record.
+                if (recording && it == id) capture(it, on = true)
+            },
         )
     }
 
-    override suspend fun incognitoTabs(): Set<String> {
-        val chrome = chromeSocket()
-        val normal = normalContext(chrome)
-        return contexts(chrome.name)
-            .filterValues { it != null && it != normal }
-            .keys
-            .mapTo(HashSet()) { browserTargetId(chrome.name, it) }
-    }
+    override fun awaitingPage(id: String): Boolean = opener.awaitingPage(id)
+
+    override suspend fun incognitoTabs(): Set<String> = privateTabs.listed(chromeSocket())
 
     private suspend fun chromeSocket(): DevtoolsSocketInfo =
         socketList().firstOrNull { it.name == CHROME_SOCKET }
@@ -295,63 +313,12 @@ internal class BrowserServiceImpl(
             ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
     }
 
-    /**
-     * Has Chrome open an incognito tab, and returns its Chrome id. The new tab must be in another
-     * browser context than a normal tab, so a Chrome that opened a normal tab instead fails here
-     * rather than hand the caller a tab with the phone's logins. One open at a time, so two cannot
-     * take the same new tab.
-     */
-    private suspend fun incognitoTab(chrome: DevtoolsSocketInfo): String = incognitoOpen.withLock {
-        val normal = normalContext(chrome)
-        val before = contexts(chrome.name).keys
-        openPrivateTab(browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE)
-        repeat(INCOGNITO_POLLS) {
-            delay(INCOGNITO_POLL_MS)
-            val opened =
-                contexts(chrome.name).entries.firstOrNull { (id, context) ->
-                    id !in before && context != null && context != normal
-                }
-            if (opened != null) return@withLock opened.key
-        }
-        throw ApiException.unavailable(
-            "browser_unavailable",
-            "Chrome did not open an incognito tab within " +
-                "${INCOGNITO_POLLS * INCOGNITO_POLL_MS / MS_PER_S} s.",
-        )
-    }
-
-    /**
-     * The browser context of Chrome's normal tabs, learned once per Chrome process by opening a
-     * blank tab and closing it. createTarget ignores browserContextId on Android, so the tab it
-     * opens is always a normal one.
-     */
-    private suspend fun normalContext(chrome: DevtoolsSocketInfo): String {
-        normal?.let { (pid, context) -> if (pid == chrome.pid) return context }
-        val chromeId = createTab(chrome.name, BLANK)
-        try {
-            val context =
-                contexts(chrome.name)[chromeId]
-                    ?: throw ApiException(
-                        502,
-                        "cdp_error",
-                        "Chrome did not say which profile a new tab is in",
-                    )
-            // Without a pid, a restarted Chrome could not be told apart, so nothing is kept.
-            chrome.pid?.let { pid -> normal = pid to context }
-            return context
-        } finally {
-            withContext(NonCancellable) { closeQuietly(browserTargetId(chrome.name, chromeId)) }
-        }
-    }
-
-    private suspend fun contexts(socket: String): Map<String, String?> =
-        chromeContexts(useCdp(socket, "/devtools/browser") { it.call("Target.getTargets") })
-
     override suspend fun navigate(id: String, url: String): BrowserTarget {
         timers?.clear(id)
         val pageUrl = webUrl(url)
         val (socket, chromeId) = parseBrowserTargetId(id)
         axTrees.remove(id)
+        opener.forget(id)
         usePage(socket, chromeId) { cdp ->
             val error =
                 cdp.call("Page.navigate", buildJsonObject { put("url", pageUrl) })
@@ -377,6 +344,7 @@ internal class BrowserServiceImpl(
         recorder?.stop(id)
         val closed = onTarget(id, "Target.closeTarget")
         axTrees.remove(id)
+        opener.forget(id)
         val ok = closed.decodeCdp<ClosedTarget>()?.success != false
         return ActionResult(ok = ok, backend = "cdp", seq = sequence())
     }
@@ -530,10 +498,6 @@ internal class BrowserServiceImpl(
             timersStopped = timers?.stalled(id) == true,
         )
     }
-
-    override fun savedPdf(url: String): Boolean = reader.savedPdf(url)
-
-    override suspend fun loadPdf(id: String, url: String): Boolean = reader.loadPdf(id, url)
 
     override suspend fun timersStalled(id: String): Boolean =
         timers?.let { it.stalled(id) && it.confirm(id) } == true
@@ -745,9 +709,6 @@ internal class BrowserServiceImpl(
         const val SHOWING_MS = 2_000L
         const val SHOW_ATTEMPTS = 3
         const val ERROR_SNIPPET = 80
-        const val INCOGNITO_POLLS = 50
-        const val INCOGNITO_POLL_MS = 100L
-        const val MS_PER_S = 1_000L
     }
 
     private sealed interface SocketList {
