@@ -102,6 +102,7 @@ fun Application.phoneApiModule(
     }
     install(BearerAuth) { tokens = services.tokens }
     attributes.put(SessionsKey, sessions)
+    services.tabs.sessionsFrom { sessions.isLive(it.id) }
     routing {
         deviceRoutes(services)
         openApiRoutes()

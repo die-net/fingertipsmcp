@@ -166,7 +166,7 @@ private suspend fun serve(session: McpSession, call: ApplicationCall) = coroutin
         if (!call.response.isCommitted) {
             call.respond(
                 HttpStatusCode.NotFound,
-                ApiError("not_found", "The MCP session ended"),
+                ApiError("session_not_found", "The MCP session ended"),
             )
         }
     } else {
@@ -175,7 +175,7 @@ private suspend fun serve(session: McpSession, call: ApplicationCall) = coroutin
 }
 
 private fun noSession() =
-    ApiError("not_found", "No such MCP session. Start a new one with initialize.")
+    ApiError("session_not_found", "No such MCP session. Start a new one with initialize.")
 
 /** The MCP server for one session, with the tools and resources [scopes] allow. */
 private fun phoneServer(
@@ -285,7 +285,7 @@ private suspend fun callTool(
     return leased(services.lease, holder, screen, brief) {
         val call = suspend { tool.call(services, scopes, request) }
         when {
-            screen -> services.tabs.screenCall(holder, tool.screen.claims, call)
+            screen -> services.tabs.screenCall(holder, tool.screen.claimUrl(arguments), call)
             tool.screen.launches(arguments) ->
                 tookScreenError { services.foreground.watch(holder, call) }
             else -> call()
@@ -320,7 +320,7 @@ private fun unknownSession() =
             listOf(
                 TextContent(
                     text =
-                        "not_found: No such session. It may have ended or idled out. Start " +
+                        "session_not_found: No such session. It may have ended or idled out. Start " +
                             "one with session_start, or leave session out to use your own."
                 )
             ),

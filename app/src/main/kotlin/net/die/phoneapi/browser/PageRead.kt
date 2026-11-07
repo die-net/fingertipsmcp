@@ -595,6 +595,25 @@ internal fun origin(url: String): String? {
     return "$scheme://$host:$port"
 }
 
+/**
+ * Whether [a] and [b] name the same page, whichever spelling each uses of the same origin and an
+ * empty path. An intent's URL is as the caller wrote it and a tab's is as Chrome wrote it, so
+ * `https://Example.com` and `https://example.com/` match. Anything else must be equal.
+ */
+internal fun sameUrl(a: String, b: String): Boolean {
+    if (a == b) return true
+    val origin = origin(a) ?: return false
+    return origin == origin(b) && afterAuthority(a) == afterAuthority(b)
+}
+
+/** What follows the host and port of [url], which has some, with `/` for an empty path. */
+private fun afterAuthority(url: String): String {
+    val start = url.indexOf("://") + SCHEME_SEPARATOR
+    val rest =
+        url.indexOfAny(AUTHORITY_END, start).takeIf { it >= 0 }?.let(url::substring).orEmpty()
+    return if (rest.startsWith('/')) rest else "/$rest"
+}
+
 /** Where the `:` before the port is in [authority], or -1. An IPv6 host is in brackets. */
 private fun portStart(authority: String): Int {
     if (!authority.startsWith('[')) return authority.lastIndexOf(':')

@@ -19,7 +19,8 @@ const val NOTE_HEADER = "X-PhoneAPI-Note"
 
 /**
  * The session this REST call names in `Mcp-Session-Id`. Fails with 428 `session_required` without
- * one, and with 404 for one that has ended or belongs to another token.
+ * one, and with 404 `session_not_found` for one that has ended or belongs to another token, which
+ * read the same so that an id says nothing about other clients.
  */
 internal fun ApplicationCall.session(): Holder.Session {
     val id =
@@ -30,7 +31,7 @@ internal fun ApplicationCall.session(): Holder.Session {
                 "Create a session with POST /v1/sessions and send its id in $SESSION_HEADER.",
             )
     return application.attributes[SessionsKey].forRest(id, token.id)
-        ?: throw ApiException.notFound(
+        ?: throw ApiException.sessionNotFound(
             "No such session. It may have ended or idled out; start one with POST /v1/sessions."
         )
 }
@@ -39,17 +40,17 @@ internal fun ApplicationCall.session(): Holder.Session {
  * Runs a REST call as the session it names. When [needed], the call holds the screen, waiting for
  * it first, and the session keeps it afterwards, as an MCP session does; Chrome shows none of
  * another session's tabs meanwhile. A call that could make a page launch an app, [launching], is
- * watched for that while the session lacks the screen. A call that can make Chrome open a tab,
- * [claimNew], gives the caller that tab. A call that needs the screen only while it runs,
- * [giveBack], lets it go afterwards if the session did not have it before. Notes for the session go
- * in `X-PhoneAPI-Note` headers.
+ * watched for that while the session lacks the screen. A call that sends an intent for a URL,
+ * [claimUrl], gives the caller the tab Chrome opens for it. A call that needs the screen only while
+ * it runs, [giveBack], lets it go afterwards if the session did not have it before. Notes for the
+ * session go in `X-PhoneAPI-Note` headers.
  */
 internal suspend fun <T> withScreen(
     call: ApplicationCall,
     services: ServerServices,
     needed: Boolean = true,
     launching: Boolean = false,
-    claimNew: Boolean = false,
+    claimUrl: String? = null,
     giveBack: Boolean = false,
     block: suspend (Holder.Session) -> T,
 ): T {
@@ -68,7 +69,7 @@ internal suspend fun <T> withScreen(
     }
     val screened =
         services.lease.withScreen(holder, giveBack) {
-            services.tabs.screenCall(holder, claimNew) { block(holder) }
+            services.tabs.screenCall(holder, claimUrl) { block(holder) }
         }
     screened.notes.forEach { call.response.headers.append(NOTE_HEADER, it) }
     return screened.value

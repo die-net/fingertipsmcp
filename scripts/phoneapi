@@ -155,7 +155,7 @@ PY
     out="$(papi_curl "$method" "$path" "$body" "$session")"
     status="${out##*$'\n'}"
     if [[ -z ${PAPI_SESSION:-} ]]; then
-        if [[ $status == 404 && -n $session && $out == *"No such session"* ]]; then
+        if [[ $status == 404 && -n $session && $(papi_error "$out") == session_not_found ]]; then
             echo "papi: the session ended; starting a new one, without the screen or the old tabs" >&2
             status=428
         fi
@@ -212,6 +212,11 @@ papi_new_session() {
     [[ -n $id ]] || die "papi: could not start a session: $out"
     (umask 077 && echo "$id" >"$(session_file)")
     echo "$id"
+}
+
+# The `error` code in papi_curl's output, or nothing for a body that has none.
+papi_error() {
+    jq -r '.error? // empty' 2>/dev/null <<<"${1%$'\n'*}" || true
 }
 
 # One request: prints the body, then the HTTP status on its own line.

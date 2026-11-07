@@ -317,6 +317,19 @@ class PageReadTest {
     }
 
     @Test
+    fun `matches Chrome's url spelling`() {
+        assertTrue(sameUrl("https://example.com/", "https://Example.com"))
+        assertTrue(sameUrl("HTTP://a.example:80/x?q=1#f", "http://a.example/x?q=1#f"))
+        assertTrue(sameUrl("https://a.example/?q=1", "https://a.example?q=1"))
+        assertTrue(sameUrl("content://media/1", "content://media/1"))
+        assertFalse(sameUrl("https://a.example/x", "https://a.example/X"))
+        assertFalse(sameUrl("https://a.example/x", "https://a.example/x?q=1"))
+        assertFalse(sameUrl("https://a.example/", "http://a.example/"))
+        assertFalse(sameUrl("https://a.example/", "https://b.example/"))
+        assertFalse(sameUrl("geo:1,2", "geo:1,3"))
+    }
+
+    @Test
     fun `carries pending signs`() {
         val waiting =
             ApiJson.decodeFromString(

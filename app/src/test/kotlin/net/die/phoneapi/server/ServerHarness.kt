@@ -139,6 +139,8 @@ internal class RecordingWaits : WaitService {
 internal class FakeApi(
     leaseWaitMs: Long = ScreenLease.WAIT_MS,
     val browser: FakeBrowser = FakeBrowser(),
+    /** Where tabs Chrome opens after an intent are looked for, for a test that runs its clock. */
+    tabScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
 ) {
     val tokens = MemoryTokens()
     val waits = RecordingWaits()
@@ -323,7 +325,7 @@ internal class FakeApi(
                     lease,
                     inFront = { false },
                     store = tabStore,
-                    scope = CoroutineScope(Dispatchers.Default),
+                    scope = tabScope,
                 ),
             foreground = foreground,
         )

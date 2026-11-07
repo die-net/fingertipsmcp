@@ -59,27 +59,78 @@ class TabsTest {
     private val a = Holder.Session("a")
     private val b = Holder.Session("b")
 
+    /** The sessions the registry has dropped. */
+    private val ended = mutableSetOf<Holder.Session>()
+
     private fun tabs(
         perSession: Int = 4,
         total: Int = 8,
         scope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
-    ) = Tabs(browser, lease, inFront = { it == front }, store = store, perSession, total, scope)
+    ) =
+        Tabs(browser, lease, inFront = { it == front }, store = store, perSession, total, scope)
+            .also { tabs -> tabs.sessionsFrom { it !in ended } }
+
+    /** Ends [holder] as the registry does: it drops the session, then tells [Tabs]. */
+    private suspend fun Tabs.finish(holder: Holder.Session) {
+        ended += holder
+        end(holder)
+    }
 
     @Test
     fun `intent tabs become yours`() = runTest {
         val tabs = tabs(scope = backgroundScope)
         lease.withScreen(a) {}
-        // Chrome opens the intent's tab itself, a moment after the call that sent it.
-        tabs.screenCall(a, claimNew = true) {}
+        // Chrome opens the intent's tab itself, a moment after the call that sent it, and writes
+        // the URL its own way.
+        tabs.screenCall(a, claimUrl = "https://Example.com") {}
         advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
-        browser.add("from-intent")
+        browser.add("from-intent", url = INTENT_URL)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
         assertEquals(listOf(true), tabs.browserFor(a).targets().map { it.owned })
         assertEquals(setOf("chrome_devtools_remote~from-intent"), store.ids)
-        // Only the first new tab is the intent's; one that comes later is someone else's.
-        browser.add("later")
+        // Only the first tab on the URL is the intent's; one that comes later is someone else's.
+        browser.add("later", url = INTENT_URL)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
         assertEquals(1, tabs.count(a))
+    }
+
+    @Test
+    fun `a person's tab stays theirs`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
+        lease.withScreen(a) {}
+        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        val person = browser.add("person", url = "https://example.org/")
+        val blank = browser.add("blank")
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(0, tabs.count(a))
+        // The intent's tab can still come after them.
+        val mine = browser.add("from-intent", url = INTENT_URL)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(setOf(mine), store.ids)
+        // The person's tabs stay unowned, so another session can use them.
+        tabs.browserFor(b).read(person, BrowserReadRequest())
+        tabs.browserFor(b).read(blank, BrowserReadRequest())
+        assertEquals(2, tabs.count(b))
+    }
+
+    @Test
+    fun `old tabs on the url stay free`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
+        lease.withScreen(a) {}
+        browser.add("person", url = INTENT_URL)
+        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS)
+        assertEquals(0, tabs.count(a))
+    }
+
+    @Test
+    fun `no url claims nothing`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
+        lease.withScreen(a) {}
+        tabs.screenCall(a) {}
+        browser.add("person", url = INTENT_URL)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS)
+        assertEquals(0, tabs.count(a))
     }
 
     @Test
@@ -88,14 +139,77 @@ class TabsTest {
         browser.listMs = 300
         val tabs = tabs(scope = backgroundScope)
         lease.withScreen(a) {}
-        tabs.screenCall(a, claimNew = true) {}
-        tabs.end(a)
+        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        tabs.finish(a)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS - 100)
-        val late = browser.add("from-intent")
+        val late = browser.add("from-intent", url = INTENT_URL)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS * 2)
         assertEquals(0, tabs.count(a))
         // The tab is unowned, so another session can use it.
         tabs.browserFor(b).read(late, BrowserReadRequest())
+        assertEquals(1, tabs.count(b))
+    }
+
+    @Test
+    fun `a late claim keeps no tab`() = runTest {
+        // The claim is reading Chrome's tabs as the session ends, so it finds the intent's after.
+        val tabs = tabs(scope = backgroundScope)
+        lease.withScreen(a) {}
+        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        browser.add("from-intent", url = INTENT_URL)
+        browser.listMs = 300
+        advanceTimeBy(100)
+        tabs.finish(a)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS)
+        assertEquals(0, tabs.count(a))
+        assertEquals(emptySet<String>(), store.ids)
+    }
+
+    @Test
+    fun `a tab opened at the end closes`() = runTest {
+        val tabs = tabs()
+        val opening = CompletableDeferred<Unit>()
+        browser.opening = opening
+        val call = async { error { tabs.browserFor(a).openTab("https://example.com/") } }
+        runCurrent()
+        tabs.finish(a)
+        opening.complete(Unit)
+        assertEquals("session_not_found", call.await())
+        assertEquals(0, tabs.count(a))
+        assertEquals(1, browser.closed.size)
+        assertEquals(emptySet<String>(), store.ids)
+    }
+
+    @Test
+    fun `cancelling still closes a tab`() = runTest {
+        // Ending an MCP session cancels its calls, which must not leave the tab open.
+        val tabs = tabs()
+        val opening = CompletableDeferred<Unit>()
+        browser.opening = opening
+        browser.closeMs = 100
+        val call = async { error { tabs.browserFor(a).openTab("https://example.com/") } }
+        runCurrent()
+        tabs.finish(a)
+        opening.complete(Unit)
+        runCurrent()
+        call.cancel()
+        advanceTimeBy(101)
+        assertEquals(1, browser.closed.size)
+    }
+
+    @Test
+    fun `a late access claims no tab`() = runTest {
+        // DevTools takes a while to answer, so the claim comes after the check that the tab exists.
+        val tabs = tabs()
+        val old = browser.add("old")
+        browser.listMs = 300
+        val call = async { error { tabs.browserFor(a).read(old, BrowserReadRequest()) } }
+        runCurrent()
+        tabs.finish(a)
+        assertEquals("session_not_found", call.await())
+        assertEquals(0, tabs.count(a))
+        // The tab is unowned, so another session can use it.
+        tabs.browserFor(b).read(old, BrowserReadRequest())
         assertEquals(1, tabs.count(b))
     }
 
@@ -186,7 +300,7 @@ class TabsTest {
         tabs.shared.capture(old, on = true)
         tabs.browserFor(a).read(old, BrowserReadRequest())
         tabs.browserFor(a).read(old, BrowserReadRequest())
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(
             listOf("new" to true, mine.id to true, old to true, old to false, old to false),
             browser.captures,
@@ -212,7 +326,7 @@ class TabsTest {
         assertEquals(listOf(false), tabs.browserFor(a).targets().map { it.owned })
         tabs.browserFor(a).read(old, BrowserReadRequest())
         assertEquals("not_found", error { tabs.browserFor(b).read(old, BrowserReadRequest()) })
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(emptyList<String>(), browser.closed)
         tabs.browserFor(b).read(old, BrowserReadRequest())
         assertEquals(1, tabs.count(b))
@@ -227,7 +341,7 @@ class TabsTest {
         browser.shown = shown.id
         assertEquals(shown.id, tabs.keepShowing(a))
         assertEquals(setOf(other.id), store.ids)
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(listOf(other.id), browser.closed)
         tabs.browserFor(b).read(shown.id, BrowserReadRequest())
         assertEquals(1, tabs.count(b))
@@ -239,7 +353,7 @@ class TabsTest {
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         browser.shown = tab.id
         assertNull(tabs.keepShowing(a))
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(listOf(tab.id), browser.closed)
     }
 
@@ -247,7 +361,7 @@ class TabsTest {
     fun `ending closes opened tabs`() = runBlocking {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(listOf(tab.id), browser.closed)
         assertEquals(emptySet<String>(), store.ids)
     }
@@ -271,7 +385,7 @@ class TabsTest {
             "not_found",
             error { tabs.browserFor(b).tap(popup, BrowserTapRequest(selector = "a")) },
         )
-        tabs.end(a)
+        tabs.finish(a)
         assertEquals(setOf(tab.id, popup), browser.closed.toSet())
     }
 
@@ -493,9 +607,18 @@ class TabsTest {
             opener: String? = null,
             socket: String = "chrome_devtools_remote",
             pkg: String = "com.android.chrome",
+            url: String? = null,
         ): String {
             val id = "$socket~$name"
-            open += BrowserTarget(id, "page", socket = socket, packageName = pkg, openerId = opener)
+            open +=
+                BrowserTarget(
+                    id,
+                    "page",
+                    url = url,
+                    socket = socket,
+                    packageName = pkg,
+                    openerId = opener,
+                )
             return id
         }
 
@@ -535,11 +658,18 @@ class TabsTest {
             return BrowserCaptureResult(capturing = on)
         }
 
+        /** Holds a new tab back until it completes, as Chrome takes a while to open one. */
+        var opening: CompletableDeferred<Unit>? = null
+
+        /** How long closing a tab takes. */
+        var closeMs = 0L
+
         override suspend fun openTab(
             url: String,
             capture: Boolean,
             incognito: Boolean,
         ): BrowserTarget {
+            opening?.await()
             if (capture) captures += "new" to true
             val id = add("t${next++}")
             if (incognito) this.incognito += id
@@ -553,6 +683,7 @@ class TabsTest {
         override suspend fun incognitoTabs() = open.map { it.id }.filter { it in incognito }.toSet()
 
         override suspend fun closeTab(id: String): ActionResult {
+            if (closeMs > 0) delay(closeMs)
             closed += id
             open.removeAll { it.id == id }
             return ActionResult(ok = true)
@@ -620,5 +751,6 @@ class TabsTest {
     private companion object {
         val SCOPES = setOf(Scope.OBSERVE, Scope.BROWSER)
         const val CHROME = "com.android.chrome"
+        const val INTENT_URL = "https://example.com/"
     }
 }
