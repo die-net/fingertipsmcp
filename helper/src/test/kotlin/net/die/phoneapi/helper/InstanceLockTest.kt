@@ -1,51 +1,69 @@
 package net.die.phoneapi.helper
 
+import java.io.IOException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 /**
- * Two helpers sharing the phone's abstract socket namespace. The fake binds as the kernel does: a
- * name is taken until the socket holding it closes, which a process exit does.
+ * Two helpers sharing the phone's abstract socket namespace. The fake behaves as the kernel does: a
+ * listen on a name already held fails, a connect to it succeeds only while its holder is open, and
+ * closing the holder, which a process exit does, frees the name.
  */
 class InstanceLockTest {
     private class Namespace {
-        val taken = HashSet<String>()
+        val listening = HashSet<String>()
 
-        fun bind(name: String): AutoCloseable? =
-            if (taken.add(name)) AutoCloseable { taken.remove(name) } else null
+        /** Names whose listen fails for a reason other than being held. */
+        val broken = HashSet<String>()
+
+        fun listen(name: String): AutoCloseable {
+            if (name in broken) throw IOException("Permission denied")
+            if (!listening.add(name)) throw IOException("Address already in use")
+            return AutoCloseable { listening.remove(name) }
+        }
+
+        fun connects(name: String): Boolean = name in listening
     }
 
     private val namespace = Namespace()
-    private val running = InstanceLock(namespace::bind)
-    private val second = InstanceLock(namespace::bind)
+
+    private fun lock() = InstanceLock(namespace::listen, namespace::connects)
 
     @Test
     fun `same package is refused`() {
-        running.acquire("net.die.phoneapi").use {
+        lock().acquire("net.die.phoneapi").use {
             assertNotNull(it)
-            second.acquire("net.die.phoneapi").use { refused -> assertNull(refused) }
+            lock().acquire("net.die.phoneapi").use { refused -> assertNull(refused) }
         }
     }
 
     @Test
     fun `another package starts`() {
-        running.acquire("net.die.phoneapi").use {
-            second.acquire("net.die.phoneapi.dev").use { other -> assertNotNull(other) }
+        lock().acquire("net.die.phoneapi").use {
+            lock().acquire("net.die.phoneapi.dev").use { other -> assertNotNull(other) }
         }
     }
 
     @Test
     fun `a dead holder frees it`() {
-        running.acquire("net.die.phoneapi")?.close()
-        second.acquire("net.die.phoneapi").use { assertNotNull(it) }
+        lock().acquire("net.die.phoneapi")?.close()
+        lock().acquire("net.die.phoneapi").use { assertNotNull(it) }
+    }
+
+    @Test
+    fun `another failure is thrown`() {
+        // Nobody holds the name, so the failed listen is not a held lock.
+        namespace.broken += "phoneapi-helper-net.die.phoneapi"
+        assertThrows<IOException> { lock().acquire("net.die.phoneapi") }
     }
 
     @Test
     fun `the name is per package`() {
-        running.acquire("net.die.phoneapi").use {
-            assertEquals(setOf("phoneapi-helper-net.die.phoneapi"), namespace.taken)
+        lock().acquire("net.die.phoneapi").use {
+            assertEquals(setOf("phoneapi-helper-net.die.phoneapi"), namespace.listening)
         }
     }
 }
