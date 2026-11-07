@@ -85,13 +85,15 @@ class PdfReaderTest {
     @Test
     fun `lets other requests through`() {
         val replies = Replies()
-        replies.idTo(1, "{}") // Fetch.enable
-        replies.event("R0", after = 2, frame = "SUB", url = "https://example.com/frame")
-        replies.event("R1", after = 2)
-        replies.idTo(3, "{}") // continueRequest R0
-        replies.idTo(4, "{}") // fulfillRequest R1
-        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
-        replies.idTo(5, "{}") // Fetch.disable
+        replies.idTo(1, "{}") // Page.enable
+        replies.idTo(2, "{}") // Fetch.enable
+        replies.event("R0", after = 3, frame = "SUB", url = "https://example.com/frame")
+        replies.event("R1", after = 3)
+        replies.idTo(4, "{}") // continueRequest R0
+        replies.idTo(5, "{}") // fulfillRequest R1
+        replies.idTo(3, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
+        replies.idTo(6, "{}") // Fetch.disable
+        replies.commit("L1")
         replies.ready(loader = "L1")
         replies.loaded()
         replies.value("true")
@@ -109,14 +111,16 @@ class PdfReaderTest {
         // A page busy loading sends far more events than the session's replay buffer holds while
         // the first pause is still being answered, and the second pause must not be lost to them.
         val replies = Replies()
-        replies.idTo(1, "{}") // Fetch.enable
-        replies.event("R0", after = 2, frame = "SUB", url = "https://example.com/frame")
-        replies.event("R1", after = 2)
+        replies.idTo(1, "{}") // Page.enable
+        replies.idTo(2, "{}") // Fetch.enable
+        replies.event("R0", after = 3, frame = "SUB", url = "https://example.com/frame")
+        replies.event("R1", after = 3)
         repeat(100) { replies.noise() }
-        replies.idTo(3, "{}") // continueRequest R0
-        replies.idTo(4, "{}") // fulfillRequest R1
-        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
-        replies.idTo(5, "{}") // Fetch.disable
+        replies.idTo(4, "{}") // continueRequest R0
+        replies.idTo(5, "{}") // fulfillRequest R1
+        replies.idTo(3, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
+        replies.idTo(6, "{}") // Fetch.disable
+        replies.commit("L1")
         replies.ready(loader = "L1")
         replies.loaded()
         replies.value("true")
@@ -146,9 +150,10 @@ class PdfReaderTest {
         // Page.navigate returns with no pause to answer. The read fails at once rather than
         // waiting for one.
         val replies = Replies()
-        replies.idTo(1, "{}") // Fetch.enable
-        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
-        replies.idTo(3, "{}") // Fetch.disable
+        replies.idTo(1, "{}") // Page.enable
+        replies.idTo(2, "{}") // Fetch.enable
+        replies.idTo(3, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
+        replies.idTo(4, "{}") // Fetch.disable
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
@@ -156,7 +161,87 @@ class PdfReaderTest {
             }
         assertEquals(PDF_FAILED, error.error)
         assertTrue("service worker" in error.message.orEmpty())
-        assertEquals(listOf("Fetch.enable", "Page.navigate", "Fetch.disable"), page.methods())
+        assertEquals(UNANSWERED, page.methods())
+    }
+
+    @Test
+    fun `waits for the page to commit`() {
+        // Chrome answers Page.navigate before the commit, and until then DOM.getDocument names the
+        // old document, whose node is gone by the DOM.resolveNode that follows.
+        val replies = Replies()
+        replies.navigation(loader = "L1")
+        replies.ready(loader = "L1")
+        replies.loaded()
+        replies.value("true")
+        replies.value(EXTRACT)
+        val page = replies.socket()
+        val reader = PdfReader { "" }
+        val result =
+            harness.answering(
+                COMMIT_LATE_MS,
+                open = {
+                    session(page) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+                },
+            ) {
+                assertEquals(NAVIGATION, page.methods())
+                page.send(committed("L1"))
+            }
+        val extract = result.value?.jsonObject
+        assertEquals("pdf", extract?.get("extracted")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `ignores an earlier commit`() {
+        // A navigation that started before this one can commit first, and its loader is another.
+        val replies = Replies()
+        replies.navigation(loader = "L1")
+        replies.commit("L0")
+        replies.ready(loader = "L1")
+        replies.loaded()
+        replies.value("true")
+        replies.value(EXTRACT)
+        val page = replies.socket()
+        val reader = PdfReader { "" }
+        harness.answering(
+            COMMIT_LATE_MS,
+            open = { session(page) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) } },
+        ) {
+            assertEquals(NAVIGATION, page.methods())
+            page.send(committed("L1"))
+        }
+    }
+
+    @Test
+    fun `gives up without a commit`() {
+        val replies = Replies()
+        replies.navigation(loader = "L1")
+        val page = replies.socket()
+        val error =
+            assertThrows(ApiException::class.java) {
+                onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+            }
+        assertEquals("page_error", error.error)
+        assertEquals(NAVIGATION, page.methods())
+    }
+
+    @Test
+    fun `fails when the tab closes`() {
+        val replies = Replies()
+        replies.navigation(loader = "L1")
+        val page = replies.socket()
+        val reader = PdfReader { "" }
+        val error =
+            assertThrows(ApiException::class.java) {
+                harness.answering(
+                    COMMIT_LATE_MS,
+                    open = {
+                        session(page) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+                    },
+                ) {
+                    page.close()
+                }
+            }
+        assertEquals("cdp_error", error.error)
     }
 
     @Test
@@ -226,7 +311,7 @@ class PdfReaderTest {
         replies.value(EXTRACT)
         val page = replies.socket()
         onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", URL, "L9"), URL) }
-        assertEquals("Fetch.enable", page.methods().first())
+        assertEquals(NAVIGATION.first(), page.methods().first())
     }
 
     @Test
@@ -249,7 +334,7 @@ class PdfReaderTest {
         val page = again.socket()
         onPage(page) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
         val methods = page.methods()
-        assertEquals(HANDLE + TAKE_OVER, methods.take(11))
+        assertEquals(HANDLE + TAKE_OVER, methods.take(HANDLE.size + TAKE_OVER.size))
         assertFalse(page.sent().lines().any { "phoneapiPdf.state" in it })
     }
 
@@ -318,11 +403,12 @@ class PdfReaderTest {
     @Test
     fun `says when its page fails`() {
         val replies = Replies()
+        replies.result("{}") // Page.enable
         replies.result("{}") // Fetch.enable
-        replies.event("R1", after = 2)
-        replies.idTo(3, "{}") // fulfillRequest
-        replies.idTo(2, """{"frameId":"F","loaderId":"L1","errorText":"net::ERR_ABORTED"}""")
-        replies.idTo(4, "{}") // Fetch.disable
+        replies.event("R1", after = 3)
+        replies.idTo(4, "{}") // fulfillRequest
+        replies.idTo(3, """{"frameId":"F","loaderId":"L1","errorText":"net::ERR_ABORTED"}""")
+        replies.idTo(5, "{}") // Fetch.disable
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
@@ -447,6 +533,14 @@ class PdfReaderTest {
         )
     }
 
+    /** Chrome's event for the document with [loader] committing in the tab. */
+    private fun committed(loader: String): ByteArray {
+        val frame = """{"id":"F","url":"$URL","loaderId":"$loader"}"""
+        return harness.serverTextFrame(
+            """{"method":"Page.frameNavigated","params":{"frame":$frame}}"""
+        )
+    }
+
     /** [PdfReader.open] on [url], whose load answers [loaded]. */
     private fun open(reader: PdfReader, url: String, loaded: String): Boolean {
         val replies = Replies()
@@ -555,17 +649,29 @@ class PdfReaderTest {
         }
 
         /**
-         * Chrome's side of a takeover whose first command has id [first]: Fetch.enable, the paused
-         * navigation at [pausedUrl], its fulfillment, the navigation itself, which Chrome answers
-         * only once its pause is answered, Fetch.disable, and a handle on the loaded page.
+         * Chrome's side of a takeover whose first command has id [first], up to the commit: Page
+         * and Fetch enabled, the paused navigation at [pausedUrl], its fulfillment, the navigation
+         * itself, which Chrome answers only once its pause is answered, and Fetch.disable.
          */
-        fun takeOver(loader: String, first: Int = 1, pausedUrl: String = URL) {
+        fun navigation(loader: String, first: Int = 1, pausedUrl: String = URL) {
             idTo(first, "{}")
-            event("R1", after = first + 1, url = pausedUrl)
-            idTo(first + 2, "{}")
-            idTo(first + 1, """{"frameId":"F","loaderId":"$loader"}""")
+            idTo(first + 1, "{}")
+            event("R1", after = first + 2, url = pausedUrl)
             idTo(first + 3, "{}")
+            idTo(first + 2, """{"frameId":"F","loaderId":"$loader"}""")
+            idTo(first + 4, "{}")
+        }
+
+        /** [navigation], the commit that follows it, and a handle on the loaded page. */
+        fun takeOver(loader: String, first: Int = 1, pausedUrl: String = URL) {
+            navigation(loader, first, pausedUrl)
+            commit(loader)
             ready(loader)
+        }
+
+        /** The document with [loader] committing, which needs no command. */
+        fun commit(loader: String) {
+            script += committed(loader)
         }
 
         fun socket() = harness.socket(script)
@@ -581,10 +687,23 @@ class PdfReaderTest {
         /** The commands that take a handle on the tab's document and check its loader. */
         val HANDLE = listOf("DOM.getDocument", "DOM.resolveNode", "Page.getFrameTree")
 
+        /** The commands of a takeover up to the wait for its commit. */
+        val NAVIGATION =
+            listOf(
+                "Page.enable",
+                "Fetch.enable",
+                "Page.navigate",
+                "Fetch.fulfillRequest",
+                "Fetch.disable",
+            )
+
+        /** The commands of a takeover whose navigation nothing paused. */
+        val UNANSWERED = listOf("Page.enable", "Fetch.enable", "Page.navigate", "Fetch.disable")
+
         /** The commands of a takeover, through the new page's first readiness check. */
-        val TAKE_OVER =
-            listOf("Fetch.enable", "Page.navigate", "Fetch.fulfillRequest", "Fetch.disable") +
-                HANDLE +
-                CALL
+        val TAKE_OVER = NAVIGATION + HANDLE + CALL
+
+        /** Longer than a commit waited for, and shorter than a wait that is working. */
+        const val COMMIT_LATE_MS = 1_000L
     }
 }

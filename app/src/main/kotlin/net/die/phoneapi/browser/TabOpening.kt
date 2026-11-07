@@ -342,7 +342,7 @@ internal data class DownloadStart(
 )
 
 /** What a tab's main frame has done, from the session's events. */
-private class OpenWatch {
+internal class OpenWatch {
     private val seen = MutableStateFlow(Seen())
     @Volatile private var first: String? = null
     @Volatile private var loader: String? = null
@@ -391,7 +391,7 @@ private class OpenWatch {
     }
 }
 
-private data class Seen(
+internal data class Seen(
     val commits: List<FrameInfo> = emptyList(),
     val download: Boolean = false,
     val ended: Boolean = false,

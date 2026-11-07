@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -128,15 +129,19 @@ internal class PdfReader(private val script: suspend () -> String) {
      */
     private suspend fun takeOver(cdp: CdpSession, frameId: String, url: String): Taken {
         val pauses = Channel<Paused>(Channel.UNLIMITED)
-        // Listening from before Fetch.enable, so every pause is answered. A listener may not wait,
-        // so answering, which does, happens in navigateAnswered.
-        val (navigated, answered) =
+        val watch = OpenWatch()
+        // Listening from before Page.enable and Fetch.enable, so every pause is answered and no
+        // commit is missed. A listener may not wait, so answering, which does, happens in
+        // navigateAnswered.
+        val loader =
             cdp.listen { event ->
+                    watch.apply(event)
                     if (event.method == "Fetch.requestPaused") {
                         event.params.decodeCdp<Paused>()?.let(pauses::trySend)
                     }
                 }
                 .use {
+                    cdp.call("Page.enable")
                     cdp.call(
                         "Fetch.enable",
                         buildJsonObject {
@@ -151,14 +156,29 @@ internal class PdfReader(private val script: suspend () -> String) {
                     )
                     // Interception ends with the DevTools session, so a cancelled takeover needs
                     // no cleanup.
-                    try {
-                        navigateAnswered(cdp, frameId, url, pauses)
-                    } catch (e: ApiException) {
-                        disableFetch(cdp)
-                        throw e
-                    }
+                    val (navigated, answered) =
+                        try {
+                            navigateAnswered(cdp, frameId, url, pauses)
+                        } catch (e: ApiException) {
+                            disableFetch(cdp)
+                            throw e
+                        }
+                    disableFetch(cdp)
+                    answeredLoader(navigated, answered).also { id -> awaitLoader(cdp, watch, id) }
                 }
-        disableFetch(cdp)
+        val page =
+            ownPage(cdp, loader)
+                ?: throw ApiException(
+                    BAD_GATEWAY,
+                    "page_error",
+                    "The tab loaded another page in place of the PDF's",
+                )
+        page.awaitReady()
+        return Taken(loader, page)
+    }
+
+    /** The loader of the navigation [navigated], which is PhoneAPI's page if it was [answered]. */
+    private fun answeredLoader(navigated: Navigated?, answered: Boolean): String {
         navigated?.errorText?.let {
             throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not open the PDF's page: $it")
         }
@@ -170,23 +190,33 @@ internal class PdfReader(private val script: suspend () -> String) {
                     "site's service worker answers it, so PhoneAPI could not put its page there",
             )
         }
-        val loader =
-            navigated?.loaderId
-                ?: throw ApiException(
-                    BAD_GATEWAY,
-                    "page_error",
-                    "Chrome did not open the PDF's page",
-                )
-        val page =
-            ownPage(cdp, loader)
-                ?: throw ApiException(
-                    BAD_GATEWAY,
-                    "page_error",
-                    "The tab loaded another page in place of the PDF's",
-                )
-        page.awaitReady()
-        return Taken(loader, page)
+        return navigated?.loaderId
+            ?: throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not open the PDF's page")
     }
+
+    /**
+     * Waits for the document with [loader] to commit. `Page.navigate` returns before that, and
+     * until then `DOM.getDocument` names the old document, whose node goes when the commit comes.
+     * The session ending fails this with `cdp_error`, as it does when Chrome closes the tab.
+     */
+    private suspend fun awaitLoader(cdp: CdpSession, watch: OpenWatch, loader: String) =
+        coroutineScope {
+            watch.navigatedAs(loader)
+            val closing = launch {
+                cdp.awaitClosed()
+                watch.ended()
+            }
+            try {
+                withTimeoutOrNull(PAGE_COMMIT_MS) { watch.await(watch::committed) }
+                    ?: throw ApiException(
+                        BAD_GATEWAY,
+                        "page_error",
+                        "Chrome did not load the PDF's page",
+                    )
+            } finally {
+                closing.cancel()
+            }
+        }
 
     /**
      * Navigates to [url] and answers every navigation of the main frame [frameId] among [pauses]
@@ -529,6 +559,9 @@ private const val PAGES_KEPT = 64
 /** How many URLs of saved PDFs [PdfReader] remembers. */
 private const val SAVED_KEPT = 256
 private const val LOAD_FACTOR = 0.75f
+
+/** How long the new page has to commit once `Page.navigate` has returned. */
+private const val PAGE_COMMIT_MS = 5_000L
 
 /** How often, and how many times, to look for the new page to finish loading. */
 private const val READY_POLL_MS = 50L
