@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-@Suppress("InjectDispatcher") // The lease's cleanup scope needs no real dispatcher here.
+@Suppress("InjectDispatcher") // Tests that need no clock run the lease and claims unconfined.
 @OptIn(ExperimentalCoroutinesApi::class)
 class TabsTest {
     private var front = "com.app"
