@@ -3,6 +3,7 @@ package net.die.phoneapi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import net.die.phoneapi.helper.tree.SelectorMatcher
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DeviceStateSummary
 import net.die.phoneapi.model.FindRequest
@@ -59,21 +60,60 @@ class ChromeDialogTest {
         assertNull(dialog.shown("example.com"))
     }
 
+    /** A tree with Chrome's dialog open under [title], read as the helper's selector does. */
+    private fun titled(title: String) {
+        tree = { request ->
+            val wanted = request.selector.textRegex
+            val hit = wanted == null || SelectorMatcher(request.selector).matches(node(title), PKG)
+            FindResult(seq = 1, matches = if (hit) listOf(node(title)) else emptyList())
+        }
+    }
+
     @Test
     fun `the title must name the host`() = runTest {
         val dialog = check(StandardTestDispatcher(testScheduler))
-        tree = { request ->
-            val hit =
-                request.selector.textContains == null || request.selector.textContains == "a.test"
-            FindResult(seq = 1, matches = if (hit) listOf(NODE) else emptyList())
-        }
+        titled("a.test says")
         assertTrue(dialog.shown() == true)
         assertTrue(dialog.shown("a.test") == true)
         assertFalse(dialog.shown("b.test") == true)
         assertEquals(false, dialog.shown("b.test"))
     }
 
+    @Test
+    fun `the whole host must match`() = runTest {
+        val dialog = check(StandardTestDispatcher(testScheduler))
+        // Another page's dialog in front, on a host that holds this one.
+        titled("www.a.test says")
+        assertEquals(false, dialog.shown("a.test"))
+        titled("a.test.evil.example says")
+        assertEquals(false, dialog.shown("a.test"))
+        titled("a.test:8080 says")
+        assertEquals(false, dialog.shown("a.test"))
+        assertEquals(true, dialog.shown("a.test:8080"))
+        titled("xa.test says")
+        assertEquals(false, dialog.shown("a.test"))
+    }
+
+    @Test
+    fun `the title's words don't count`() = runTest {
+        val dialog = check(StandardTestDispatcher(testScheduler))
+        // Chrome in another language puts other words around the host, touching it or not.
+        titled("Meldung von a.test")
+        assertEquals(true, dialog.shown("a.test"))
+        titled("a.testの内容")
+        assertEquals(true, dialog.shown("a.test"))
+    }
+
     private companion object {
-        val NODE = UiNode(ref = "e1", role = "view", bounds = Rect(0, 0, 1, 1))
+        const val PKG = "com.android.chrome"
+
+        fun node(text: String) =
+            UiNode(
+                ref = "e1",
+                role = "view",
+                id = "$PKG:id/title",
+                text = text,
+                bounds = Rect(0, 0, 1, 1),
+            )
     }
 }
