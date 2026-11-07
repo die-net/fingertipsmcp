@@ -382,13 +382,13 @@ internal class BrowserServiceImpl(
         }
     }
 
-    override suspend fun showing(id: String): Boolean {
+    override suspend fun showing(id: String): Boolean? {
         val (socket, chromeId) = parseBrowserTargetId(id)
         return try {
-            withTimeoutOrNull(SHOWING_MS) { usePage(socket, chromeId) { tabShowing(it) } } == true
-        } catch (_: ApiException) {
-            // Closed, or not answering: either way, not showing.
-            false
+            withTimeoutOrNull(SHOWING_MS) { usePage(socket, chromeId) { tabShowing(it) } }
+        } catch (e: ApiException) {
+            // A closed tab shows nothing. Any other failure leaves it unknown.
+            if (e.error == "not_found") false else null
         }
     }
 

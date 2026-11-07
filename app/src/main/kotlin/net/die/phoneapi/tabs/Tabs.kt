@@ -126,8 +126,9 @@ class Tabs(
         // The tab it last brought forward is the likely one, so it is asked about first.
         val front = fronts[holder]?.takeIf { it in mine }
         val shown =
-            (listOfNotNull(front) + (mine - setOfNotNull(front))).firstOrNull { base.showing(it) }
-                ?: return null
+            (listOfNotNull(front) + (mine - setOfNotNull(front))).firstOrNull {
+                base.showing(it) == true
+            } ?: return null
         mutex.withLock {
             owners.computeIfPresent(shown) { _, owner ->
                 if (owner.holder == holder) owner.copy(opened = false) else owner
@@ -450,14 +451,15 @@ class Tabs(
     private suspend fun showFor(holder: Holder?): Boolean {
         if (!inFront(CHROME_PACKAGE)) return true
         val front = (holder as? Holder.Session)?.let { fronts[it] }
-        if (front != null && base.showing(front)) return true
+        if (front != null && base.showing(front) == true) return true
         // A popup a page opened on its own, since the last listing, is its opener's too.
         adoptPopups(base.targets())
         val others = owners.filterValues { it.holder != holder }.keys
-        if (others.none { base.showing(it) }) return true
+        // A tab that does not answer may be the one on screen.
+        if (others.all { base.showing(it) == false }) return true
         val view = front ?: placeholderTab()
         base.activate(view)
-        return settled(FRONT_MS) { base.showing(view) }
+        return settled(FRONT_MS) { base.showing(view) == true }
     }
 
     /** The placeholder, opened again if it was closed. */

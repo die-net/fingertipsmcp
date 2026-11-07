@@ -188,8 +188,11 @@ interface BrowserService {
      */
     suspend fun activate(id: String)
 
-    /** Whether [id] reports itself visible. Only meaningful while its app is in front. */
-    suspend fun showing(id: String): Boolean
+    /**
+     * Whether [id] reports itself visible, or null when it does not say, as a busy page or one held
+     * by a dialog does not answer. Only meaningful while its app is in front.
+     */
+    suspend fun showing(id: String): Boolean?
 
     /**
      * Whether Chrome has stopped [id]'s timers, as the check started with its last background input
