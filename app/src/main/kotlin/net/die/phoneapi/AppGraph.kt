@@ -45,6 +45,7 @@ import net.die.phoneapi.core.UiService
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.AdbEndpointFinder
+import net.die.phoneapi.helperclient.AdbIdentity
 import net.die.phoneapi.helperclient.HelperConnection
 import net.die.phoneapi.helperclient.HelperLogcatFeed
 import net.die.phoneapi.helperclient.HelperShell
@@ -95,7 +96,7 @@ import net.die.phoneapi.wait.WaitServiceImpl
 /** Process-wide object graph, created once by [PhoneApiApp]. */
 class AppGraph(
     val context: Context,
-    filesDir: File = context.filesDir,
+    filesDir: File,
     val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
@@ -117,7 +118,8 @@ class AppGraph(
     val shell = HelperShell(helper, ioDispatcher)
     val network = NetworkWatcher(context)
     private val adbKeys = KeystorePrivateKeyStore(filesDir)
-    private val adbEndpoints = AdbEndpointFinder(context, helper, ioDispatcher)
+    private val adbEndpoints =
+        AdbEndpointFinder(context, helper, ioDispatcher, AdbIdentity(filesDir))
     private val wirelessSetting =
         SecureSettings(context.contentResolver).let {
             WirelessSetting(read = it::wirelessEnabled, write = it::setWirelessEnabled)

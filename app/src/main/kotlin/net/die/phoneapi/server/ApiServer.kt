@@ -34,14 +34,16 @@ import net.die.phoneapi.server.routes.tokenRoutes
 import net.die.phoneapi.server.routes.uiRoutes
 import net.die.phoneapi.server.routes.waitRoutes
 
-/** HTTP API on an abstract local socket, reached from the host with `adb forward`. */
+/**
+ * HTTP API on an abstract local socket, reached from the host with `adb forward`.
+ * [ServerController] owns its lifecycle and runs [start] and [stop] one at a time.
+ */
 class ApiServer(
     private val services: ServerServices,
     private val socketName: String,
 ) {
     private var server: EmbeddedServer<AbstractHttpEngine, AbstractHttpEngine.Configuration>? = null
 
-    @Synchronized
     fun start() {
         if (server != null) return
         val env = applicationEnvironment {}
@@ -59,10 +61,18 @@ class ApiServer(
         Log.i(TAG, "Listening on abstract socket $socketName")
     }
 
-    @Synchronized
-    fun stop() {
-        server?.stop(gracePeriodMillis = 200, timeoutMillis = 1_000)
+    /**
+     * Returns once the abstract name is free, and throws when it may still be bound. The
+     * connections and the application end either way.
+     */
+    suspend fun stop() {
+        val running = server ?: return
         server = null
+        try {
+            running.engine.closeListener()
+        } finally {
+            running.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
     }
 }
 
