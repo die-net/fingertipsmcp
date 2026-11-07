@@ -9,6 +9,7 @@ import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserInput
 import net.die.phoneapi.model.BrowserTapRequest
+import net.die.phoneapi.model.ConsoleRequest
 import net.die.phoneapi.model.KeyRequest
 import net.die.phoneapi.model.Point
 import net.die.phoneapi.model.Rect
@@ -308,6 +309,32 @@ class BrowserServiceTest {
         val result = virtual { service.closeTab("chrome_devtools_remote~abc") }
         assertTrue(result.ok)
         assertEquals("cdp", result.backend)
+    }
+
+    @Test
+    fun `a gone tab is not_found for every call`() {
+        // Chrome refuses a page socket for a closed tab, and the browser-wide commands on it.
+        val refused = "No such target id: abc"
+        val pageRefused =
+            asciiLines("HTTP/1.1 500 Internal Server Error", "Content-Length: ${refused.length}") +
+                refused.toByteArray()
+        val browserRefused =
+            switched() +
+                serverTextFrame(
+                    """{"id":1,"error":{"code":-32602,"message":"No target with given id found"}}"""
+                )
+        val service =
+            service(
+                byteArrayOf(),
+                sockets = CHROME,
+                open = { socket(browserRefused) },
+            )
+        val pageOnly = service(byteArrayOf(), sockets = CHROME, open = { socket(pageRefused) })
+        virtual {
+            assertEquals("not_found", failure { pageOnly.console(TAB, ConsoleRequest()) })
+            assertEquals("not_found", failure { service.closeTab(TAB) })
+            assertEquals("not_found", failure { service.activate(TAB) })
+        }
     }
 
     @Test
