@@ -152,7 +152,7 @@ class BrowserTouchTest {
             harness.socket(
                 harness.switched() +
                     harness.serverTextFrame(
-                        """{"method":"Inspector.targetCrashed","params":{}}"""
+                        """{"method":"Inspector.targetCrashed","afterId":1,"params":{}}"""
                     ) +
                     empty(1) +
                     empty(2)

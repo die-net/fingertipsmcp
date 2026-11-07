@@ -355,6 +355,15 @@ On the Android 16 emulator on 2026-11-06, with the lock screen turned on, a swip
 
 On the Android 16 emulator on 2026-11-06, `app_launch` through the helper brought Settings forward in 1.5 s. Without the helper Android dropped the start, and the call failed 503 `helper_unavailable` after 5 s. A copy with `KEYCODE_COPY` in Chrome returned the selected text. An `open_intent` tab was claimed within 2.2 s, under the URL match main has since replaced. Chrome 133 returned `loaderId` from `Page.getFrameTree`, sent the `load` lifecycle event, and sent `requestWillBeSent` again with the same id for a redirect. A debug start logged a StrictMode `DiskReadViolation` from `getFilesDir` in `AdbEndpointFinder`'s constructor, on the main thread. A helper registering while the app starts threw `lateinit property graph has not been initialized` across binder, and it got in on the app's next try.
 
+## Browser waits
+
+On the Android 10 emulator (Chrome 91) on 2026-11-06, with a wait's events read through `CdpSession.listen`:
+
+- `browser.lifecycle`, `browser.request`, and `browser.url` together matched across a navigation to a page with 300 images, in six runs of six.
+- `browser.newTarget` matched a page that was already open, in about 70 ms. The build before the change did too. So Chrome's `Target.targetCreated` events after `Target.setDiscoverTargets` include open pages, and PhoneAPI counts them as new.
+- `browser.element` in a wait that spans a navigation failed with `cdp_error` "Could not find node with given id", in six runs of six, on both builds.
+- With a hidden tab's renderer killed, a call got `tab_reloaded` and the next one worked, through a listener held for `Inspector.enable`.
+
 ## Still to check on the phone
 
 - That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
