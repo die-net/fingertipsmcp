@@ -36,7 +36,7 @@ class DeviceRouteTest {
     }
 
     @Test
-    fun `another token's session is not you`() = testApplication {
+    fun `other tokens' ids name no one`() = testApplication {
         val api = FakeApi()
         val alice = api.tokens.issue("alice", Scope.entries.toSet())
         val bob = api.tokens.issue("bob", Scope.entries.toSet())

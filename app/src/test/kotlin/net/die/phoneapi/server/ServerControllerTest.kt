@@ -26,7 +26,7 @@ class ServerControllerTest {
 
     /** As when the old listener still held the name: the next `phoneapi helper` tries again. */
     @Test
-    fun `a failed start is tried again on the next acquire`() = runTest {
+    fun `a failed start is retried`() = runTest {
         val controller = controller(this)
         bindFails = true
         controller.acquire(HOLDER)
@@ -39,7 +39,7 @@ class ServerControllerTest {
     }
 
     @Test
-    fun `a release before the start runs leaves it closed`() = runTest {
+    fun `an early release stays closed`() = runTest {
         val controller = controller(this)
         controller.acquire(HOLDER)
         controller.release(HOLDER)

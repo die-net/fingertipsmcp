@@ -93,7 +93,7 @@ class McpScreenTest {
     }
 
     @Test
-    fun `a find with url starts chrome with the screen`() = runBlocking {
+    fun `url finds start chrome`() = runBlocking {
         val stopped = FakeBrowser().apply { stopped = true }
         val url = args("""{"url":"https://example.com/","query":"x"}""")
         val find = tool("browser_find").screen
@@ -104,7 +104,7 @@ class McpScreenTest {
     }
 
     @Test
-    fun `pages that can launch apps are watched`() {
+    fun `page acts are watched`() {
         val url = args("""{"url":"https://example.com/"}""")
         val target = args("""{"target":"t"}""")
         val watched = tools().filter { it.screen.launches(url) }.names()

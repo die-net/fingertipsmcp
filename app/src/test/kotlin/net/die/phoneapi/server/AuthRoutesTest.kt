@@ -108,7 +108,7 @@ class AuthRoutesTest {
 
     /** An `Upgrade` header on a route that is not a socket gives the query and cookie no say. */
     @Test
-    fun `query and cookie go by route, not by upgrade header`() {
+    fun `query and cookie go by route`() {
         val api = FakeApi()
         val secret = api.tokens.issue("all", Scope.entries.toSet())
         RawServer(api.services).use { raw ->

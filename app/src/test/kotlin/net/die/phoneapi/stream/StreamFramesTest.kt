@@ -125,7 +125,7 @@ class StreamFramesTest {
 
     /** A resolution change that encodes at the same size still has to reach the viewer. */
     @Test
-    fun `a new screen size at the same encoded size resends the header`() {
+    fun `a new screen size resends`() {
         assertEquals(576 to 1280, scaledSize(1440, 3200, 1280))
         assertEquals(
             DisplayChange.HEADER,

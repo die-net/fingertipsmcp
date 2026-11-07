@@ -186,7 +186,7 @@ class McpSessionTest {
     }
 
     @Test
-    fun `a request after losing a scope ends it at once`() = testApplication {
+    fun `losing a scope ends at once`() = testApplication {
         start()
         apiClient().use { http ->
             val id = initialize(http, alice)
@@ -213,7 +213,7 @@ class McpSessionTest {
     }
 
     @Test
-    fun `one failed end leaves the sweep running`() = testApplication {
+    fun `a failed end keeps sweeping`() = testApplication {
         var failed = false
         val made =
             start(

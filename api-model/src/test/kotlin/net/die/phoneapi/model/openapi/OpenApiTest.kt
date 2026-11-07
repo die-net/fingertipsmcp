@@ -44,7 +44,7 @@ class OpenApiTest {
 
     /** These routes take an empty POST as the request's defaults, so the body is optional. */
     @Test
-    fun `optional bodies are not required`() {
+    fun `optional bodies`() {
         val paths = phoneApiOpenApi()["paths"]!!.jsonObject
         fun required(path: String) =
             paths[path]!!
@@ -59,6 +59,6 @@ class OpenApiTest {
         assertEquals(false, required("/v1/screen/release"))
         assertEquals(true, required("/v1/input/tap"))
         val release = paths["/v1/screen/release"]!!.jsonObject["post"]!!.jsonObject
-        assertTrue(release["requestBody"].toString().contains("ScreenReleaseRequest"))
+        assertTrue(release.getValue("requestBody").toString().contains("ScreenReleaseRequest"))
     }
 }

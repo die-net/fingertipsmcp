@@ -47,34 +47,49 @@ fun Route.streamRoutes(services: ServerServices) {
             call.respondBytes(viewer.bytes(), ContentType.Text.Html)
         }
         webSocket("/v1/stream/video") {
-            if (!services.device.capabilities().streamVideoMirror) {
-                close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Video needs the shell helper"))
-                return@webSocket
-            }
-            try {
-                services.power.wake()
+            services.serveStream(
+                this,
+                available = services.device.capabilities().streamVideoMirror,
+                refused = "Video needs the shell helper",
+                failed = "The video encoder could not start",
+            ) {
                 services.video.serve(this, videoSpec(call))
-            } catch (e: ApiException) {
-                failStream(this, e, "The video encoder could not start")
             }
         }
         webSocket("/v1/stream/audio") {
-            if (!services.device.capabilities().streamAudioSubmix) {
-                close(
-                    CloseReason(
-                        CloseReason.Codes.CANNOT_ACCEPT,
-                        "Audio needs Android 11 or later and the shell helper",
-                    )
-                )
-                return@webSocket
-            }
-            try {
-                services.power.wake()
+            services.serveStream(
+                this,
+                available = services.device.capabilities().streamAudioSubmix,
+                refused = "Audio needs Android 11 or later and the shell helper",
+                failed = "Audio capture could not start",
+            ) {
                 services.audio.serve(this)
-            } catch (e: ApiException) {
-                failStream(this, e, "Audio capture could not start")
             }
         }
+    }
+}
+
+/**
+ * Serves one stream socket with [serve], after waking the screen. A device that cannot stream at
+ * all, not [available], closes it with CANNOT_ACCEPT and [refused], which the viewer takes as
+ * final. A stream that fails to start closes with its error's message, or [failed].
+ */
+private suspend fun ServerServices.serveStream(
+    session: DefaultWebSocketServerSession,
+    available: Boolean,
+    refused: String,
+    failed: String,
+    serve: suspend () -> Unit,
+) {
+    if (!available) {
+        session.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, refused))
+        return
+    }
+    try {
+        power.wake()
+        serve()
+    } catch (e: ApiException) {
+        failStream(session, e, failed)
     }
 }
 

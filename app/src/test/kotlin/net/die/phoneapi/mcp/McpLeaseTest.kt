@@ -173,7 +173,7 @@ class McpLeaseTest {
 
     /** A url read opens a page, which could launch an app, so it is watched as browser input is. */
     @Test
-    fun `a url read that brings an app forward took the screen`() = testApplication {
+    fun `url reads watch for launches`() = testApplication {
         var onRead = {}
         val launching =
             FakeApi(
