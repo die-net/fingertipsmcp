@@ -168,9 +168,9 @@ class TabProbeTest {
 
     /** `Inspector.targetCrashed`, then the replies to `Inspector.enable` and `Page.reload`. */
     private fun crashed() =
-        harness.serverTextFrame("""{"method":"Inspector.targetCrashed","params":{}}""") +
-            empty(1) +
-            empty(2)
+        harness.serverTextFrame(
+            """{"method":"Inspector.targetCrashed","afterId":1,"params":{}}"""
+        ) + empty(1) + empty(2)
 
     private fun value(id: Int, json: String) =
         harness.serverTextFrame("""{"id":$id,"result":{"result":{"value":$json}}}""")

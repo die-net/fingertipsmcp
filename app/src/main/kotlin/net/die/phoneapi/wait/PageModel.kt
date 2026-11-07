@@ -16,6 +16,9 @@ import net.die.phoneapi.model.wire
  * What one page has done since a wait started. Updated from CDP events; queried by the wait
  * conditions. An already-loaded page does not replay `load`, so a lifecycle wait only matches an
  * event that happens after the wait begins.
+ *
+ * Events arrive on the session's reader, which must not wait, so a query takes only what it needs
+ * under [lock] and matches outside it. A regex comes from the client and can run for a long time.
  */
 internal class PageModel(startedMs: Long) {
     private val lock = Any()
@@ -68,14 +71,12 @@ internal class PageModel(startedMs: Long) {
             }
         }
 
-    fun urlMatches(equals: String?, contains: String?, regex: Regex?): Boolean =
-        synchronized(lock) {
-            val page = url ?: return false
-            if (equals != null && page != equals) return false
-            if (contains != null && !page.contains(contains)) return false
-            if (regex != null && !regex.containsMatchIn(page)) return false
-            true
-        }
+    fun urlMatches(equals: String?, contains: String?, regex: Regex?): Boolean {
+        val page = synchronized(lock) { url } ?: return false
+        return (equals == null || page == equals) &&
+            (contains == null || page.contains(contains)) &&
+            (regex == null || regex.containsMatchIn(page))
+    }
 
     fun sawLifecycle(name: String): Boolean = synchronized(lock) { name in lifecycle }
 
@@ -105,9 +106,8 @@ internal class PageModel(startedMs: Long) {
         method: String?,
         status: Int?,
     ): Boolean =
-        synchronized(lock) {
-            finished.any { requestHits(it, urlContains, urlRegex, method, status) }
-        }
+        synchronized(lock) { finished.toList() }
+            .any { requestHits(it, urlContains, urlRegex, method, status) }
 
     private fun requestHits(
         request: Request,
@@ -123,12 +123,11 @@ internal class PageModel(startedMs: Long) {
     }
 
     fun logMatched(level: LogLevel?, textContains: String?): Boolean =
-        synchronized(lock) {
-            logs.any { hit ->
+        synchronized(lock) { logs.toList() }
+            .any { hit ->
                 (level == null || hit.level.equals(level.wire, ignoreCase = true)) &&
                     (textContains == null || hit.text.contains(textContains))
             }
-        }
 
     private fun quiet(ready: Boolean, since: Long, quietMs: Long, now: Long): Check {
         if (!ready) return Check(satisfied = false)
@@ -243,7 +242,10 @@ internal class PageModel(startedMs: Long) {
     }
 }
 
-/** Pages created after the wait started, from the browser-level target events. */
+/**
+ * Pages created after the wait started, from the browser-level target events. Events arrive on the
+ * session's reader while the wait queries from its own thread, so both take [urls]' lock.
+ */
 internal class TargetModel {
     private val urls = ArrayDeque<String>()
 
@@ -252,13 +254,14 @@ internal class TargetModel {
         val info = params.decodeCdp<TargetCreated>()?.targetInfo ?: return
         if (info.type != "page") return
         val url = info.url ?: return
-        if (urls.size == CAP) urls.removeFirst()
-        urls.addLast(url)
+        synchronized(urls) {
+            if (urls.size == CAP) urls.removeFirst()
+            urls.addLast(url)
+        }
     }
 
-    fun matches(urlContains: String?): Boolean = urls.any {
-        urlContains == null || it.contains(urlContains)
-    }
+    fun matches(urlContains: String?): Boolean =
+        synchronized(urls) { urls.toList() }.any { urlContains == null || it.contains(urlContains) }
 
     private companion object {
         const val CAP = 50

@@ -11,8 +11,6 @@ import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -39,18 +37,20 @@ class CdpSessionTest {
                         val streams = client.getInputStream() to client.getOutputStream()
                         CdpSession(streams.first, streams.second, Dispatchers.IO).use { session ->
                             val served = launch(Dispatchers.IO) { serve(accepted) }
-                            session.open("/devtools/page/abc")
-                            val event = async { session.events.first() }
-                            val result =
-                                session.call(
-                                    "Runtime.evaluate",
-                                    buildJsonObject { put("expression", "1+1") },
-                                )
-                            assertEquals(2, result.decodeCdp<Eval>()!!.result.value)
-                            val delivered = event.await()
-                            assertEquals("Log.entryAdded", delivered.method)
-                            assertEquals("hi", delivered.params.decodeCdp<LogAdded>()!!.entry.text)
-                            served.join()
+                            val events = ArrayList<CdpEvent>()
+                            session.listen(events::add).use {
+                                session.open("/devtools/page/abc")
+                                val result =
+                                    session.call(
+                                        "Runtime.evaluate",
+                                        buildJsonObject { put("expression", "1+1") },
+                                    )
+                                assertEquals(2, result.decodeCdp<Eval>()!!.result.value)
+                                served.join()
+                            }
+                            assertEquals(listOf("Log.entryAdded"), events.map { it.method })
+                            val entry = events.single().params.decodeCdp<LogAdded>()!!.entry
+                            assertEquals("hi", entry.text)
                         }
                     }
                 }

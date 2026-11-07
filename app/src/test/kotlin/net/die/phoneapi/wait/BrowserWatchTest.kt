@@ -1,6 +1,12 @@
 package net.die.phoneapi.wait
 
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Delay
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -8,6 +14,7 @@ import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.browser.BrowserServiceTest
 import net.die.phoneapi.browser.CHROME_SOCKET
 import net.die.phoneapi.browser.KeyedSocket
+import net.die.phoneapi.browser.VirtualIo
 import net.die.phoneapi.model.BrowserTarget
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.server.FakeBrowser
@@ -189,6 +196,66 @@ class BrowserWatchTest {
         assertEquals(listOf("Page.enable", "Page.getFrameTree"), page.methods())
     }
 
+    @Test
+    fun `a slow wait misses no event`() = clock.run {
+        // The burst comes between the replies to DOM.getDocument and DOM.querySelector, so it has
+        // all been read once the element check returns.
+        val page =
+            KeyedSocket(
+                reply(1) +
+                    reply(2) +
+                    reply(3) +
+                    harness.serverTextFrame(
+                        """{"id":4,"result":{"frameTree":{"frame":{"id":"F"}}}}"""
+                    ) +
+                    harness.serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
+                    lifecycle("load") +
+                    (1..BURST).map { lifecycle("commit") }.reduce(ByteArray::plus) +
+                    harness.serverTextFrame("""{"id":6,"result":{"nodeId":2}}"""),
+                clock,
+            )
+        val load = WaitCondition.BrowserLifecycle(target = TAB, name = "load")
+        val element = WaitCondition.BrowserElement(target = TAB, selector = "#a")
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }) { false }
+        val busy = BusyThread(clock)
+        val satisfied =
+            withTimeout(WAIT_MS) {
+                val opened = CompletableDeferred<Unit>()
+                val waiting =
+                    launch(busy) {
+                        watch.open(listOf(load, element), timeoutMs = 60_000)
+                        opened.complete(Unit)
+                    }
+                opened.await()
+                busy.hold()
+                assertTrue(watch.check(element).satisfied)
+                watch.check(load).satisfied.also {
+                    watch.close()
+                    busy.release()
+                    waiting.join()
+                }
+            }
+        assertTrue(satisfied)
+    }
+
+    @Test
+    fun `counts a page opened later`() = clock.run {
+        val chrome = KeyedSocket(reply(1), clock)
+        val opened = WaitCondition.BrowserNewTarget(urlContains = "b.test")
+        val watch = BrowserWatch(browser, clock, { _, _ -> chrome }) { false }
+        withTimeout(WAIT_MS) {
+            watch.open(listOf(opened), timeoutMs = 60_000)
+            assertFalse(watch.check(opened).satisfied)
+            chrome.deliver(
+                watch,
+                """{"method":"Target.targetCreated","params":{"targetInfo":""" +
+                    """{"type":"page","url":"http://b.test/"}}}""",
+            )
+            assertTrue(watch.check(opened).satisfied)
+            watch.close()
+        }
+    }
+
     /** A page for a settled wait, whose document says [readyState]. */
     private fun settledPage(readyState: String) =
         KeyedSocket(
@@ -213,6 +280,43 @@ class BrowserWatchTest {
         taken.join()
     }
 
+    private fun reply(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{}}""")
+
+    private fun lifecycle(name: String) =
+        harness.serverTextFrame(
+            """{"method":"Page.lifecycleEvent","params":{"frameId":"F","name":"$name"}}"""
+        )
+
+    /**
+     * The thread a wait runs on. It passes work to [clock] until [hold], then keeps it until
+     * [release], as a thread does while something else has it busy.
+     */
+    @OptIn(InternalCoroutinesApi::class) // Delay is how a dispatcher gives delay() its clock.
+    private class BusyThread(private val clock: VirtualIo) : CoroutineDispatcher(), Delay by clock {
+        private val held = ArrayList<Pair<CoroutineContext, Runnable>>()
+        private var holding = false
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            val kept =
+                synchronized(held) {
+                    if (holding) held += context to block
+                    holding
+                }
+            if (!kept) clock.dispatch(context, block)
+        }
+
+        fun hold() = synchronized(held) { holding = true }
+
+        fun release() {
+            val due =
+                synchronized(held) {
+                    holding = false
+                    held.toList().also { held.clear() }
+                }
+            due.forEach { (context, block) -> clock.dispatch(context, block) }
+        }
+    }
+
     private companion object {
         const val LOAD_FIRED = """{"method":"Page.loadEventFired","params":{"timestamp":1}}"""
         const val COMMITTED =
@@ -220,5 +324,7 @@ class BrowserWatchTest {
                 """"url":"https://a.test/","loaderId":"L1"}}}"""
         const val TAB = "${CHROME_SOCKET}~T1"
         const val WAIT_MS = 5_000L
+        /** Events in a burst, more than a session could hold for a reader that is behind. */
+        const val BURST = 200
     }
 }

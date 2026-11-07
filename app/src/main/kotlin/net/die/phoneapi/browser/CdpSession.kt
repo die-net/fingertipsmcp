@@ -10,10 +10,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -42,7 +38,7 @@ internal data class CdpReply(val result: JsonObject, val eventsBefore: Long)
 
 /**
  * One DevTools WebSocket. Commands are matched by id; everything without an id is an event, for
- * [listen] and [events]. The reader runs on [dispatcher].
+ * [listen]. The reader runs on [dispatcher].
  */
 internal class CdpSession(
     input: InputStream,
@@ -60,22 +56,12 @@ internal class CdpSession(
     private val listeners = CopyOnWriteArrayList<(CdpEvent) -> Unit>()
     /** Events read so far. Only the reader touches it. */
     private var eventsRead = 0L
-    private val eventsFlow =
-        MutableSharedFlow<CdpEvent>(
-            replay = EVENT_BUFFER,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
-
-    /**
-     * The events, as a flow that replays the last [EVENT_BUFFER]. A collector that falls behind
-     * skips events, so code that has to see every one uses [listen].
-     */
-    val events: Flow<CdpEvent> = eventsFlow.asSharedFlow()
 
     /**
      * Calls [onEvent] with every event from now on, in the order Chrome sent them, on the reader,
      * until the returned handle is closed. It runs before the next message is read, so it must not
-     * block or wait.
+     * block or wait, and an event sent before a command's reply has reached it once that command
+     * returns.
      */
     fun listen(onEvent: (CdpEvent) -> Unit): Closeable {
         // A holder of its own, so closing removes this listener and no other.
@@ -83,12 +69,6 @@ internal class CdpSession(
         listeners += holder
         return Closeable { listeners -= holder }
     }
-
-    /**
-     * Whether [method] arrived among the last events. Messages are handled in order, so an event
-     * sent before a command's reply is here once that command returns.
-     */
-    fun seen(method: String): Boolean = eventsFlow.replayCache.any { it.method == method }
 
     /** Returns once the reader has stopped: the page closed, the socket failed, or [close]. */
     suspend fun awaitClosed() = stopped.await()
@@ -168,7 +148,7 @@ internal class CdpSession(
         }
     }
 
-    private suspend fun dispatch(text: String) {
+    private fun dispatch(text: String) {
         val message =
             try {
                 ApiJson.decodeFromString<Envelope>(text)
@@ -182,7 +162,6 @@ internal class CdpSession(
             val method = message.method ?: return
             val event = CdpEvent(method, message.params ?: JsonObject(emptyMap()), eventsRead++)
             listeners.forEach { it(event) }
-            eventsFlow.emit(event)
             return
         }
         val error = message.error
@@ -234,6 +213,5 @@ internal class CdpSession(
 
     private companion object {
         const val CALL_TIMEOUT_MS = 15_000L
-        const val EVENT_BUFFER = 64
     }
 }

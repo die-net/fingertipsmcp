@@ -1,6 +1,7 @@
 package net.die.phoneapi.wait
 
 import android.os.SystemClock
+import java.io.Closeable
 import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
@@ -18,7 +19,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import net.die.phoneapi.browser.CHROME_SOCKET
-import net.die.phoneapi.browser.CdpEvent
 import net.die.phoneapi.browser.CdpSession
 import net.die.phoneapi.browser.DEVTOOLS_CLOSED
 import net.die.phoneapi.browser.DevtoolsSocket
@@ -33,8 +33,9 @@ import net.die.phoneapi.model.ElementState
 import net.die.phoneapi.model.WaitCondition
 
 /**
- * CDP sessions held for one `POST /v1/wait`. Events update [PageModel] and wake the wait loop.
- * Closing the sockets unblocks the readers.
+ * CDP sessions held for one `POST /v1/wait`. Every event updates [PageModel] or [TargetModel] and
+ * wakes the wait loop, on the session's reader, so a wait busy with a check skips none. Closing the
+ * sockets unblocks the readers.
  */
 internal class BrowserWatch(
     private val browser: BrowserService,
@@ -53,6 +54,7 @@ internal class BrowserWatch(
     private val targets = TargetModel()
     private val sockets = ArrayList<DevtoolsSocket>()
     private val sessions = ArrayList<CdpSession>()
+    private val listening = ArrayList<Closeable>()
     private val jobs = ArrayList<Job>()
     private var defaultId: String? = null
 
@@ -126,6 +128,8 @@ internal class BrowserWatch(
     fun close() {
         jobs.forEach { it.cancel() }
         jobs.clear()
+        listening.forEach { it.close() }
+        listening.clear()
         val live = sessions.toList()
         sessions.clear()
         live.forEach { it.close() }
@@ -171,14 +175,15 @@ internal class BrowserWatch(
         val devtools = openSocket(socketName, timeoutMs)
         val session = CdpSession(devtools.input, devtools.output, io)
         sessions += session
-        session.open("/devtools/page/$chromeId")
         val model = PageModel(SystemClock.uptimeMillis())
         val page = PageSession(model, session)
-        watch(session) { event ->
+        // Before the reader starts, since a listener hears only what comes after it.
+        listening += session.listen { event ->
             model.apply(event.method, event.params, SystemClock.uptimeMillis())
             if (event.method == "DOM.documentUpdated") page.forgetDocument()
             signals.tryEmit(Unit)
         }
+        session.open("/devtools/page/$chromeId")
         val onThisPage = conditions.filter { onPage(it, id) }
         val domains = domainsFor(onThisPage)
         val lifecycle = onThisPage.any { it is WaitCondition.BrowserLifecycle }
@@ -223,20 +228,12 @@ internal class BrowserWatch(
         val devtools = openSocket(CHROME_SOCKET, timeoutMs)
         val session = CdpSession(devtools.input, devtools.output, io)
         sessions += session
-        session.open("/devtools/browser")
-        watch(session) { event ->
+        listening += session.listen { event ->
             targets.apply(event.method, event.params)
             signals.tryEmit(Unit)
         }
+        session.open("/devtools/browser")
         session.call("Target.setDiscoverTargets", buildJsonObject { put("discover", true) })
-    }
-
-    private suspend fun watch(session: CdpSession, block: (CdpEvent) -> Unit) {
-        val job =
-            CoroutineScope(currentCoroutineContext()).launch {
-                session.events.collect { event -> block(event) }
-            }
-        jobs += job
     }
 
     @Suppress("MissingUseCall") // Closed with the rest of the watch.

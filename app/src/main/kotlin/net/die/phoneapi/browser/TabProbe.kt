@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -109,11 +110,15 @@ internal class TabProbe(
      * as a script probe with a timeout would.
      */
     private suspend fun unloaded(cdp: CdpSession, socket: String): Boolean {
-        if (withTimeoutOrNull(PROBE_MS) { cdp.call("Inspector.enable") } == null) {
+        val crashed = AtomicBoolean(false)
+        val answered =
+            cdp.listen { if (it.method == "Inspector.targetCrashed") crashed.set(true) }
+                .use { withTimeoutOrNull(PROBE_MS) { cdp.call("Inspector.enable") } != null }
+        if (!answered) {
             if (browserSilent(socket)) throw browserFrozen()
             return false
         }
-        return cdp.seen("Inspector.targetCrashed")
+        return crashed.get()
     }
 
     /** Waits, up to [RELOAD_MS], until the reloaded page has its document. True once it does. */
