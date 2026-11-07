@@ -3,6 +3,7 @@ package net.die.phoneapi.browser
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -165,6 +166,36 @@ class NetworkCaptureTest {
             assertTrue(tight.all { it.omitted })
             capture.stop(TAB)
         }
+
+    @Test
+    fun `records a burst while its scope is busy`() {
+        // More events in a row than the session's event flow replays. The capture's own scope
+        // does not run until the end, as when its threads are busy, so only recording on the
+        // session's reader sees them all.
+        val responses = CaptureLog.MAX_RESPONSES * 2
+        val burst =
+            (1..responses).fold(byteArrayOf()) { all, n ->
+                all +
+                    frame(received("r$n", "https://a.test/$n", "application/json")) +
+                    frame(finished("r$n"))
+            }
+        val page = harness.socket(harness.switched() + reply(1, "{}") + burst + reply(2, "{}"))
+        val held = StandardTestDispatcher()
+        lateinit var opened: PageLink
+        val capture = NetworkCapture(CoroutineScope(held), { link(page).also { opened = it } })
+        harness.clock.run {
+            capture.start(TAB)
+            // Its reply comes after the burst, so the reader has handled every event by then.
+            opened.cdp.call("Page.enable")
+        }
+        held.scheduler.runCurrent()
+        val names = capture.listed(TAB).map { it.name }
+        assertEquals(
+            (CaptureLog.MAX_RESPONSES + 1..responses).map { "response-$it" },
+            names,
+        )
+        capture.stop(TAB)
+    }
 
     @Test
     fun `ends when the tab closes`() =
