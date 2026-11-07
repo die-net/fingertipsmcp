@@ -259,7 +259,7 @@ internal class AudioTap {
         val component = ComponentName(SHELL_PACKAGE, HEAP_DUMP_ACTIVITY)
         val exit = runShell("am", "start", "-W", "-n", component.flattenToShortString())
         if (exit != 0) {
-            Log.w(TAG, "The shell activity did not start (am exited $exit)")
+            Log.w(TAG, "The shell activity did not start (am exited ${exit ?: "without a status"})")
             return null
         }
         val task =

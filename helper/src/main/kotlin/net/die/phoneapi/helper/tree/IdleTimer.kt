@@ -17,7 +17,10 @@ internal class IdleTimer(
     private var lastUseMs = 0L
     private var pending = false
     private var running = false
-    private val check = Runnable { check() }
+    private val task =
+        object : Runnable {
+            override fun run() = check(this)
+        }
 
     /** Starts timing; called when the session connects. */
     fun start() {
@@ -38,10 +41,11 @@ internal class IdleTimer(
             schedule = running && !pending
             if (schedule) pending = true
         }
-        if (schedule) post(check, idleMs)
+        if (schedule) post(task, idleMs)
     }
 
-    private fun check() {
+    /** Runs when [self], the posted check, comes due, and posts it again if needed. */
+    private fun check(self: Runnable) {
         val wait: Long?
         synchronized(lock) {
             pending = false
@@ -55,6 +59,6 @@ internal class IdleTimer(
                 }
             if (wait != null) pending = true else running = false
         }
-        if (wait != null) post(check, wait) else onIdle()
+        if (wait != null) post(self, wait) else onIdle()
     }
 }

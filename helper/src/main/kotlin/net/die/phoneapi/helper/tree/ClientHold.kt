@@ -14,5 +14,5 @@ internal class ClientHold(private val client: () -> Any?) {
     }
 
     val held: Boolean
-        get() = holder?.let { it == client() } ?: false
+        get() = holder?.let { it == client() } == true
 }

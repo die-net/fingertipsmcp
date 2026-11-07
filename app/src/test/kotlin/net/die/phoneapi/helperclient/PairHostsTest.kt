@@ -24,7 +24,7 @@ class PairHostsTest {
     }
 
     @Test
-    fun `a refused loopback falls through to the LAN address`() = runTest {
+    fun `refused loopback tries LAN`() = runTest {
         pairAtFirstListening(hosts) { host ->
             tried += host
             if (host == "127.0.0.1") throw ConnectException("Connection refused")
@@ -33,7 +33,7 @@ class PairHostsTest {
     }
 
     @Test
-    fun `refused everywhere reports the refusal`() = runTest {
+    fun `refused everywhere throws`() = runTest {
         assertThrows<ConnectException> {
             pairAtFirstListening(hosts) { host ->
                 tried += host

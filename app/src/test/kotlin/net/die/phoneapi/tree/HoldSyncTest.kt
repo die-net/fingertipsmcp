@@ -31,7 +31,7 @@ class HoldSyncTest {
     }
 
     @Test
-    fun `a failed hold is reported and sent on the next attach`() {
+    fun `a failed hold is resent`() {
         val helper = FakeHelper(down = true)
         sync.want(true) { helper }
         assertEquals(listOf(true), failures)
@@ -41,7 +41,7 @@ class HoldSyncTest {
     }
 
     @Test
-    fun `a hold made while no helper runs reaches the next one`() {
+    fun `a hold reaches the next helper`() {
         sync.want(true) { throw ApiException.helperUnavailable("It is starting.") }
         val next = FakeHelper()
         sync.attached(next)
@@ -49,7 +49,7 @@ class HoldSyncTest {
     }
 
     @Test
-    fun `a release while the helper was down is not lost`() {
+    fun `a release is not lost`() {
         val helper = FakeHelper()
         sync.want(true) { helper }
         helper.down = true

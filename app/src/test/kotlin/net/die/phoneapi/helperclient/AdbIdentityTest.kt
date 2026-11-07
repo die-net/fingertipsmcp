@@ -12,7 +12,7 @@ class AdbIdentityTest {
     @TempDir lateinit var dir: File
 
     @Test
-    fun `remembers the serial and port of a working connection`() {
+    fun `remembers serial and port`() {
         val identity = AdbIdentity(dir)
         assertNull(identity.serial)
         identity.remember("ZY227DX4L7\n", 37_041)
@@ -22,7 +22,7 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `a refused port is forgotten, another is kept`() {
+    fun `forgets only a refused port`() {
         val identity = AdbIdentity(dir)
         identity.remember("ZY227DX4L7", 37_041)
         identity.forgetPort(40_000)
@@ -33,7 +33,7 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `an empty or odd serial is not kept`() {
+    fun `an odd serial is not kept`() {
         val identity = AdbIdentity(dir)
         identity.remember("", 37_041)
         assertNull(identity.serial)
@@ -42,7 +42,7 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `only this phone's records match its serial`() {
+    fun `only own records match`() {
         assertTrue(isOwnAdbRecord("adb-ZY227DX4L7-AbC123", "ZY227DX4L7"))
         assertFalse(isOwnAdbRecord("adb-EMULATOR37X1X11X0-xYz789", "ZY227DX4L7"))
         // One serial that starts another must not match it.
@@ -50,14 +50,14 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `reads the serial out of a record name`() {
+    fun `reads a record's serial`() {
         assertEquals("ZY227DX4L7", serialOfAdbRecord("adb-ZY227DX4L7-AbC123"))
         assertEquals("emulator-5554", serialOfAdbRecord("adb-emulator-5554-AbC123"))
         assertNull(serialOfAdbRecord("printer"))
     }
 
     @Test
-    fun `a foreign record is never queued once the serial is known`() {
+    fun `a foreign record is skipped`() {
         val queue = ResolveQueue<String> { isOwnAdbRecord(it, "ZY227DX4L7") }
         queue.found("adb-EMULATOR37X1X11X0-xYz789", "emulator")
         queue.found("adb-ZY227DX4L7-AbC123", "phone")
@@ -66,7 +66,7 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `a record lost and found again is resolved again`() {
+    fun `a refound record is queued`() {
         val queue = ResolveQueue<String> { true }
         queue.found("adb-ZY227DX4L7-AbC123", "old port")
         assertEquals("old port", queue.next())
@@ -76,7 +76,7 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun `a record found twice is resolved once`() {
+    fun `a record is queued once`() {
         val queue = ResolveQueue<String> { true }
         queue.found("adb-ZY227DX4L7-AbC123", "first")
         queue.found("adb-ZY227DX4L7-AbC123", "again")

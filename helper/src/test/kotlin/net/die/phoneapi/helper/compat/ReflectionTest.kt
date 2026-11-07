@@ -22,25 +22,25 @@ class ReflectionTest {
         reflective("Service.$name") { Service::class.java.getMethod(name).invoke(service) }
 
     @Test
-    fun `a runtime exception from the call comes out as itself`() {
+    fun `runtime exception passes`() {
         val e = assertThrows<SecurityException> { call("denied") }
         assertEquals("caller uid 10123", e.message)
     }
 
     @Test
-    fun `a checked exception from the call becomes a runtime one`() {
+    fun `checked exception is wrapped`() {
         val e = assertThrows<IllegalStateException> { call("dead") }
         assertEquals(IOException::class.java, e.cause?.javaClass)
     }
 
     @Test
-    fun `a missing method becomes a runtime exception`() {
+    fun `missing method is wrapped`() {
         val e = assertThrows<IllegalStateException> { call("gone") }
         assertEquals(NoSuchMethodException::class.java, e.cause?.javaClass)
     }
 
     @Test
-    fun `a missing class becomes a runtime exception`() {
+    fun `missing class is wrapped`() {
         val e =
             assertThrows<IllegalStateException> {
                 reflective("IGone") { Class.forName("android.os.IGone") }

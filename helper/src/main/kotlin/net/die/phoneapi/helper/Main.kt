@@ -58,6 +58,17 @@ object Main {
     private var instance: FileLock? = null
 
     private fun run(packageName: String) {
+        holdInstance(packageName)
+        HiddenApi.exempt()
+        val helper = HelperImpl()
+        helper.pinPackage(packageName)
+        val classpath = System.getenv("CLASSPATH").orEmpty()
+        HelperDaemon.serve(helper, packageName, classpath)
+    }
+
+    /** Takes this package's [InstanceLock], or exits when another helper for it holds the lock. */
+    @Suppress("MissingUseCall") // Held until the process exits, which releases it.
+    private fun holdInstance(packageName: String) {
         try {
             instance =
                 InstanceLock(File(LOCK_DIR)).acquire(packageName)
@@ -70,11 +81,6 @@ object Main {
             // when it registers. Running is still better than leaving the app with none.
             Log.w(TAG, "Could not take the helper lock", e)
         }
-        HiddenApi.exempt()
-        val helper = HelperImpl()
-        helper.pinPackage(packageName)
-        val classpath = System.getenv("CLASSPATH").orEmpty()
-        HelperDaemon.serve(helper, packageName, classpath)
     }
 
     @Suppress("ExitOutsideMain") // This process is the helper, so exit codes are how it reports.

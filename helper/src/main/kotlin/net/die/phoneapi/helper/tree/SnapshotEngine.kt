@@ -31,7 +31,7 @@ internal class SnapshotEngine(
     private val nodeCache: NodeCacheAge,
     private val screenRect: () -> Rect,
 ) {
-    private class Built(val seq: Long, val windows: List<UiWindow>, val cut: TreeCut)
+    private data class Built(val seq: Long, val windows: List<UiWindow>, val cut: TreeCut)
 
     private val mutex = Mutex()
 

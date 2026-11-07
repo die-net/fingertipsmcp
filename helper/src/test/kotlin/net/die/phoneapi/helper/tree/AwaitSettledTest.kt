@@ -10,33 +10,33 @@ import org.junit.jupiter.api.Test
 /** A scroll into view, seen as the node's bounds each time it is polled. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AwaitSettledTest {
-    private fun scroll(vararg frames: Int?): () -> Int? {
-        val queue = ArrayDeque(frames.toList())
+    private fun scroll(frames: List<Int?>): () -> Int? {
+        val queue = ArrayDeque(frames)
         return { if (queue.size > 1) queue.removeFirst() else queue.first() }
     }
 
     @Test
     fun `a slow scroll is waited out`() = runTest {
         // Offscreen for 400 ms, longer than the old fixed 350 ms wait.
-        val probe = scroll(null, null, null, null, null, null, null, null, 300)
+        val probe = scroll(List(8) { null } + 300)
         assertEquals(300, awaitSettled(INTERVAL, TIMEOUT, probe))
     }
 
     @Test
-    fun `bounds still moving are not returned`() = runTest {
-        val probe = scroll(null, 900, 600, 400, 300)
+    fun `moving bounds are not returned`() = runTest {
+        val probe = scroll(listOf(null, 900, 600, 400, 300))
         assertEquals(300, awaitSettled(INTERVAL, TIMEOUT, probe))
         assertEquals(INTERVAL * 6, currentTime)
     }
 
     @Test
-    fun `a node that never shows times out`() = runTest {
+    fun `never shown times out`() = runTest {
         assertNull(awaitSettled(INTERVAL, TIMEOUT) { null })
         assertEquals(TIMEOUT, currentTime)
     }
 
     @Test
-    fun `a node that never stops moving times out`() = runTest {
+    fun `never still times out`() = runTest {
         var y = 0
         assertNull(awaitSettled(INTERVAL, TIMEOUT) { y++ })
     }

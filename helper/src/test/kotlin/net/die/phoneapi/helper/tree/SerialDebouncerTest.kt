@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SerialDebouncerTest {
     @Test
-    fun `runs on a real pool wait for each other`() {
+    fun `runs on a pool never overlap`() {
         val pool = Executors.newFixedThreadPool(2).asCoroutineDispatcher()
         val scope = CoroutineScope(SupervisorJob())
         val running = AtomicInteger()
@@ -72,7 +72,7 @@ class SerialDebouncerTest {
     }
 
     @Test
-    fun `a request during a run gets exactly one more run`() = runTest {
+    fun `a request mid-run runs once`() = runTest {
         var runs = 0
         lateinit var debouncer: SerialDebouncer
         debouncer =
@@ -91,7 +91,7 @@ class SerialDebouncerTest {
     }
 
     @Test
-    fun `requests during the delay join one run`() = runTest {
+    fun `requests in the delay join`() = runTest {
         var runs = 0
         val debouncer =
             SerialDebouncer(backgroundScope, StandardTestDispatcher(testScheduler), DELAY_MS) {
