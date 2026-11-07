@@ -37,6 +37,15 @@ class HelperConnection(private val bus: EventBus, private val idleStatus: Helper
     @Volatile var onReady: ((IHelper) -> Unit)? = null
 
     private val deathListeners = CopyOnWriteArrayList<() -> Unit>()
+    private val readyListeners = CopyOnWriteArrayList<(IHelper) -> Unit>()
+
+    /**
+     * Adds a callback that runs on the registering Binder thread each time a helper binder is
+     * accepted, after [onReady]. It may call the helper, and should return quickly.
+     */
+    fun addReadyListener(listener: (IHelper) -> Unit) {
+        readyListeners += listener
+    }
 
     private val deathRecipient = IBinder.DeathRecipient { onHelperDied() }
 
@@ -154,6 +163,7 @@ class HelperConnection(private val bus: EventBus, private val idleStatus: Helper
         }
         setStatus(HelperStatus.RUNNING)
         onReady?.invoke(proxy)
+        readyListeners.forEach { it(proxy) }
         return true
     }
 

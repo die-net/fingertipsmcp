@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import net.die.phoneapi.helper.IHelper
 
 /**
  * Finds this device's wireless-debugging ports. The helper asks the adb service, the same answer
@@ -34,6 +35,30 @@ internal class AdbEndpointFinder(
     private val io: CoroutineDispatcher,
     private val identity: AdbIdentity = AdbIdentity(context.filesDir),
 ) {
+    init {
+        helper.addReadyListener(::learnSerial)
+    }
+
+    /**
+     * Reads `ro.serialno` through a helper that just registered, so a phone whose helper was
+     * started over USB knows which mDNS records are its own before it ever needs a search.
+     */
+    @Suppress("TooGenericExceptionCaught") // Binder rethrows the helper's runtime exceptions.
+    private fun learnSerial(proxy: IHelper) {
+        val result =
+            try {
+                proxy.exec(READ_SERIAL, SERIAL_TIMEOUT_MS, SERIAL_MAX_BYTES)
+            } catch (e: RemoteException) {
+                Log.w(TAG, "The helper could not read the serial", e)
+                return
+            } catch (e: RuntimeException) {
+                // Without it the next search resolves every record, as before.
+                Log.w(TAG, "The helper could not read the serial", e)
+                return
+            } ?: return
+        identity.recordSerial(result.exitCode, result.stdout.orEmpty())
+    }
+
     suspend fun connectPort(timeoutMs: Long = CONNECT_WAIT_MS): Int? {
         helperPort()
             ?.takeIf { portOpen(it) }
@@ -236,5 +261,8 @@ internal class AdbEndpointFinder(
         const val PAIR_WAIT_MS = 8_000L
         const val POLL_MS = 300L
         const val CONNECT_TIMEOUT_MS = 200
+        val READ_SERIAL = arrayOf("getprop", "ro.serialno")
+        const val SERIAL_TIMEOUT_MS = 5_000L
+        const val SERIAL_MAX_BYTES = 256
     }
 }

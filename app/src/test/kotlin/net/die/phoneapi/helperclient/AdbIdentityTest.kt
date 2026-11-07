@@ -22,6 +22,21 @@ class AdbIdentityTest {
     }
 
     @Test
+    fun `a registration records it`() {
+        // What learnSerial passes on from the helper's getprop.
+        val identity = AdbIdentity(dir)
+        identity.recordSerial(1, "")
+        assertNull(identity.serial)
+        identity.recordSerial(0, "ZY227DX4L7\n")
+        val serial = AdbIdentity(dir).serial
+        assertEquals("ZY227DX4L7", serial)
+        // Known before any wireless connect, so the search skips the emulator's record.
+        val queue = ResolveQueue<String> { serial != null && isOwnAdbRecord(it, serial) }
+        queue.found("adb-EMULATOR37X1X11X0-xYz789", "emulator")
+        assertNull(queue.next())
+    }
+
+    @Test
     fun `forgets only a refused port`() {
         val identity = AdbIdentity(dir)
         identity.remember("ZY227DX4L7", 37_041)
