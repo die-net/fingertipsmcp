@@ -13,7 +13,7 @@ import net.die.phoneapi.model.ApiException
  * these, so this is a tripwire for workflows that rely on one, not something agents handle in
  * normal use.
  *
- * A change of top task during the call, or within [lateMs] after, with no screen call running or
+ * A change of top task during the call, or within [LATE_MS] after, with no screen call running or
  * started meanwhile, is the session's doing. The call fails with `took_screen`. A session that
  * caused it while no one held the screen gets the screen, so it can look and clean up. Otherwise
  * the app that was in front comes back, and the holder is told.
@@ -27,7 +27,6 @@ class ForegroundWatch(
     private val bringBack: suspend (String) -> Unit,
     /** Logs and publishes that a session brought [String] forward. */
     private val report: (Holder.Session, String) -> Unit,
-    private val lateMs: Long = LATE_MS,
 ) {
     private val counts = ConcurrentHashMap<Holder.Session, AtomicInteger>()
     private val inFlight = AtomicInteger()
@@ -57,7 +56,7 @@ class ForegroundWatch(
         }
         if (after != null) {
             scope.launch {
-                delay(lateMs)
+                delay(LATE_MS)
                 val late = top()
                 if (late != null && late != after && quiet(calls)) {
                     tookScreen(holder, after, late, late = true)
@@ -110,7 +109,8 @@ class ForegroundWatch(
         return ApiException(409, "took_screen", message)
     }
 
-    private companion object {
+    companion object {
+        /** How long after a call a change of top task is still the call's doing. */
         const val LATE_MS = 2_000L
     }
 }

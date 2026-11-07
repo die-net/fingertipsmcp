@@ -182,7 +182,6 @@ internal class FakeApi(
             top = { top },
             bringBack = { top = it },
             report = { _, pkg -> synchronized(tookScreen) { tookScreen += pkg } },
-            lateMs = 200,
         )
 
     val services: ServerServices =
