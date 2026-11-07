@@ -33,7 +33,7 @@ internal class AdbEndpointFinder(
     private val context: Context,
     private val helper: HelperConnection,
     private val io: CoroutineDispatcher,
-    private val identity: AdbIdentity = AdbIdentity(context.filesDir),
+    private val identity: AdbIdentity,
 ) {
     init {
         helper.addReadyListener(::learnSerial)

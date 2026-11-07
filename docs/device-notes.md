@@ -349,6 +349,8 @@ A wrong code sent once on the Android 16 emulator that day failed once in 0.2 s,
 
 `LocalServerSocket.close()` does not wake a thread in `accept()`, on the Android 13 and 16 emulators on 2026-11-06. After `ListenerService` stopped, the next connection was accepted and never answered, and each cycle left one more connected socket in `/proc/net/unix`. The abstract name stays bound until that happens. So a stop and a start with no client between failed: `Failed to open the abstract socket`, `java.io.IOException: Address already in use`, with the service still foreground and nothing serving. A later start worked. With a client in between, three of three cycles came back.
 
+`Os.shutdown` with `SHUT_RDWR` on the listening socket's descriptor does wake that `accept()`, on the Android 10 (kernel 4.14), 13, and 16 emulators on 2026-11-06. Each ran three stops and starts with no client between, where `/proc/net/unix` showed the name gone within a second of `am stopservice` returning, and three more back to back. The host was overloaded, so that time is only an upper bound. The API answered every time, nothing failed to bind, and on Android 16 a client connecting after a stop failed at once rather than hanging. These ran on throwaway AVDs of the same system images, since other work held the named ones.
+
 ## Unlocking
 
 On the Android 16 emulator on 2026-11-06, with the lock screen turned on, a swipe keyguard went away through `wm dismiss-keyguard` in 3.6 s with no swipe. A PIN unlock worked three of three times in 4.2 to 5.2 s, and the PIN did not reach the log. With the helper down, `POST /v1/device/wake` failed `wake_failed`, since Android dropped `WakeActivity`'s start from the background.
@@ -366,6 +368,8 @@ Run again on the Android 16 emulator on 2026-11-06, once `app_launch` decided fr
 | In front | Off | 503 `helper_unavailable`, and the screen stayed off |
 
 So the foreground service does not count as in front, and a process that is on top with the screen off does not either. Without the helper nothing reports the foreground app, which is why such a start returns without waiting for it. Through the helper, a cold Settings took 10 s on the loaded host, and `ok` true.
+
+`getFilesDir` stats the directory on every call, not only the first, so a second call on the main thread was what StrictMode reported. With one call left, the app logged no StrictMode line on the Android 10, 13, and 16 emulators on 2026-11-06, from a clean install through pairing and six listener restarts, and none on an Android 16 cold start. The same logs held up to 502 StrictMode lines from other processes, such as the Google app, the dialer, and `system_server`, so filter by the app's pid.
 
 ## Browser waits
 

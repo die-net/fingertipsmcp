@@ -21,7 +21,8 @@ class PhoneApiApp : Application() {
         // anything else runs, so it is allowed here rather than handed to a thread the main thread
         // would wait for anyway. The stores read and write their files on their callers' threads,
         // which are background threads, so StrictMode still reports any main-thread use of them.
-        // allowThreadDiskWrites permits reads too.
+        // allowThreadDiskWrites permits reads too. Every getFilesDir call stats the directory, so
+        // this is the only one: the graph hands the result to whatever needs it.
         val policy = StrictMode.allowThreadDiskWrites()
         val files =
             try {

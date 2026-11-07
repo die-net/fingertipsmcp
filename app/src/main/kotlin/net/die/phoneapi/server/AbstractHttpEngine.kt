@@ -2,6 +2,9 @@ package net.die.phoneapi.server
 
 import android.net.LocalServerSocket
 import android.net.LocalSocket
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import io.ktor.events.Events
 import io.ktor.http.cio.Request
 import io.ktor.server.application.Application
@@ -22,7 +25,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 
 /**
  * Ktor engine that accepts HTTP on an abstract-namespace [LocalServerSocket]. CIO's own connector
@@ -45,57 +47,53 @@ class AbstractHttpEngine(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + configuration.dispatcher)
-    private var server: LocalServerSocket? = null
-    private var accept: Thread? = null
-    private var stopped = false
+    private var listener: AcceptLoop<LocalSocket>? = null
 
-    @Suppress("MissingUseCall") // stop() closes the server socket.
+    @Suppress("MissingUseCall") // closeListener() closes the server socket.
     override fun start(wait: Boolean): ApplicationEngine {
         applicationProvider()
         val listening = LocalServerSocket(configuration.socketName)
-        server = listening
-        stopped = false
         resolvedConnectorsDeferred.complete(emptyList())
-        val thread =
-            Thread(
-                {
-                    while (!stopped) {
-                        val client =
-                            try {
-                                listening.accept()
-                            } catch (e: IOException) {
-                                if (!stopped) environment.log.error("Abstract accept failed", e)
-                                break
-                            }
-                        scope.launch { serve(this, client) }
-                    }
-                },
-                "phoneapi-abstract",
-            )
-        accept = thread
-        thread.start()
+        listener =
+            AcceptLoop(
+                    threadName = "phoneapi-abstract",
+                    scope = scope,
+                    accept = listening::accept,
+                    wake = { shutDown(listening) },
+                    close = listening::close,
+                    serve = { client -> serve(this, client) },
+                )
+                .also { it.start() }
         return this
     }
 
     /**
-     * Closes the listening socket and waits, up to [timeoutMillis], for the accept thread to leave
-     * accept(). The abstract name stays bound while that thread is still in the call, so a start
-     * right after a stop that did not wait could fail to bind.
+     * Stops taking connections, and returns once the abstract name is free. It is apart from [stop]
+     * because [stop] can't suspend, and because EmbeddedServer logs and drops what [stop] throws.
+     *
+     * @throws IOException when the name may still be bound.
+     */
+    suspend fun closeListener() {
+        val closing = listener ?: return
+        listener = null
+        closing.stop()
+    }
+
+    /**
+     * Ends the connections. Cancelling them closes their sockets too, so streams and keep-alive
+     * clients end with the listener, which [closeListener] has closed by now.
      */
     override fun stop(gracePeriodMillis: Long, timeoutMillis: Long) {
-        stopped = true
-        runCatching { server?.close() }
-        server = null
-        accept?.let { thread ->
-            thread.join(timeoutMillis)
-            if (thread.isAlive) {
-                environment.log.error("The accept thread did not stop in $timeoutMillis ms")
-            }
-        }
-        accept = null
-        // Closing the listening socket only stops new connections. Cancelling the connections
-        // closes their sockets too, so streams and keep-alive clients end with the listener.
         scope.cancel()
+    }
+
+    /** Makes a blocked accept fail, which closing the socket does not do. */
+    private fun shutDown(listening: LocalServerSocket) {
+        try {
+            Os.shutdown(listening.fileDescriptor, OsConstants.SHUT_RDWR)
+        } catch (e: ErrnoException) {
+            throw IOException("Could not shut down the listening socket", e)
+        }
     }
 
     private suspend fun serve(caller: CoroutineScope, client: LocalSocket) {

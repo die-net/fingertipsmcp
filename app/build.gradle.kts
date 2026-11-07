@@ -109,7 +109,6 @@ dependencies {
     implementation(libs.ktor.events)
     implementation(libs.ktor.http.cio)
     implementation(libs.jspecify)
-    implementation(libs.slf4j.api)
     implementation(libs.ktor.server.websockets)
     implementation(libs.ktor.server.sse)
     implementation(libs.ktor.websockets)
