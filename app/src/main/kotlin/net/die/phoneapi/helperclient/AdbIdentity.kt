@@ -30,6 +30,14 @@ internal class AdbIdentity(dir: File) {
         write(portFile, port.toString())
     }
 
+    /**
+     * Records what `getprop ro.serialno` printed, run through a helper that just registered. Every
+     * phone that has had a helper up then knows its serial before its first wireless restart.
+     */
+    fun recordSerial(exitCode: Int, stdout: String) {
+        if (exitCode == 0) rememberSerial(stdout.trim())
+    }
+
     /** Records [serial] read from one of this phone's own mDNS records. */
     fun rememberSerial(serial: String) {
         if (validSerial(serial)) write(serialFile, serial)
