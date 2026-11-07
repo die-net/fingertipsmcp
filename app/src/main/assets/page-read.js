@@ -348,6 +348,10 @@ function visibleClone(node, inBody) {
 // Whether a live element is hidden from a reader of the page.
 function hiddenNow(el) {
   if (el.getAttribute("aria-hidden") === "true" || el.hidden) return true;
+  // An element with display: contents draws no box of its own, so checkVisibility says it is not
+  // visible even while its children show, as MDN's main content does. Its children are asked
+  // instead, and a style that hides them, such as visibility: hidden, reaches them by inheritance.
+  if (getComputedStyle(el).display === "contents") return false;
   if (!el.checkVisibility) return false;
   return !el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
 }

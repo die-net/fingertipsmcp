@@ -119,3 +119,18 @@ test("a Readability failure is named, and the page is read whole", () => {
   assert.equal(read.extracted, "page");
   assert.equal(read.articleError, "TypeError: Cannot read properties of null");
 });
+
+// MDN draws its main content through an element with display: contents, which has no box of its
+// own, so Chrome's checkVisibility says it is not visible. Both scopes left its whole text out.
+test("content in a display: contents element is read", () => {
+  const body = h("body", null, h("main", { "data-contents": "" }, h("p", null, PROSE), h("p", null, PROSE)));
+  const whole = pageRead(page({}, [], body), { scope: "page" });
+  assert.ok(whole.blocks.length >= 2, JSON.stringify(whole.blocks));
+  let given = null;
+  const read = pageRead(page({}, [], body), { scope: "article" }, (doc) => {
+    given = doc;
+    return { content: doc.body, textContent: doc.body.textContent };
+  });
+  assert.equal(read.extracted, "article");
+  assert.ok(given.body.textContent.includes(PROSE.trim()), "Readability was not given the content");
+});
