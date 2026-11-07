@@ -35,6 +35,16 @@ class PageNodesTest {
     }
 
     @Test
+    fun `the page settles first`() = runTest {
+        val order = ArrayList<String>()
+        nodes.restoring(CHROME, moved = { order += "still after ${starts.size} start" }) {
+            order += "block"
+            find()
+        }
+        assertEquals(listOf("block", "still after 1 start", "block"), order)
+    }
+
+    @Test
     fun `nodes on starts nothing`() = runTest {
         nodesOn = true
         assertEquals("field", nodes.restoring(CHROME) { find() })
