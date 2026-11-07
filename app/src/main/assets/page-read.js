@@ -397,7 +397,7 @@ return {
   feeds: related.feeds,
   next: related.next,
   canonical: related.canonical,
-  data: pageData(null),
+  data: pageData(null).blobs,
   pageChars: bodyText.trim().length,
   links: document.links.length,
   tables: document.querySelectorAll("table").length,

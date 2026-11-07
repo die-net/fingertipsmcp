@@ -257,7 +257,7 @@ A page built by scripts often carries its data as JSON for the scripts to pick u
 - A `*` segment matches every array item or object key at its level, or every blob as the first segment. Each value comes back on its own line as the path that names only it, then the value as compact JSON, and `values` counts them. `paths` reads up to 20 paths in one call the same way, and a path that names nothing gets a `#` line saying why while the others still come back.
 - `find` with `scope` `data` searches the JSON as `read` renders it, and gives each match the `path` of its line. Its offset is into the blob's JSON, or into `path`'s when `find` was given one.
 
-Numbers keep the digits the page wrote. A read takes at most 2,000,000 characters of data from the page. A blob past that is listed but cannot be read, and an outline or a search of every blob reads blobs in page order until the next would pass it. A `selector` does not apply to data, nor does `kind` `links`. Data the page's scripts fetch after it loads is not embedded; [Recorded responses](#recorded-responses) covers it.
+Numbers keep the digits the page wrote. A read takes at most 2,000,000 characters of data from the page. A page's first 50 blobs are listed and read, and the outline names how many more it has; an outline or a `*` read of every blob on such a page says `clipped`, and so does a `*` read past 100,000 values. A blob past that is listed but cannot be read, and an outline or a search of every blob reads blobs in page order until the next would pass it. A `selector` does not apply to data, nor does `kind` `links`. Data the page's scripts fetch after it loads is not embedded; [Recorded responses](#recorded-responses) covers it.
 
 #### Recorded responses
 

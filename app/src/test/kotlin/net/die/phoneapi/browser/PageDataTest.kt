@@ -6,6 +6,7 @@ import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.FindKind
 import net.die.phoneapi.model.ReadScope
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -333,6 +334,35 @@ class PageDataTest {
         assertEquals(
             "no blob named \"other\"; the blobs are response-1, response-2",
             why("other"),
+        )
+    }
+
+    @Test
+    fun `says when blobs past those listed are left out`() {
+        val more = extract.copy(more = 30)
+        val outline = readData(more, BrowserReadRequest(scope = ReadScope.DATA))
+        assertTrue(outline.clipped)
+        assertTrue("… 30 more blobs past these" in outline.content!!, outline.content)
+        val every = readData(more, BrowserReadRequest(scope = ReadScope.DATA, path = "*/n"))
+        assertTrue(every.clipped)
+        // A read of one listed blob is whole.
+        val one = readData(more, BrowserReadRequest(scope = ReadScope.DATA, path = "ld+json-1"))
+        assertFalse(one.clipped)
+        assertFalse(readData(extract, BrowserReadRequest(scope = ReadScope.DATA)).clipped)
+    }
+
+    @Test
+    fun `says when a star read stops at its most values`() {
+        val many = "[" + "0,".repeat(100_000) + "0]"
+        val page =
+            DataExtract(blobs = listOf(DataBlobText("many", "window.many", many.length, many)))
+        val read = readData(page, BrowserReadRequest(scope = ReadScope.DATA, path = "many/*"))
+        assertEquals(100_000, read.values)
+        assertTrue(read.clipped)
+        val fewer = "[" + "0,".repeat(99_999) + "0]"
+        val whole = page.copy(blobs = listOf(DataBlobText("many", "w", fewer.length, fewer)))
+        assertFalse(
+            readData(whole, BrowserReadRequest(scope = ReadScope.DATA, path = "many/*")).clipped
         )
     }
 

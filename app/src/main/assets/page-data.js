@@ -1,9 +1,10 @@
 // Finds the JSON a page embeds for its scripts, for browser_read and browser_find with scope
 // data. Runs in an isolated world. Each blob comes back as JSON text: a JSON script tag as the
 // page wrote it, and an object or array literal in code turned into JSON here, so PhoneAPI never
-// parses JavaScript and never runs any. pageData(want, budget) lists every blob, with the text of
-// those want names, in page order, while their text fits in budget characters; want null lists
-// names and sizes only, and want "*" wants every blob.
+// parses JavaScript and never runs any. pageData(want, budget) lists the first DATA_MAX_BLOBS
+// blobs, with the text of those want names, in page order, while their text fits in budget
+// characters, and counts the blobs past them as more; want null lists names and sizes only, and
+// want "*" wants every blob.
 
 const DATA_MIN_ASSIGNED = 256;
 const DATA_MAX_BLOBS = 50;
@@ -29,10 +30,16 @@ function pageData(want, budget) {
   const blobs = [];
   const names = new Map();
   const counts = new Map();
+  let more = 0;
 
-  // Adds a blob whose JSON text is text, unless the page already has as many as are read.
+  // Adds a blob whose JSON text is text, or counts it when the page already has as many as are
+  // read.
   function add(name, source, text) {
-    if (text === null || blobs.length >= DATA_MAX_BLOBS) return;
+    if (text === null) return;
+    if (blobs.length >= DATA_MAX_BLOBS) {
+      more++;
+      return;
+    }
     name = name.replace(/[/ ]/g, "_");
     const seen = (names.get(name) || 0) + 1;
     names.set(name, seen);
@@ -70,7 +77,7 @@ function pageData(want, budget) {
   }
 
   let left = budget || 0;
-  return blobs.map((blob) => {
+  const listed = blobs.map((blob) => {
     const out = { name: blob.name, source: blob.source, chars: blob.text.length };
     if (want === "*" || (want && want.includes(blob.name))) {
       if (blob.text.length <= left) {
@@ -82,18 +89,22 @@ function pageData(want, budget) {
     }
     return out;
   });
+  return { blobs: listed, more: more };
 }
 
-// What a data read returns: the page's facts, and its blobs, with the text of those want names.
+// What a data read returns: the page's facts, and its blobs, with the text of those want names, and
+// how many more it has past those read.
 function dataPage(want, budget) {
   const nav = performance.getEntriesByType("navigation")[0];
+  const found = pageData(want, budget);
   return {
     title: document.title || null,
     url: location.href,
     readyState: document.readyState,
     visibility: document.visibilityState,
     status: (nav && nav.responseStatus) || 0,
-    blobs: pageData(want, budget),
+    blobs: found.blobs,
+    more: found.more,
   };
 }
 
