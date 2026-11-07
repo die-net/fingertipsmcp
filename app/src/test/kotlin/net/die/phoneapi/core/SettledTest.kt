@@ -52,7 +52,7 @@ class SettledTest {
     }
 
     @Test
-    fun `a change is checked when announced`() = runTest {
+    fun `an announced change is seen`() = runTest {
         val changes = MutableSharedFlow<Unit>()
         var locked = false
         val waiting = async { awaitChecked(changes, TIMEOUT_MS) { locked } }

@@ -387,7 +387,7 @@ private fun partlyTyped(e: ApiException, index: Int, count: Int): ApiException =
         ApiException(
             e.status,
             e.error,
-            "${e.message} $index of $count characters were typed before it.",
+            "${e.message ?: e.error} $index of $count characters were typed before it.",
             e.state,
             e,
         )

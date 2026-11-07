@@ -87,13 +87,12 @@ class ScreenLease(
     private val ready: suspend () -> List<String> = { emptyList() },
 ) {
     /** A holder's place in the queue, which every one of its waiting [calls] shares. */
-    private class Waiter(val holder: Holder) {
-        val granted = CompletableDeferred<Unit>()
-        /**
-         * The calls waiting here, which become the holder's screen calls when it gets the screen.
-         */
-        val calls = LinkedHashSet<Job>()
-    }
+    private data class Waiter(
+        val holder: Holder,
+        val granted: CompletableDeferred<Unit> = CompletableDeferred(),
+        /** The calls waiting here, which become the holder's screen calls when it gets it. */
+        val calls: MutableSet<Job> = LinkedHashSet(),
+    )
 
     /** How many screen calls are registered, and whether [betweenCalls] holds new ones off. */
     private data class Activity(val calls: Int = 0, val paused: Boolean = false)
@@ -325,17 +324,22 @@ class ScreenLease(
     private fun watchIdle() {
         if (idleWatch?.isActive == true) return
         idleWatch = scope.launch {
-            while (true) {
-                val left =
-                    mutex.withLock { idleLeft().also { if (it == null) idleWatch = null } }
-                        ?: return@launch
-                if (left > 0) {
-                    delay(left)
-                    continue
-                }
-                mutex.withLock { if (idleLeft() == 0L) yieldIdle() }
-            }
+            do {
+                val going = watchIdleOnce()
+            } while (going)
         }
+    }
+
+    /** One turn of the idle watch: waits out the grace, or yields. False when it should stop. */
+    private suspend fun watchIdleOnce(): Boolean {
+        val left =
+            mutex.withLock { idleLeft().also { if (it == null) idleWatch = null } } ?: return false
+        if (left > 0) {
+            delay(left)
+        } else {
+            mutex.withLock { if (idleLeft() == 0L) yieldIdle() }
+        }
+        return true
     }
 
     /**
@@ -494,40 +498,60 @@ class ScreenLease(
                 track(holder, work)
                 return true
             }
-            if (current.holder == null && !cleaning && queue.isEmpty()) {
-                grant(holder)
-                track(holder, work)
-                return false
-            }
-            val place =
-                queue.firstOrNull { it.holder == holder } ?: Waiter(holder).also(queue::addLast)
-            place.calls += work
-            watchIdle()
-            place
+            queueFor(holder, work) ?: return false
         }
-        val granted =
-            try {
-                withTimeoutOrNull(waitMs) { waiter.granted.await() } != null
-            } catch (e: CancellationException) {
-                // A caller canceled while waiting leaves, and gives back a screen granted
-                // meanwhile that none of its other calls is using.
-                withContext(NonCancellable) {
-                    mutex.withLock {
-                        if (leave(waiter, work)) {
-                            untrack(holder, work)
-                            if (_state.value.holder == holder && running[holder].isNullOrEmpty()) {
-                                letGo(holder, cleanup = false)
-                            }
-                        }
-                    }
-                }
-                throw e
-            }
         // The grant can land just as the wait runs out. Then the screen is this holder's.
-        if (!granted && !withContext(NonCancellable) { mutex.withLock { leave(waiter, work) } }) {
+        if (
+            !awaitGrant(holder, waiter, work) &&
+                !withContext(NonCancellable) {
+                    mutex.withLock { leave(waiter, work) }
+                }
+        ) {
             throw busy()
         }
         return false
+    }
+
+    /**
+     * With [mutex] held: gives [holder] a free screen for [work] and returns null, or puts [work]
+     * in [holder]'s place in the queue and returns that place.
+     */
+    private fun queueFor(holder: Holder, work: Job): Waiter? {
+        if (_state.value.holder == null && !cleaning && queue.isEmpty()) {
+            grant(holder)
+            track(holder, work)
+            return null
+        }
+        val place = queue.firstOrNull { it.holder == holder } ?: Waiter(holder).also(queue::addLast)
+        place.calls += work
+        watchIdle()
+        return place
+    }
+
+    /**
+     * Waits up to [waitMs] for [waiter] to be granted. A caller that stops waiting early, as when
+     * it is cancelled, leaves, and gives back a screen granted meanwhile that none of [holder]'s
+     * other calls is using.
+     */
+    private suspend fun awaitGrant(holder: Holder, waiter: Waiter, work: Job): Boolean {
+        var waited = false
+        try {
+            val granted = withTimeoutOrNull(waitMs) { waiter.granted.await() } != null
+            waited = true
+            return granted
+        } finally {
+            if (!waited)
+                withContext(NonCancellable) { mutex.withLock { abandon(holder, waiter, work) } }
+        }
+    }
+
+    /** With [mutex] held: [work] stopped waiting before the wait ran its course. */
+    private fun abandon(holder: Holder, waiter: Waiter, work: Job) {
+        if (!leave(waiter, work)) return
+        untrack(holder, work)
+        if (_state.value.holder == holder && running[holder].isNullOrEmpty()) {
+            letGo(holder, cleanup = false)
+        }
     }
 
     /**

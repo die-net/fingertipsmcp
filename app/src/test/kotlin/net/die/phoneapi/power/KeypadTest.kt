@@ -29,7 +29,7 @@ class KeypadTest {
     }
 
     @Test
-    fun `a keypad without the digits is none`() = runTest {
+    fun `a keypad without digits`() = runTest {
         val partial = Keypad(mapOf('1' to Rect(0, 0, 10, 10)), submit = null)
         assertNull(awaitSteadyKeypad({ partial }, PIN, 1_000))
         assertEquals(1_000, currentTime)

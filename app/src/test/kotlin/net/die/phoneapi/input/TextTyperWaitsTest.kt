@@ -152,7 +152,7 @@ class TextTyperWaitsTest {
     }
 
     @Test
-    fun `drop outs do not use up page presses`() = runTest {
+    fun `drop outs spare page presses`() = runTest {
         // The keyboard's window drops out of the accessibility list for a moment at first and
         // after each page change.
         var page = LETTERS
@@ -183,7 +183,7 @@ class TextTyperWaitsTest {
     }
 
     @Test
-    fun `a keyboard is waited for while it drops out`() = runTest {
+    fun `a dropped keyboard is awaited`() = runTest {
         val ime = MutableStateFlow(summary(imeVisible = true))
         var reads = 0
         val keys = awaitKeyboard(ime) { if (++reads <= 30) emptyList() else LETTERS }
@@ -215,7 +215,7 @@ class TextTyperWaitsTest {
     }
 
     @Test
-    fun `key events are built as they go`() = runTest {
+    fun `key events are built late`() = runTest {
         val built = ArrayList<Long>()
         val sent = ArrayList<String>()
         sendKeys(

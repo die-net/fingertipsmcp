@@ -82,7 +82,7 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `calls start while between calls waits`() = runTest {
+    fun `calls run while between waits`() = runTest {
         // Waiting for a running call must not hold off the holder's next one, which may be the
         // very call the running one waits for.
         val lease = lease()
@@ -129,7 +129,7 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `a holder's waiting calls all get the screen`() = runTest {
+    fun `waiting calls all get it`() = runTest {
         val lease = lease()
         lease.withScreen(b) {}
         val first = async { lease.withScreen(a) { "first" } }
@@ -143,7 +143,7 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `one of a holder's waiting calls can leave`() = runTest {
+    fun `one waiting call can leave`() = runTest {
         val lease = lease()
         lease.withScreen(b) {}
         val first = async { lease.withScreen(a) { "first" } }
@@ -157,7 +157,7 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `an ended session's waiting call fails`() = runTest {
+    fun `an ended session's call fails`() = runTest {
         val lease = lease()
         lease.withScreen(b) {}
         val waiting = async { apiError { lease.withScreen(a) {} } }
