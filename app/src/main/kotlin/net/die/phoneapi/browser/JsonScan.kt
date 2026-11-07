@@ -5,8 +5,8 @@ import java.util.zip.CRC32
 /**
  * Reads JSON text in place, by index, so a large blob is walked without copying it into a tree. A
  * value is named by the index of its first character. [text] is one JSON value that page-data.js
- * checked or wrote; text that is not JSON fails with [IllegalArgumentException] rather than being
- * guessed at.
+ * checked or wrote, or a recorded response; text that is not JSON, including text that ends early,
+ * fails with [IllegalArgumentException] rather than being guessed at.
  */
 internal class JsonScan(val text: String) {
     /** The index of the first character at or after [i] that is not whitespace. */
@@ -37,10 +37,12 @@ internal class JsonScan(val text: String) {
         }
     }
 
+    /** The index just past the number, `true`, `false`, or `null` at [i], as JSON writes them. */
     private fun scalarEnd(i: Int): Int {
         var j = i
         while (j < text.length && text[j] in SCALAR) j++
-        require(j > i) { "not JSON at $i" }
+        val token = text.substring(i, j)
+        require(token in LITERALS || NUMBER.matches(token)) { "not JSON at $i" }
         return j
     }
 
@@ -59,7 +61,9 @@ internal class JsonScan(val text: String) {
         }
     }
 
-    private fun charAt(i: Int): Char {
+    /** The character at [i], which fails as text that is not JSON when the text ends first. */
+    @PublishedApi
+    internal fun charAt(i: Int): Char {
         require(i < text.length) { "JSON ends early" }
         return text[i]
     }
@@ -70,16 +74,17 @@ internal class JsonScan(val text: String) {
      */
     inline fun members(i: Int, visit: (keyStart: Int, keyEnd: Int, value: Int) -> Boolean) {
         var j = space(i + 1)
-        if (text[j] == '}') return
+        if (charAt(j) == '}') return
         while (true) {
+            require(charAt(j) == '"') { "not JSON at $j" }
             val keyEnd = stringEnd(j)
             val colon = space(keyEnd)
-            require(text[colon] == ':') { "not JSON at $colon" }
+            require(charAt(colon) == ':') { "not JSON at $colon" }
             val value = space(colon + 1)
             if (!visit(j, keyEnd, value)) return
             j = space(end(value))
-            if (text[j] == '}') return
-            require(text[j] == ',') { "not JSON at $j" }
+            if (charAt(j) == '}') return
+            require(charAt(j) == ',') { "not JSON at $j" }
             j = space(j + 1)
         }
     }
@@ -87,13 +92,13 @@ internal class JsonScan(val text: String) {
     /** Calls [visit] with each item of the array at [i]. Stops when [visit] returns false. */
     inline fun items(i: Int, visit: (index: Int, value: Int) -> Boolean) {
         var j = space(i + 1)
-        if (text[j] == ']') return
+        if (charAt(j) == ']') return
         var index = 0
         while (true) {
             if (!visit(index++, j)) return
             j = space(end(j))
-            if (text[j] == ']') return
-            require(text[j] == ',') { "not JSON at $j" }
+            if (charAt(j) == ']') return
+            require(charAt(j) == ',') { "not JSON at $j" }
             j = space(j + 1)
         }
     }
@@ -101,7 +106,7 @@ internal class JsonScan(val text: String) {
     /** How many members or items the object or array at [i] has. */
     fun count(i: Int): Int {
         var n = 0
-        if (text[i] == '{') {
+        if (charAt(i) == '{') {
             members(i) { _, _, _ ->
                 n++
                 true
@@ -143,7 +148,10 @@ internal class JsonScan(val text: String) {
     private fun unescape(i: Int, out: StringBuilder): Int {
         val e = charAt(i + 1)
         if (e == 'u') {
-            out.append(text.substring(i + 2, i + UNICODE_ESCAPE).toInt(HEX).toChar())
+            charAt(i + UNICODE_ESCAPE - 1)
+            val code = text.substring(i + 2, i + UNICODE_ESCAPE).toIntOrNull(HEX)
+            require(code != null && code >= 0) { "not JSON at $i" }
+            out.append(code.toChar())
             return i + UNICODE_ESCAPE
         }
         out.append(ESCAPES[e] ?: throw IllegalArgumentException("not JSON at $i"))
@@ -203,7 +211,7 @@ internal class JsonScan(val text: String) {
 
     /** What kind of value starts at [i], in words. */
     fun kindName(i: Int): String =
-        when (text[i]) {
+        when (charAt(i)) {
             '{' -> "object"
             '[' -> "array"
             '"' -> "string"
@@ -217,6 +225,8 @@ internal class JsonScan(val text: String) {
         const val HEX = 16
         const val UNICODE_ESCAPE = 6
         const val SCALAR = "-+.eE0123456789truefalsn"
+        val LITERALS = setOf("true", "false", "null")
+        val NUMBER = Regex("""-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?""")
         val ESCAPES =
             mapOf(
                 '"' to '"',
@@ -429,7 +439,7 @@ internal class JsonPrinter(
 
     private fun value(i: Int, depth: Int) {
         require(depth <= MAX_DEPTH) { "JSON nested more than $MAX_DEPTH deep" }
-        when (scan.text[i]) {
+        when (scan.charAt(i)) {
             '{' -> container(i, depth, '}')
             '[' -> container(i, depth, ']')
             else -> sink.append(scan.text, i, scan.end(i))
