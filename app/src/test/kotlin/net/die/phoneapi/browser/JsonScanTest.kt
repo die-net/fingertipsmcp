@@ -3,6 +3,7 @@ package net.die.phoneapi.browser
 import java.util.zip.CRC32
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -55,6 +56,35 @@ class JsonScanTest {
         assertThrows(IllegalArgumentException::class.java) { JsonScan("""{"a" 1}""").count(0) }
         assertThrows(IllegalArgumentException::class.java) { JsonScan("""["a"""").end(0) }
         assertThrows(IllegalArgumentException::class.java) { JsonScan("""[1 2]""").count(0) }
+    }
+
+    @Test
+    fun `refuses JSON that ends early`() {
+        val truncated =
+            listOf("""{"a":1""", """[1,2""", """{"a"""", "{", "[", """{"a":""", """"\u12""")
+        for (text in truncated) {
+            assertThrows(IllegalArgumentException::class.java, { print(text) }, text)
+        }
+        // A recorded response cut short is not JSON, so it is listed with the reason.
+        assertNull(jsonText("""{"a":1"""))
+    }
+
+    @Test
+    fun `refuses a scalar JSON does not write`() {
+        for (text in
+            listOf("tru", "1.2.3", "nulll", "+1", "-", "01", "1.", ".5", "1e", "truefalse")) {
+            assertThrows(IllegalArgumentException::class.java, { print("[$text]") }, text)
+        }
+        for (text in listOf("true", "false", "null", "0", "-0.5", "12e+3", "1E-2", "123")) {
+            assertEquals("[\n  $text\n]", print("[$text]"), text)
+        }
+    }
+
+    private fun print(text: String): String {
+        val sink = BuilderSink(Utf8Crc())
+        val scan = JsonScan(text)
+        JsonPrinter(scan, sink).print(scan.space(0))
+        return sink.text.toString()
     }
 
     @Test

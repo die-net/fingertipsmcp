@@ -140,7 +140,7 @@ internal fun readData(extract: DataExtract, request: BrowserReadRequest): Browse
     val blobs = DataBlobs(extract.blobs)
     val path = request.path
     val sink = WindowSink(request.offset, request.maxChars + 1)
-    val values =
+    val values = onJson {
         when {
             request.paths.isNotEmpty() -> blobs.values(request.paths, sink)
             path == null -> {
@@ -153,6 +153,7 @@ internal fun readData(extract: DataExtract, request: BrowserReadRequest): Browse
                 null
             }
         }
+    }
     val version = sink.hash.value()
     val total = sink.length
     val changed = request.version?.let { it != version }
@@ -200,10 +201,12 @@ internal fun findData(extract: DataExtract, request: BrowserFindRequest): Browse
     val search = DataSearch(queries.map { queryPattern(it, request.regex) }, request)
     val blobs = DataBlobs(extract.blobs)
     val path = request.path
-    if (path != null) {
-        blobs.resolve(path, search::search)?.let { throw ApiException.badRequest(it) }
-    } else {
-        blobs.forEachRoot(search::search)
+    onJson {
+        if (path != null) {
+            blobs.resolve(path, search::search)?.let { throw ApiException.badRequest(it) }
+        } else {
+            blobs.forEachRoot(search::search)
+        }
     }
     val base =
         BrowserFindResult(
@@ -219,6 +222,22 @@ internal fun findData(extract: DataExtract, request: BrowserFindRequest): Browse
         queries.indices.map { QueryMatches(queries[it], search.totals[it], search.kept[it]) }
     return base.copy(queries = found)
 }
+
+/**
+ * Runs [block] on the page's data, turning a blob [JsonScan] cannot walk, such as one nested deeper
+ * than [JsonPrinter] prints, into `page_error`, since the data is the page's.
+ */
+private inline fun <T> onJson(block: () -> T): T =
+    try {
+        block()
+    } catch (e: IllegalArgumentException) {
+        throw ApiException(
+            BAD_GATEWAY,
+            "page_error",
+            "The page's data could not be read: ${e.message}",
+            cause = e,
+        )
+    }
 
 /** Collects find matches across the values a data find searches, one value at a time. */
 private class DataSearch(
@@ -442,7 +461,7 @@ private class PathWalk(
     }
 
     private fun star(scan: JsonScan, value: Int, at: String, k: Int) {
-        when (scan.text[value]) {
+        when (scan.charAt(value)) {
             '{' ->
                 scan.members(value) { keyStart, keyEnd, kid ->
                     walk(scan, kid, at + "/" + escapePointer(scan.string(keyStart, keyEnd)), k + 1)
@@ -470,7 +489,7 @@ private class PathWalk(
 private fun step(scan: JsonScan, value: Int, raw: String): Int {
     val token = unescapePointer(raw)
     var found = -1
-    when (scan.text[value]) {
+    when (scan.charAt(value)) {
         '{' ->
             scan.members(value) { keyStart, keyEnd, kid ->
                 if (scan.keyIs(keyStart, keyEnd, token)) found = kid
@@ -490,7 +509,7 @@ private fun step(scan: JsonScan, value: Int, raw: String): Int {
 /** Why [step] found nothing for [raw] inside the value at [value], whose path is [at]. */
 private fun whyNot(scan: JsonScan, value: Int, raw: String, at: String): String {
     val token = unescapePointer(raw)
-    return when (scan.text[value]) {
+    return when (scan.charAt(value)) {
         '{' -> "$at has no key ${quote(token)}; its keys are ${keysOf(scan, value, LISTED_KEYS)}"
         '[' ->
             "$at is an array of ${scan.count(value)} items, so ${quote(token)} is not an index in it"
@@ -499,7 +518,7 @@ private fun whyNot(scan: JsonScan, value: Int, raw: String, at: String): String 
 }
 
 private fun outlineKids(scan: JsonScan, value: Int, at: String, depth: Int, sink: TextSink) {
-    if (scan.text[value] != '{' || depth > OUTLINE_DEPTH) return
+    if (scan.charAt(value) != '{' || depth > OUTLINE_DEPTH) return
     val indent = "  ".repeat(depth)
     var n = 0
     scan.members(value) { keyStart, keyEnd, kid ->
@@ -517,7 +536,7 @@ private fun outlineKids(scan: JsonScan, value: Int, at: String, depth: Int, sink
 
 /** A value in one line: its kind, size, and the keys or start it has. */
 private fun describe(scan: JsonScan, value: Int): String =
-    when (scan.text[value]) {
+    when (scan.charAt(value)) {
         '{' -> "object, ${plural(scan.count(value), "key")}, ${dataSize(scan.compactLength(value))}"
         '[' -> describeArray(scan, value)
         '"' -> {
@@ -547,7 +566,7 @@ private fun describeArray(scan: JsonScan, value: Int): String {
     // An array whose items differ, such as [91, [...]], is named by none of them.
     val kind = if (mixed) "item" else scan.kindName(first)
     val shape = "array of ${plural(n, kind)}, ${dataSize(scan.compactLength(value))}"
-    if (scan.text[first] != '{') return shape
+    if (scan.charAt(first) != '{') return shape
     return "$shape; the first has ${keysOf(scan, first, FIRST_KEYS)}"
 }
 

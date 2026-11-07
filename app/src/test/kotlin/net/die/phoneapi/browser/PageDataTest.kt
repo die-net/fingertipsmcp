@@ -337,6 +337,24 @@ class PageDataTest {
     }
 
     @Test
+    fun `data it cannot walk is the page's error`() {
+        // A JSON script tag nested deeper than the printer goes, which JSON.parse in the page took.
+        val deep = "[".repeat(300) + "]".repeat(300)
+        val page =
+            DataExtract(blobs = listOf(DataBlobText("deep", "script#deep", deep.length, deep)))
+        val read =
+            assertThrows(ApiException::class.java) {
+                readData(page, BrowserReadRequest(scope = ReadScope.DATA, path = "deep"))
+            }
+        assertEquals("page_error", read.error)
+        val find =
+            assertThrows(ApiException::class.java) {
+                findData(page, BrowserFindRequest(scope = ReadScope.DATA, query = "x"))
+            }
+        assertEquals("page_error", find.error)
+    }
+
+    @Test
     fun `reads a blob at the budget`() {
         val item = """{"id":1234,"name":"item","tags":["a","b"]},"""
         val count = (DATA_BUDGET - 20) / item.length
