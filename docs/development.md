@@ -150,6 +150,8 @@ PhoneAPI is tested back to the oldest Chrome the bundled pdf.js supports, since 
 
 Test a fix on the current Chrome first, with the sequence that failed. Run other Chrome versions only when the code differs by version.
 
+Android is a separate question, since Chrome updates apart from it. PhoneAPI supports Android 10 and newer, so anything that doesn't depend on Chrome, such as the helper, input, the UI tree, the screen, and the clipboard, is tested back to Android 10. A real Android 10 phone is assumed to run a newer Chrome than the Android 10 emulator's Chrome 91, so a Chrome failure there says little about such a phone.
+
 ## Emulator notes
 
 On a debuggable emulator image, Chrome only publishes `@chrome_devtools_remote` after it is started with remote debugging, for example a `/data/local/tmp/chrome-command-line` file containing `chrome --disable-fre --no-first-run --remote-debugging-port=9222`, followed by a force-stop and launch. Adding `--enable-features=AndroidOpenPdfInline` to that line makes Chrome show a PDF in its own viewer, which `browser_read` reads, instead of saving it. Some emulator images also refuse the shell user; `adb root` makes the helper uid 0, which Chrome accepts. `scripts/phoneapi-dev helper` does not change that.
