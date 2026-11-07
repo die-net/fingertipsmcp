@@ -83,7 +83,7 @@ class TabsTest {
     }
 
     @Test
-    fun `an ended session claims nothing`() = runTest {
+    fun `an ended session claims none`() = runTest {
         // DevTools takes a while to answer, so a claim's checks run late.
         browser.listMs = 300
         val tabs = tabs(scope = backgroundScope)
@@ -414,7 +414,7 @@ class TabsTest {
     }
 
     @Test
-    fun `a Chrome that stops answering is said so`() = runTest {
+    fun `a hung Chrome is reported`() = runTest {
         val tabs = tabs()
         front = CHROME
         lease.withScreen(a) {}

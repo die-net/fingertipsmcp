@@ -64,7 +64,7 @@ class TouchTimelineTest {
     }
 
     @Test
-    fun `a cancelled swipe lifts its finger`() = runTest {
+    fun `a cancelled swipe lifts`() = runTest {
         val path = (0..4).map { TimedPoint(it * 10f, 0f, it * 16L) }
         val events = timelineEvents(touchTimeline(listOf(path)))
         val sent = mutableListOf<PointerEvent>()
@@ -89,7 +89,7 @@ class TouchTimelineTest {
     }
 
     @Test
-    fun `a finished tap sends nothing more`() = runTest {
+    fun `a finished tap sends no more`() = runTest {
         val sent = mutableListOf<PointerPhase>()
         val tap = timelineEvents(touchTimeline(listOf(listOf(TimedPoint(1f, 1f, 0)))))
         releasingTouches(
@@ -104,7 +104,7 @@ class TouchTimelineTest {
     }
 
     @Test
-    fun `a down that failed is still lifted`() = runTest {
+    fun `a failed down is still lifted`() = runTest {
         // The helper can drop after the system took the down, which would leave the finger down.
         val sent = mutableListOf<PointerPhase>()
         val tap = timelineEvents(touchTimeline(listOf(listOf(TimedPoint(1f, 1f, 0)))))
@@ -127,7 +127,7 @@ class TouchTimelineTest {
     }
 
     @Test
-    fun `a cancelled key press lets the key up`() = runTest {
+    fun `a cancelled key press lifts`() = runTest {
         val sent = mutableListOf<String>()
         val holding = CompletableDeferred<Unit>()
         val press = launch {

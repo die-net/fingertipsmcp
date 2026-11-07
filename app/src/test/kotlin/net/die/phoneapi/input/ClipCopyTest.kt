@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class) // currentTime reads the virtual clock.
 class ClipCopyTest {
     @Test
-    fun `an empty new clip is read again`() = runTest {
+    fun `an empty new clip is reread`() = runTest {
         // Chrome's first copy lands empty and holds the text a moment later.
         val copied =
             awaitCopied(

@@ -72,7 +72,7 @@ class BrowserWatchTest {
     }
 
     @Test
-    fun `lifecycle waits turn the events on`() = runBlocking {
+    fun `lifecycle events are enabled`() = runBlocking {
         val page =
             KeyedSocket(
                 harness.serverTextFrame("""{"id":1,"result":{}}""") +
