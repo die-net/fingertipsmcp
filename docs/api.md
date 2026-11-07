@@ -124,7 +124,7 @@ Authenticated errors are JSON:
 | 409 | `offscreen` | The node or element has no box on screen, or a touch swipe or gesture point is off the page |
 | 409 | `obscured` | Something, such as the keyboard, covers the node. `force` taps the part that shows |
 | 409 | `content_unavailable` | A `touch` tap on a page that is not on screen, or that a dialog, menu, or the tab switcher of the browser covers. Also a call to a page that timed out while Chrome shows a page's dialog, such as an alert, which holds the page until someone dismisses it |
-| 409 | `not_visible` | `cdp` touch input into a tab that is not on screen, since Chrome holds it until the tab shows, or `touch` input into a tab Chrome would not bring forward |
+| 409 | `not_visible` | `cdp` touch input into a tab that is not on screen, since Chrome holds it until the tab shows, or `touch` input into a tab Chrome would not bring forward, or whose app did not come on screen |
 | 409 | `intent_refused` | Android refused the intent, for example an activity that is not exported |
 | 409 | `intent_failed` | Android could not start the intent for another reason; the message has its output |
 | 409 | `stop_failed` / `clear_failed` | `am force-stop` or `pm clear` failed; the message has its output |

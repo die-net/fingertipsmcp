@@ -23,10 +23,10 @@ import net.die.phoneapi.model.TextRequest
 import net.die.phoneapi.model.TimedPoint
 
 /**
- * Pointer, key, and text for one page. `touch` is a hardware event after the tab is in front. `cdp`
- * stays on that target: keys and text reach a background tab, but Chrome only takes touch on the
- * tab it is showing, on screen. `cdp-mouse` taps with a mouse click, which reaches a background tab
- * even with Chrome hidden.
+ * Pointer, key, and text for one page. `touch` is a hardware event after the tab is in front: its
+ * app on screen and the tab selected ([showTab]). `cdp` stays on that target: keys and text reach a
+ * background tab, but Chrome only takes touch on the tab it is showing, on screen. `cdp-mouse` taps
+ * with a mouse click, which reaches a background tab even with Chrome hidden.
  */
 internal class PageInput(
     private val touchAt: suspend (Rect, Boolean) -> ActionResult,
@@ -34,7 +34,10 @@ internal class PageInput(
     private val gestureAt: suspend (List<List<TimedPoint>>, Boolean, Rect) -> ActionResult,
     private val pressKey: suspend (KeyRequest) -> ActionResult,
     private val typeText: suspend (TextRequest) -> ActionResult,
-    private val contentOnScreen: suspend (String?) -> Rect,
+    /** Where the app's page is drawn on screen; fails with `content_unavailable` when it is not. */
+    private val contentBounds: suspend (String?) -> Rect,
+    /** Brings the app up when it is not in front, and fails when it does not come. */
+    private val appUp: suspend (String?) -> Unit,
     private val quads: suspend (CdpSession, String, TapTarget) -> JsonArray,
     private val focusNode: suspend (CdpSession, String, TapTarget) -> JsonObject,
     private val target: (String?, String?) -> TapTarget?,
@@ -96,7 +99,7 @@ internal class PageInput(
                 showTab(cdp, pkg)
                 val ends = swipeEnds(cdp, id, request)
                 val metrics = cdp.call("Page.getLayoutMetrics")
-                val content = contentOnScreen(pkg)
+                val content = contentBounds(pkg)
                 swipeAt(
                     screenPoint(ends.first.x, ends.first.y, metrics, content),
                     screenPoint(ends.second.x, ends.second.y, metrics, content),
@@ -146,7 +149,7 @@ internal class PageInput(
             BrowserInput.TOUCH -> {
                 showTab(cdp, pkg)
                 val metrics = cdp.call("Page.getLayoutMetrics")
-                val content = contentOnScreen(pkg)
+                val content = contentBounds(pkg)
                 val mapped =
                     request.pointers.map { path ->
                         path.map { point ->
@@ -174,11 +177,16 @@ internal class PageInput(
             BrowserInput.CDP_MOUSE -> throw mouseOnlyTaps("key")
         }
 
-    suspend fun key(cdp: CdpSession, request: BrowserKeyRequest, pageKey: DomKey?): ActionResult =
+    suspend fun key(
+        cdp: CdpSession,
+        pkg: String?,
+        request: BrowserKeyRequest,
+        pageKey: DomKey?,
+    ): ActionResult =
         when (request.input) {
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
-                foreground(cdp)
+                showTab(cdp, pkg)
                 pressKey(
                     KeyRequest(
                         key = request.key,
@@ -213,7 +221,7 @@ internal class PageInput(
         request: BrowserTextRequest,
         focus: TapTarget?,
     ): ActionResult {
-        if (request.input in TOUCH_INPUTS) foreground(cdp)
+        if (request.input in TOUCH_INPUTS) showTab(cdp, pkg)
         if (focus != null) focusField(cdp, id, focus, pkg, request.input)
         return when (request.input) {
             BrowserInput.AUTO,
@@ -246,7 +254,7 @@ internal class PageInput(
     ): ActionResult {
         showTab(cdp, pkg)
         val boxes = quads(cdp, id, wanted)
-        val hit = screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentOnScreen(pkg))
+        val hit = screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
         return touchAt(hit, humanize)
     }
 
@@ -301,11 +309,12 @@ internal class PageInput(
         }
 
     /**
-     * Brings the app up, then selects the tab. In that order, since Chrome coming forward can
-     * select another tab after this one.
+     * Brings the app up, then selects the tab, before every touch input. In that order, since
+     * Chrome coming forward can select another tab after this one. Unlike a read's show, this does
+     * not wait for the page's text to settle, since input acts on what is there.
      */
     private suspend fun showTab(cdp: CdpSession, pkg: String?) {
-        contentOnScreen(pkg)
+        appUp(pkg)
         foreground(cdp)
     }
 
@@ -351,7 +360,7 @@ internal class PageInput(
             BrowserInput.TOUCH -> {
                 val boxes = quads(cdp, id, focus)
                 val rect =
-                    screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentOnScreen(pkg))
+                    screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
                 val tapped = touchAt(rect, false)
                 if (!tapped.ok) {
                     throw ApiException(409, "gesture_cancelled", "The system cancelled the touch")

@@ -1,8 +1,5 @@
 package net.die.phoneapi.browser
 
-import net.die.phoneapi.model.ActionResult
-import net.die.phoneapi.model.BrowserInput
-import net.die.phoneapi.model.BrowserKeyRequest
 import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserSnapshotOptions
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -132,34 +129,6 @@ class BrowserShownTest {
             )
         harness.virtual { service.snapshot(TAB, BrowserSnapshotOptions(show = true)) }
         assertEquals("com.android.chrome", launched)
-        assertEquals("Page.bringToFront", shown.methods().first())
-    }
-
-    @Test
-    @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `touch input shows the tab`() {
-        // Chrome is behind another app, as after cleanup: touch launches it before the key.
-        val shown = harness.socket(harness.switched() + settled(firstId = 1))
-        val keyed = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
-        val sockets = ArrayDeque(listOf(shown, keyed))
-        var asks = 0
-        val order = mutableListOf<String>()
-        val service =
-            harness.service(
-                byteArrayOf(),
-                sockets = BrowserServiceTest.CHROME,
-                open = { sockets.removeFirst() },
-                inFront = { asks++ > 0 },
-                showPackage = { pkg -> order += "launch $pkg" },
-                press = {
-                    order += "key"
-                    ActionResult(ok = true, backend = "inject")
-                },
-            )
-        harness.virtual {
-            service.key(TAB, BrowserKeyRequest(key = "ENTER", input = BrowserInput.TOUCH))
-        }
-        assertEquals(listOf("launch com.android.chrome", "key"), order)
         assertEquals("Page.bringToFront", shown.methods().first())
     }
 

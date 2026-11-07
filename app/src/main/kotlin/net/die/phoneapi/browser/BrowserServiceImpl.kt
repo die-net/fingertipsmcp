@@ -164,7 +164,8 @@ internal class BrowserServiceImpl(
             gestureAt = gestureAt,
             pressKey = pressKey,
             typeText = typeText,
-            contentOnScreen = { pkg -> contentOnScreen(pkg) },
+            contentBounds = contentBounds,
+            appUp = { pkg -> appUp(pkg) },
             quads = locator::quads,
             focusNode = locator::focus,
             target = { ref, selector -> optionalTarget(ref, selector) },
@@ -433,8 +434,8 @@ internal class BrowserServiceImpl(
             request.autoWake,
             request.input,
             before = { pageKey = pageInput.prepareKey(request) },
-        ) { cdp, _ ->
-            pageInput.key(cdp, request, pageKey)
+        ) { cdp, pkg ->
+            pageInput.key(cdp, pkg, request, pageKey)
         }
     }
 
@@ -471,11 +472,12 @@ internal class BrowserServiceImpl(
                     browserPackage(socketList().firstOrNull { it.name == socket }, socket)
                 }
             val background = input !in TOUCH_INPUTS && socket == CHROME_SOCKET
-            beforeInput(id, input, pkg, pointer, background)
+            if (pointer && input == BrowserInput.CDP) requireOnScreen(pkg)
+            if (background && timersStalled(id)) throw timersStopped(id)
             val result =
                 usePage(socket, chromeId) { cdp ->
                     probe?.revive(cdp, socket, reading = false)
-                    // Touch brings the tab on screen, which wakes it.
+                    // Touch brings the tab on screen, in block, which wakes it.
                     if (input !in TOUCH_INPUTS) probe?.requireRunning(cdp, socket)
                     if (pointer && input == BrowserInput.CDP) requireShowing(cdp)
                     block(cdp, pkg)
@@ -486,20 +488,6 @@ internal class BrowserServiceImpl(
         } finally {
             invalidateSnapshots()
         }
-    }
-
-    /** Refuses input that cannot land, and brings the tab on screen for touch. */
-    private suspend fun beforeInput(
-        id: String,
-        input: BrowserInput,
-        pkg: String?,
-        pointer: Boolean,
-        background: Boolean,
-    ) {
-        if (pointer && input == BrowserInput.CDP) requireOnScreen(pkg)
-        if (background && timersStalled(id)) throw timersStopped(id)
-        // Page.bringToFront alone leaves Chrome behind another app, as after cleanup.
-        if (input == BrowserInput.TOUCH) show(id)
     }
 
     override suspend fun evaluate(id: String, request: EvalRequest): EvalResult {
@@ -673,15 +661,18 @@ internal class BrowserServiceImpl(
             }
         }
 
-    private suspend fun contentOnScreen(pkg: String?): Rect {
-        try {
-            return contentBounds(pkg)
-        } catch (e: ApiException) {
-            if (e.error != "content_unavailable" || pkg.isNullOrEmpty()) throw e
-            showPackage(pkg)
-            settled(APPEAR_MS) { hasContent { contentBounds(pkg) } }
-            return contentBounds(pkg)
-        }
+    /**
+     * Brings [pkg] up for touch input when it is not in front, as after cleanup, where
+     * Page.bringToFront alone leaves Chrome behind another app. Waits once for its window to have
+     * content. When the app is in front already, nothing is launched: a page it does not show, as
+     * under a dialog or the tab switcher, is for [contentBounds] to report.
+     */
+    private suspend fun appUp(pkg: String?) {
+        if (pkg == null || inFront(pkg)) return
+        showPackage(pkg)
+        if (settled(APPEAR_MS) { inFront(pkg) && hasContent { contentBounds(pkg) } }) return
+        if (inFront(pkg)) return
+        throw ApiException(409, "not_visible", "$pkg did not come on screen for touch input.")
     }
 
     /**
