@@ -39,7 +39,7 @@ internal class PageInput(
     /** Brings the app up when it is not in front, and fails when it does not come. */
     private val appUp: suspend (String?) -> Unit,
     private val quads: suspend (CdpSession, String, TapTarget) -> JsonArray,
-    private val focusNode: suspend (CdpSession, String, TapTarget) -> JsonObject,
+    private val focusNode: suspend (CdpSession, String, TapTarget) -> Unit,
     private val target: (String?, String?) -> TapTarget?,
     private val refreshHz: () -> Float = { DEFAULT_REFRESH_HZ },
     private val touchscreen: suspend () -> TouchscreenInfo = { fallbackTouchscreen() },
@@ -368,7 +368,7 @@ internal class PageInput(
                 }
             }
             BrowserInput.CDP,
-            BrowserInput.CDP_MOUSE -> cdp.call("DOM.focus", focusNode(cdp, id, focus))
+            BrowserInput.CDP_MOUSE -> focusNode(cdp, id, focus)
         }
     }
 

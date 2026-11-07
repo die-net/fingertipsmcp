@@ -28,8 +28,12 @@ import net.die.phoneapi.browser.DEVTOOLS_CLOSED
 import net.die.phoneapi.browser.DevtoolsSocket
 import net.die.phoneapi.browser.FrameTreeResult
 import net.die.phoneapi.browser.decodeCdp
+import net.die.phoneapi.browser.documentNode
 import net.die.phoneapi.browser.evaluateInFrame
+import net.die.phoneapi.browser.firstMatch
 import net.die.phoneapi.browser.parseBrowserTargetId
+import net.die.phoneapi.browser.rejected
+import net.die.phoneapi.browser.withNodeIds
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.ElementBy
@@ -214,7 +218,6 @@ internal class BrowserWatch(
         hold(
             session.listen { event ->
                 model.apply(event.method, event.params, now())
-                if (event.method == "DOM.documentUpdated") page.forgetDocument()
                 signals.tryEmit(Unit)
             }
         )
@@ -289,44 +292,25 @@ internal class BrowserWatch(
         return (browserTarget(condition) ?: defaultId) == id
     }
 
-    private suspend fun element(page: PageSession, condition: WaitCondition.BrowserElement): Check {
-        val nodeId = findNode(page, condition)
-        return when (condition.state) {
-            ElementState.ABSENT -> Check(nodeId == 0)
-            ElementState.PRESENT -> Check(nodeId != 0)
-            ElementState.VISIBLE -> Check(nodeId != 0 && visible(page, nodeId))
+    private suspend fun element(
+        page: PageSession,
+        condition: WaitCondition.BrowserElement,
+    ): Check =
+        page.cdp.withNodeIds {
+            val nodeId = findNode(page, condition)
+            when (condition.state) {
+                ElementState.ABSENT -> Check(nodeId == 0)
+                ElementState.PRESENT -> Check(nodeId != 0)
+                ElementState.VISIBLE -> Check(nodeId != 0 && visible(page, nodeId))
+            }
         }
-    }
 
     private suspend fun findNode(page: PageSession, condition: WaitCondition.BrowserElement): Int {
-        val root = page.rootId ?: documentRoot(page)
-        return if (condition.by == ElementBy.CSS) queryCss(page, root, condition.selector)
-        else querySearch(page, condition.selector)
+        if (condition.by == ElementBy.CSS) return firstMatch(page.cdp, condition.selector)
+        // A search names its results by a path from a document Chrome has given this session.
+        documentNode(page.cdp)
+        return querySearch(page, condition.selector)
     }
-
-    private suspend fun documentRoot(page: PageSession): Int {
-        val id =
-            page.cdp
-                .call("DOM.getDocument", buildJsonObject { put("depth", 0) })
-                .decodeCdp<DocumentResult>()
-                ?.root
-                ?.nodeId ?: 0
-        if (id == 0) throw ApiException(502, "cdp_error", "Chrome did not return a document")
-        page.rootId = id
-        return id
-    }
-
-    private suspend fun queryCss(page: PageSession, root: Int, selector: String): Int =
-        page.cdp
-            .call(
-                "DOM.querySelector",
-                buildJsonObject {
-                    put("nodeId", root)
-                    put("selector", selector)
-                },
-            )
-            .decodeCdp<QueryResult>()
-            ?.nodeId ?: 0
 
     private suspend fun querySearch(page: PageSession, query: String): Int {
         val started =
@@ -360,7 +344,8 @@ internal class BrowserWatch(
                     ?.quads
             !quads.isNullOrEmpty()
         } catch (e: ApiException) {
-            if (e.error != "cdp_error") throw e
+            // Chrome refuses the quads of a node with no box.
+            if (e.rejected == null) throw e
             false
         }
 
@@ -412,19 +397,7 @@ internal class BrowserWatch(
     private fun needsLoad(condition: WaitCondition): Boolean =
         condition is WaitCondition.BrowserLoaded || condition is WaitCondition.BrowserSettled
 
-    private class PageSession(val model: PageModel, val cdp: CdpSession) {
-        @Volatile var rootId: Int? = null
-
-        fun forgetDocument() {
-            rootId = null
-        }
-    }
-
-    @Serializable private data class DocumentResult(val root: NodeRef? = null)
-
-    @Serializable private data class NodeRef(val nodeId: Int = 0)
-
-    @Serializable private data class QueryResult(val nodeId: Int = 0)
+    private data class PageSession(val model: PageModel, val cdp: CdpSession)
 
     @Serializable
     private data class SearchStarted(val resultCount: Int = 0, val searchId: String? = null)

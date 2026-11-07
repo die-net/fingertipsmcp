@@ -36,7 +36,7 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
         var why: ApiException? = null
         suspend fun attempt(): JsonArray? =
             try {
-                boxed(cdp, cssNode(cdp, target.selector))
+                cdp.withNodeIds { boxed(cdp, cssNode(cdp, target.selector)) }
             } catch (e: ApiException) {
                 if (e.error != "not_found" && e.error != "offscreen") throw e
                 why = e
@@ -97,32 +97,19 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
     }
 
     private suspend fun cssNode(cdp: CdpSession, selector: String): JsonObject {
-        val root =
-            cdp.call("DOM.getDocument", buildJsonObject { put("depth", 0) })
-                .decodeCdp<DocumentResult>()
-                ?.root
-                ?.nodeId ?: 0
-        if (root == 0) throw ApiException(502, "cdp_error", "Chrome did not return a document")
-        val nodeId =
-            cdp.call(
-                    "DOM.querySelector",
-                    buildJsonObject {
-                        put("nodeId", root)
-                        put("selector", selector)
-                    },
-                )
-                .decodeCdp<QueryResult>()
-                ?.nodeId ?: 0
+        val nodeId = firstMatch(cdp, selector)
         if (nodeId == 0) throw ApiException.notFound("No element matches the selector")
         return buildJsonObject { put("nodeId", nodeId) }
     }
 
-    /** The DOM params that name [target], for focusing it. */
-    suspend fun focus(cdp: CdpSession, id: String, target: TapTarget): JsonObject =
+    /** Gives [target] the page's focus. */
+    suspend fun focus(cdp: CdpSession, id: String, target: TapTarget) {
         when (target) {
-            is TapTarget.Ref -> refParams(cdp, id, target.id)
-            is TapTarget.Css -> cssNode(cdp, target.selector)
+            is TapTarget.Ref -> cdp.call("DOM.focus", refParams(cdp, id, target.id))
+            is TapTarget.Css ->
+                cdp.withNodeIds { cdp.call("DOM.focus", cssNode(cdp, target.selector)) }
         }
+    }
 
     private companion object {
         const val ELEMENT_POLL_MS = 200L
@@ -136,11 +123,5 @@ private fun staleRef(ref: String, why: String, cause: Throwable?): ApiException 
         "Ref $ref is from an older snapshot: $why. Take a new browser_snapshot.",
         cause = cause,
     )
-
-@Serializable private data class DocumentResult(val root: NodeId? = null)
-
-@Serializable private data class NodeId(val nodeId: Int = 0)
-
-@Serializable private data class QueryResult(val nodeId: Int = 0)
 
 @Serializable private data class QuadResult(val quads: List<JsonElement> = emptyList())

@@ -2,7 +2,9 @@ package net.die.phoneapi.browser
 
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
+import net.die.phoneapi.model.BrowserInput
 import net.die.phoneapi.model.BrowserTapRequest
+import net.die.phoneapi.model.BrowserTextRequest
 import net.die.phoneapi.model.Rect
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -178,6 +180,146 @@ class BrowserTapWaitTest {
                     BrowserTapRequest(selector = "a", waitMs = 60_000),
                 )
             }
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `ids dropped before the query`() {
+        val page = harness.socket(opening() + document(5) + dropped(6) + found(7))
+        val result = tapThrough(page, waitMs = 0)
+        assertTrue(result.ok)
+        assertEquals(2, page.methods().count { it == "DOM.getDocument" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `ids dropped before the box`() {
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    node(6) +
+                    harness.serverTextFrame("""{"id":7,"result":{}}""") +
+                    dropped(8) +
+                    found(9)
+            )
+        val result = tapThrough(page, waitMs = 0)
+        assertTrue(result.ok)
+        assertEquals(2, page.methods().count { it == "DOM.getDocument" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a load drops ids twice`() {
+        val page =
+            harness.socket(
+                opening() + document(5) + dropped(6) + document(7) + dropped(8) + found(9)
+            )
+        assertTrue(tapThrough(page, waitMs = 0).ok)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `ids that keep dropping fail`() {
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    dropped(6) +
+                    document(7) +
+                    dropped(8) +
+                    document(9) +
+                    dropped(10)
+            )
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 5_000) }
+        assertEquals("cdp_error", error.error)
+        assertEquals(3, page.methods().count { it == "DOM.getDocument" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a refused selector is final`() {
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    harness.serverTextFrame(
+                        """{"id":6,"error":{"code":-32000,"message":"DOM Error while querying"}}"""
+                    )
+            )
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 5_000) }
+        assertEquals("cdp_error", error.error)
+        assertEquals(1, page.methods().count { it == "DOM.getDocument" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `focus survives dropped ids`() {
+        val page =
+            harness.socket(
+                harness.switched() +
+                    document(1) +
+                    node(2) +
+                    dropped(3) +
+                    document(4) +
+                    node(5) +
+                    harness.serverTextFrame("""{"id":6,"result":{}}""") +
+                    harness.serverTextFrame("""{"id":7,"result":{}}""")
+            )
+        val service =
+            harness.service(byteArrayOf(), sockets = BrowserServiceTest.CHROME, open = { page })
+        val result = harness.virtual {
+            service.text(
+                "chrome_devtools_remote~abc",
+                BrowserTextRequest(text = "hi", selector = "input", input = BrowserInput.CDP),
+            )
+        }
+        assertTrue(result.ok)
+        assertEquals(2, page.methods().count { it == "DOM.focus" })
+    }
+
+    /** The replies before a tap's first lookup, on a tab that is showing. */
+    private fun opening() =
+        harness.switched() +
+            harness.serverTextFrame("""{"id":1,"result":{}}""") +
+            harness.visibility(2, "visible")
+
+    private fun document(id: Int) =
+        harness.serverTextFrame("""{"id":$id,"result":{"root":{"nodeId":1}}}""")
+
+    private fun node(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{"nodeId":4}}""")
+
+    /** Chrome drops the session's node ids, says so, and refuses command [id], which held one. */
+    private fun dropped(id: Int) =
+        harness.serverTextFrame("""{"method":"DOM.documentUpdated","params":{}}""") +
+            harness.serverTextFrame(
+                """{"id":$id,"error":{"code":-32000,"message":"Could not find node with given id"}}"""
+            )
+
+    /** The replies to a lookup from [id] on that finds the element, and to the tap's metrics. */
+    private fun found(id: Int) =
+        document(id) +
+            node(id + 1) +
+            harness.serverTextFrame("""{"id":${id + 2},"result":{}}""") +
+            harness.serverTextFrame(harness.quad(id + 3)) +
+            harness.serverTextFrame(harness.metrics(id + 4))
+
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    private fun tapThrough(page: StallingSocket, waitMs: Long): ActionResult {
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                content = { Rect(0, 283, 1080, 2339) },
+                touch = { _, _ -> ActionResult(ok = true, backend = "inject") },
+                open = { page },
+            )
+        return harness.virtual {
+            service.tap(
+                "chrome_devtools_remote~abc",
+                BrowserTapRequest(selector = "a", waitMs = waitMs),
+            )
         }
     }
 }
