@@ -108,7 +108,8 @@ class BrowserTapWaitTest {
     }
 
     @Test
-    fun `gives up on a selector after its wait`() {
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `selector wait gives up`() {
         // Each poll asks for the document and finds nothing, more often than the wait allows.
         val misses =
             (0 until 100).fold(byteArrayOf()) { all, n ->

@@ -5,11 +5,12 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /** Collecting a page's console for a while, without what enabling it replays. */
+@Suppress("MissingUseCall") // The session closes on use, and the test reads the socket after.
 class ConsoleLogTest {
     private val harness = BrowserServiceTest()
 
     @Test
-    fun `keeps only what comes after enabling`() {
+    fun `keeps entries after enabling`() {
         val page =
             harness.socket(
                 harness.switched() +

@@ -91,7 +91,8 @@ class BrowserListingTest {
     }
 
     @Test
-    fun `a silent chrome fails the listing`() {
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `silent chrome fails listing`() {
         // A WebView answers, but Chrome's listing times out: a list without Chrome's tabs would
         // read as every one of them closed.
         val sockets =
@@ -117,6 +118,7 @@ class BrowserListingTest {
     }
 
     @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `a silent webview is left out`() {
         val sockets =
             """[{"name":"chrome_devtools_remote","pid":1,"package":"com.android.chrome"},""" +

@@ -105,6 +105,7 @@ class BrowserServiceTest {
     }
 
     @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `taps inside the link`() {
         val frames =
             switched() +
@@ -237,7 +238,7 @@ class BrowserServiceTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `a dropped snapshot is not tried again`() {
+    fun `dropped snapshot runs once`() {
         val dropped =
             switched() +
                 serverTextFrame(
@@ -259,7 +260,7 @@ class BrowserServiceTest {
     }
 
     @Test
-    fun `an unreachable devtools is not tried again`() {
+    fun `unreachable devtools runs once`() {
         // As CdpForward fails when wireless debugging is off and PhoneAPI cannot turn it on.
         var opens = 0
         val service =
@@ -277,7 +278,7 @@ class BrowserServiceTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    fun `a refused command is not tried again`() {
+    fun `refused command runs once`() {
         val refused =
             switched() +
                 serverTextFrame(
@@ -312,7 +313,8 @@ class BrowserServiceTest {
     }
 
     @Test
-    fun `a gone tab is not_found for every call`() {
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `gone tab is not_found`() {
         // Chrome refuses a page socket for a closed tab, and the browser-wide commands on it.
         val refused = "No such target id: abc"
         val pageRefused =

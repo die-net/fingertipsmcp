@@ -74,7 +74,7 @@ class TabProbeTest {
     }
 
     @Test
-    fun `a probe that cannot open is not a frozen chrome`() {
+    fun `failed probe is not frozen`() {
         // The page does not answer, and the probe fails for a reason of its own: that says
         // nothing about Chrome, so the call goes ahead rather than reporting browser_frozen.
         probeOpens = { throw ApiException.helperUnavailable() }
@@ -84,7 +84,7 @@ class TabProbeTest {
     }
 
     @Test
-    fun `a reload that never loads is not a fresh page`() {
+    fun `stuck reload is not fresh`() {
         // The reloaded page stays "loading" for as long as the probe asks.
         val loading =
             (0 until 50).fold(byteArrayOf()) { all, n ->
