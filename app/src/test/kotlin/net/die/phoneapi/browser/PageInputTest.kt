@@ -75,6 +75,37 @@ class PageInputTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes the socket it opens.
+    fun `cdp swipe needs the touchscreen's axes`() {
+        // Without the helper there are no axes to size the contact by, so nothing is sent.
+        val page =
+            harness.socket(
+                harness.switched() + harness.showing() + harness.serverTextFrame(harness.metrics(4))
+            )
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                touchscreen = { throw ApiException.helperUnavailable() },
+            )
+        val error = harness.virtual {
+            harness.failure {
+                service.swipe(
+                    "chrome_devtools_remote~abc",
+                    BrowserSwipeRequest(
+                        from = Point(100f, 200f),
+                        to = Point(300f, 400f),
+                        input = BrowserInput.CDP,
+                    ),
+                )
+            }
+        }
+        assertEquals("helper_unavailable", error)
+        assertFalse("Input.dispatchTouchEvent" in page.methods())
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes the socket it opens.
     fun `touch swipe maps onto screen`() {
         val frames =
             harness.switched() +

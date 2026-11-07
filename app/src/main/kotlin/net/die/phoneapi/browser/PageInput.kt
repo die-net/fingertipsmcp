@@ -301,12 +301,12 @@ internal class PageInput(
                 "input touch, or browser_eval."
         )
 
-    private suspend fun axes(): TouchscreenInfo =
-        try {
-            touchscreen()
-        } catch (_: ApiException) {
-            fallbackTouchscreen()
-        }
+    /**
+     * The touchscreen's axes, which give a cdp touch its pressure and size. A helper that cannot
+     * say fails the touch: the placeholder axes run 0 to 1, so every contact would be a fraction of
+     * a pixel, unlike any finger.
+     */
+    private suspend fun axes(): TouchscreenInfo = touchscreen()
 
     /**
      * Brings the app up, then selects the tab, before every touch input. In that order, since
