@@ -6,16 +6,21 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Delay
 import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.browser.BrowserServiceTest
 import net.die.phoneapi.browser.CHROME_SOCKET
 import net.die.phoneapi.browser.KeyedSocket
+import net.die.phoneapi.browser.StallingSocket
 import net.die.phoneapi.browser.VirtualIo
 import net.die.phoneapi.model.BrowserTarget
+import net.die.phoneapi.model.ElementState
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.server.FakeBrowser
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -256,6 +261,167 @@ class BrowserWatchTest {
         }
     }
 
+    @Test
+    fun `a silent page times out`() = clock.run {
+        // It took the handshake, then no command: a dialog the screen can't show, or a hung page.
+        val page = KeyedSocket(byteArrayOf(), clock)
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(dialog), timeoutMs = LIMIT_MS)
+        assertEquals(LIMIT_MS, clock.now)
+        assertFalse(watch.check(dialog).satisfied)
+        watch.close()
+        assertEquals(listOf("Page.enable"), page.methods())
+    }
+
+    @Test
+    fun `a page gone quiet times out`() = clock.run {
+        val page = KeyedSocket(reply(1), clock)
+        val load = WaitCondition.BrowserLifecycle(target = TAB, name = "load")
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(load), timeoutMs = LIMIT_MS)
+        assertEquals(LIMIT_MS, clock.now)
+        assertFalse(watch.check(load).satisfied)
+        watch.close()
+        assertEquals(listOf("Page.enable", "Page.setLifecycleEventsEnabled"), page.methods())
+    }
+
+    @Test
+    fun `a silent page is not idle`() = clock.run {
+        // Without Network.enable no request is seen, so nothing says the network is idle.
+        val page = KeyedSocket(byteArrayOf(), clock)
+        val idle = WaitCondition.BrowserNetworkIdle(target = TAB, quietMs = 0)
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(idle), timeoutMs = LIMIT_MS)
+        assertFalse(watch.check(idle).satisfied)
+        watch.close()
+    }
+
+    @Test
+    fun `a stuck handshake times out`() = clock.run {
+        // A frozen Chrome. The read blocks, so only closing the socket ends it.
+        val page = StallingSocket(byteArrayOf(), clock)
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(dialog), timeoutMs = LIMIT_MS)
+        assertEquals(LIMIT_MS, clock.now)
+        assertFalse(watch.check(dialog).satisfied)
+        watch.close()
+        assertEquals(-1, page.input.read())
+    }
+
+    @Test
+    fun `a stuck target list times out`() = clock.run {
+        // browser.targets() blocks in its own handshake, on a socket the watch doesn't hold.
+        val listing = StallingSocket(byteArrayOf(), clock)
+        val stuck =
+            object : FakeBrowser() {
+                override suspend fun targets() =
+                    withContext(clock) {
+                        listing.input.read()
+                        emptyList<BrowserTarget>()
+                    }
+            }
+        val anyPage = WaitCondition.BrowserDialog()
+        val watch =
+            BrowserWatch(stuck, clock, { _, _ -> error("No page was named") }, { clock.now }) {
+                false
+            }
+        watch.open(listOf(anyPage), timeoutMs = LIMIT_MS)
+        assertEquals(LIMIT_MS, clock.now)
+        assertFalse(watch.check(anyPage).satisfied)
+        watch.close()
+        listing.close()
+    }
+
+    @Test
+    fun `a stuck look ends at the limit`() = clock.run {
+        val page = elementPage()
+        val absent =
+            WaitCondition.BrowserElement(
+                target = TAB,
+                selector = "#a",
+                state = ElementState.ABSENT,
+            )
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(absent), timeoutMs = LIMIT_MS)
+        delay(LIMIT_MS / 2)
+        // No answer is not the element being gone.
+        assertFalse(watch.check(absent).satisfied)
+        assertEquals(LIMIT_MS, clock.now)
+        watch.close()
+        assertTrue("DOM.getDocument" in page.methods())
+    }
+
+    @Test
+    fun `a late look asks nothing`() = clock.run {
+        val page = elementPage()
+        val element = WaitCondition.BrowserElement(target = TAB, selector = "#a")
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(element), timeoutMs = LIMIT_MS)
+        delay(LIMIT_MS)
+        assertFalse(watch.check(element).satisfied)
+        watch.close()
+        assertFalse("DOM.getDocument" in page.methods())
+    }
+
+    @Test
+    fun `a wait of zero still looks`() = clock.run {
+        val page =
+            KeyedSocket(
+                reply(1) +
+                    harness.serverTextFrame(
+                        """{"id":2,"result":{"frameTree":{"frame":{"id":"F",""" +
+                            """"url":"https://a.test/x","loaderId":"L1"}}}}"""
+                    ),
+                clock,
+            )
+        val url = WaitCondition.BrowserUrl(target = TAB, contains = "a.test")
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(url), timeoutMs = 0)
+        assertTrue(watch.check(url).satisfied)
+        watch.close()
+    }
+
+    @Test
+    fun `a wait of zero still ends`() = clock.run {
+        val page = KeyedSocket(byteArrayOf(), clock)
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(dialog), timeoutMs = 0)
+        assertEquals(MIN_LOOK_MS, clock.now)
+        assertFalse(watch.check(dialog).satisfied)
+        watch.close()
+    }
+
+    @Test
+    fun `a late socket is closed`() = clock.run {
+        val page = KeyedSocket(byteArrayOf(), clock)
+        val opened = CompletableDeferred<Unit>()
+        val watch =
+            BrowserWatch(
+                browser,
+                clock,
+                { _, _ ->
+                    // A blocking open, which cancelling can't end.
+                    withContext(NonCancellable) { opened.await() }
+                    page
+                },
+                { clock.now },
+            ) {
+                false
+            }
+        watch.open(listOf(dialog), timeoutMs = LIMIT_MS)
+        watch.close()
+        opened.complete(Unit)
+        assertEquals(-1, page.input.read())
+    }
+
+    /** A page that answers a `browser.element` wait's set-up, then no more. */
+    private fun elementPage() =
+        KeyedSocket(
+            reply(1) +
+                harness.serverTextFrame("""{"id":2,"result":{"frameTree":{"frame":{"id":"F"}}}}"""),
+            clock,
+        )
+
     /** A page for a settled wait, whose document says [readyState]. */
     private fun settledPage(readyState: String) =
         KeyedSocket(
@@ -324,6 +490,9 @@ class BrowserWatchTest {
                 """"url":"https://a.test/","loaderId":"L1"}}}"""
         const val TAB = "${CHROME_SOCKET}~T1"
         const val WAIT_MS = 5_000L
+        /** A wait's limit, well under the 15 s a single DevTools call may take. */
+        const val LIMIT_MS = 4_000L
+        const val MIN_LOOK_MS = 1_000L
         /** Events in a burst, more than a session could hold for a reader that is behind. */
         const val BURST = 200
     }
