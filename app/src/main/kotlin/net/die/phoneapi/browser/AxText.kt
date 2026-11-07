@@ -1,6 +1,7 @@
 package net.die.phoneapi.browser
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,14 +21,32 @@ internal fun formatAxTree(
     url: String? = null,
     options: BrowserSnapshotOptions = BrowserSnapshotOptions(),
 ): AxText {
-    val nodes = result.decodeCdp<NodeList>()?.nodes?.mapNotNull { it.decodeCdp<AxNode>() }
-    if (nodes == null) return blank(url)
-    return AxTree(nodes).format(url, options)
+    val raw = result.decodeCdp<NodeList>()?.nodes ?: return blank(url)
+    var unread = 0
+    val nodes = raw.mapNotNull { element ->
+        element.decodeCdp<AxNode>() ?: unreadNode(element)?.also { unread++ }
+    }
+    return AxTree(nodes, unread).format(url, options)
+}
+
+/**
+ * A node whose fields did not decode, kept by its id and children as an ignored node, so its
+ * children stay in its place rather than becoming roots of their own. Null without an id.
+ */
+private fun unreadNode(element: JsonElement): AxNode? {
+    val fields = element as? JsonObject ?: return null
+    val id = (fields["nodeId"] as? JsonPrimitive)?.contentOrNull ?: return null
+    val children =
+        (fields["childIds"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            .orEmpty()
+    return AxNode(nodeId = id, ignored = true, childIds = children)
 }
 
 private fun blank(url: String?) = AxText(null, header(url, title = null, notes = emptyList()))
 
-private class AxTree(nodes: List<AxNode>) {
+/** The tree of [nodes], [unread] of which Chrome sent in a form that did not decode. */
+private class AxTree(nodes: List<AxNode>, private val unread: Int) {
     private val byId = LinkedHashMap<String, AxNode>()
     private val childrenOf = HashMap<String, List<String>>()
     private val claimed = HashSet<String>()
@@ -52,6 +71,9 @@ private class AxTree(nodes: List<AxNode>) {
                 )
             }
             if (walk.depthCut) add("# nodes more than $MAX_DEPTH levels deep left out")
+            if (unread > 0) {
+                add("# nodes that could not be read: $unread; their children stand in their place")
+            }
         }
         val body = kept.joinToString("") { "\n" + it }
         return AxText(title, header(url, title, notes) + body)

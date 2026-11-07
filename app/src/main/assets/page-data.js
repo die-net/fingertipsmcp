@@ -10,11 +10,14 @@ const DATA_MIN_ASSIGNED = 256;
 const DATA_MAX_BLOBS = 50;
 const DATA_MAX_DEPTH = 200;
 
-// An assignment whose value may be data: window.NAME =, self.NAME =, window["NAME"] =, var, let,
-// or const NAME =, or a bare NAME = that starts a statement, as older Next.js writes
-// __NEXT_DATA__.
+// An assignment whose value may be data: window.NAME =, self.NAME =, this.NAME =, each also with
+// more .NAME after it, as window.App.state =, window["NAME"] =, var, let, or const NAME =, or a
+// bare NAME =, or NAME.NAME =, that starts a statement, as older Next.js writes __NEXT_DATA__ and
+// App.state = does.
 const DATA_ASSIGN =
-  /(?:\b(?:window|self|globalThis)\s*\.\s*([A-Za-z_$][\w$]*)|\b(?:window|self|globalThis)\s*\[\s*["']([^"'\]]+)["']\s*\]|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)|(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*))\s*=\s*/dg;
+  /(?:\b(?:window|self|globalThis|this)\s*\.\s*([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)|\b(?:window|self|globalThis)\s*\[\s*["']([^"'\]]+)["']\s*\]|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)|(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*))\s*=\s*/dg;
+// The global or object a member assignment starts from, which a blob's name leaves out.
+const DATA_GLOBAL = /^(?:window|self|globalThis|this)\./;
 // A call: a name, dotted or not, then an open parenthesis, such as Search.results.load(.
 const DATA_CALLEE = /([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(/g;
 // An argument that is a name, a number, or a dotted name, stepped over to reach a literal.
@@ -28,7 +31,7 @@ const DATA_SCRIPT_TYPE = /^(text|application)\/(x-)?(javascript|ecmascript)$/;
 
 function pageData(want, budget) {
   const blobs = [];
-  const names = new Map();
+  const taken = new Set();
   const counts = new Map();
   let more = 0;
 
@@ -40,10 +43,12 @@ function pageData(want, budget) {
       more++;
       return;
     }
-    name = name.replace(/[/ ]/g, "_");
-    const seen = (names.get(name) || 0) + 1;
-    names.set(name, seen);
-    if (seen > 1) name += "-" + seen;
+    // A name is a path's first segment, so it has no slash, and no two blobs share one, even when
+    // the page has ids x, x, and x-2.
+    const base = name.replace(/[/ ]/g, "_");
+    name = base;
+    for (let n = 2; taken.has(name); n++) name = base + "-" + n;
+    taken.add(name);
     blobs.push({ name: name, source: source, text: text });
   }
 
@@ -158,7 +163,7 @@ function assignments(script) {
     const start = m.index;
     const assigned = start + m[0].length;
     if (m[1] !== undefined) {
-      name = m[1];
+      name = squeeze(m[1], "");
       source = squeeze(script.slice(start, m.indices[1][1]), "");
     } else if (m[2] !== undefined) {
       name = m[2];
@@ -167,8 +172,9 @@ function assignments(script) {
       name = m[3];
       source = squeeze(script.slice(start, m.indices[3][1]), " ");
     } else {
-      name = m[4];
-      source = name;
+      // A statement that starts with this.NAME, or window.NAME, is named as the forms above are.
+      source = squeeze(m[4], "");
+      name = source.replace(DATA_GLOBAL, "");
       if (name === "var" || name === "let" || name === "const") continue;
     }
     const rest = script.slice(assigned, assigned + 16);

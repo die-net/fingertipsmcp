@@ -13,6 +13,9 @@ class Text {
   get textContent() {
     return this.data;
   }
+  cloneNode() {
+    return new Text(this.data);
+  }
 }
 
 class Element {
@@ -119,8 +122,14 @@ class Element {
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
   }
-  cloneNode() {
-    throw new Error("fakedom: cloneNode is not supported");
+  cloneNode(deep) {
+    const copy = new Element(this.tagName, this.attrs, []);
+    copy.style = Object.assign({}, this.style);
+    if (deep) for (const child of this.childNodes) copy.append(child.cloneNode(true));
+    return copy;
+  }
+  appendChild(child) {
+    return this.append(child);
   }
 }
 
@@ -149,8 +158,13 @@ class Document extends Element {
   get forms() {
     return this.querySelectorAll("form");
   }
-  cloneNode() {
-    return this;
+  cloneNode(deep) {
+    const copy = new Document(
+      { url: this.baseUrl, contentType: this.contentType, title: this.docTitle },
+      [],
+    );
+    if (deep) for (const child of this.childNodes) copy.append(child.cloneNode(true));
+    return copy;
   }
 }
 

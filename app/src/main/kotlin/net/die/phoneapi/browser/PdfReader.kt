@@ -68,6 +68,10 @@ internal class PdfReader(private val script: suspend () -> String) {
                 size > SAVED_KEPT
         }
 
+    /** Whether the page in the tab [target], whose main frame is [frame], is one this made. */
+    suspend fun made(target: String, frame: MainFrame): Boolean =
+        frame.loaderId != null && loading.withLock { pages[target] == frame.loaderId }
+
     /** Whether Chrome saved the PDF at [url], as far as this remembers. */
     fun saved(url: String): Boolean = synchronized(savedUrls) { savedUrls[url] == true }
 
@@ -441,11 +445,11 @@ private fun requireWebUrl(url: String) {
 }
 
 /**
- * The page that stands in for a PDF. page-read.js knows it by its `phoneapi-pdf` meta tag and hands
- * the tab to [PdfReader]; a site's page that copies the tag is only taken over again.
+ * The page that stands in for a PDF. [PdfReader] knows it by the loader id of the navigation it
+ * answered with it, never by what it holds, so a site's page cannot pass for it.
  */
 internal const val PAGE =
-    """<!doctype html><html><head><meta charset="utf-8"><meta name="phoneapi-pdf"></head><body></body></html>"""
+    """<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>"""
 
 private val PAGE_BASE64 = Base64.getEncoder().encodeToString(PAGE.toByteArray())
 

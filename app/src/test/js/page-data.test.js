@@ -53,3 +53,27 @@ test("blobs past the most a read takes are counted", () => {
   assert.equal(found.blobs.length, 50);
   assert.equal(found.more, 30);
 });
+
+test("blob names are unique, whatever ids the page uses", () => {
+  const json = (id) => h("script", { type: "application/json", id: id }, "[1]");
+  const names = pageData(scripts(json("x"), json("x"), json("x-2")), null).blobs.map((b) => b.name);
+  assert.deepEqual(names, ["x", "x-2", "x-2-2"]);
+});
+
+test("a member assignment is read, however deep", () => {
+  const big = JSON.stringify({ items: Array.from({ length: 40 }, (_, n) => ({ id: n })) });
+  const code = [
+    "window.App.state = " + big + ";",
+    "App.config = " + big + ";",
+    "function F() { this.data = " + big + "; }",
+  ].join("\n");
+  const blobs = pageData(scripts(h("script", null, code)), null).blobs;
+  assert.deepEqual(
+    blobs.map((b) => [b.name, b.source]),
+    [
+      ["App.state", "window.App.state"],
+      ["App.config", "App.config"],
+      ["data", "this.data"],
+    ],
+  );
+});

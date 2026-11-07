@@ -60,10 +60,10 @@ internal data class PageExtract(
     val clipped: Boolean = false,
     val blocks: List<PageBlock> = emptyList(),
     /**
-     * Set only on the page PhoneAPI puts in place of a PDF: the PDF's URL. That page holds no text,
-     * so [PageReader] reads the PDF instead.
+     * Why Readability failed, in article scope, so the page was read whole. Error text from the
+     * script engine, for the log.
      */
-    val pdf: String? = null,
+    val articleError: String? = null,
 )
 
 @Serializable

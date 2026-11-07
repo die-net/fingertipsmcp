@@ -367,6 +367,21 @@ class PageDataTest {
     }
 
     @Test
+    fun `outlines two blobs that share a name each from its own text`() {
+        // A page blob and a recorded response can share a name, such as response-1.
+        val page =
+            DataExtract(
+                blobs =
+                    listOf(
+                        DataBlobText("response-1", "script#response-1", 7, """{"a":1}"""),
+                        DataBlobText("response-1", "https://example.com/api", 9, """[1,2,3,4]"""),
+                    )
+            )
+        val outline = readData(page, BrowserReadRequest(scope = ReadScope.DATA)).content!!
+        assertTrue("response-1: array of 4 numbers" in outline, outline)
+    }
+
+    @Test
     fun `data it cannot walk is the page's error`() {
         // A JSON script tag nested deeper than the printer goes, which JSON.parse in the page took.
         val deep = "[".repeat(300) + "]".repeat(300)

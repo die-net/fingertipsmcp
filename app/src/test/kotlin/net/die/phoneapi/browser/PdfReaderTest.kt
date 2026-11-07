@@ -377,27 +377,42 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `reads behind a stand-in page`() = runBlocking {
-        // page-read.js finds PhoneAPI's page and names the PDF; a new reader takes it over again.
+    fun `reads its own page by its loader, and a site's page as a page`() = runBlocking {
+        // The first read takes the viewer's tab over. The second finds PhoneAPI's page by its
+        // loader and reads the PDF without page-read.js. The third finds a page at the PDF's URL
+        // with another loader, as a site's page that copies PhoneAPI's would have, and reads it as
+        // a page, so the site cannot make a read take its tab over.
         val first = Replies()
-        first.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L5"}}}""")
-        first.result("""{"executionContextId":2}""")
-        first.value("""{"pdf":"$URL"}""")
+        first.result("""{"frameTree":{"frame":{"id":"F","url":"$VIEWER","loaderId":"L0"}}}""")
+        first.takeOver(loader = "L1", first = 2)
+        first.loaded()
+        first.value("true")
+        first.value(EXTRACT)
         val second = Replies()
-        second.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L5"}}}""")
-        second.takeOver(loader = "L6", first = 2)
-        second.loaded()
+        second.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L1"}}}""")
+        second.handle(loader = "L1")
+        second.value("\"parsed\"")
         second.value("true")
         second.value(EXTRACT)
-        val pages = ArrayDeque(listOf(first.socket() to 3, second.socket() to 14))
+        val third = Replies()
+        third.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L9"}}}""")
+        third.result("""{"executionContextId":2}""")
+        third.value(EXTRACT.replace("\"pdf\"", "\"page\""))
+        val sockets = listOf(first.socket() to 14, second.socket() to 7, third.socket() to 3)
+        val pages = ArrayDeque(sockets)
         val reader =
             PageReader({ "" }, { "" }, { "" }, null) { _, run ->
                 val (page, sent) = pages.removeFirst()
                 Evaluated(onPage(page, sent) { run(it) }, reloaded = false)
             }
-        val read = reader.read("t", BrowserReadRequest()).result
-        assertEquals("pdf", read.extracted)
-        assertEquals("Hello PDF", read.content)
+        assertEquals("pdf", reader.read("t", BrowserReadRequest()).result.extracted)
+        assertEquals("pdf", reader.read("t", BrowserReadRequest()).result.extracted)
+        assertEquals(listOf("Page.getFrameTree") + HANDLE, sockets[1].first.methods().take(4))
+        assertEquals("page", reader.read("t", BrowserReadRequest()).result.extracted)
+        assertEquals(
+            listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"),
+            sockets[2].first.awaitMethods(3),
+        )
     }
 
     @Test

@@ -316,15 +316,41 @@ function namedNotArticle(el) {
   return false;
 }
 
+// Elements kept in the copy Readability reads even though they are not drawn, since Readability
+// reads them: JSON-LD and other scripts, and images in noscript.
+const KEEP_UNDRAWN = new Set(["SCRIPT", "NOSCRIPT", "TEMPLATE", "STYLE", "META", "LINK"]);
+const MAX_ERROR_CHARS = 200;
+
+// A copy of the page for Readability, without the elements the page hides. Readability reads a
+// copy, which is not laid out, so it cannot tell what a stylesheet hides, and article scope would
+// hold text that page scope leaves out.
+function visibleCopy() {
+  const copy = document.cloneNode(false);
+  if (document.documentElement) copy.appendChild(visibleClone(document.documentElement, false));
+  return copy;
+}
+
+function visibleClone(node, inBody) {
+  const out = node.cloneNode(false);
+  for (const child of node.childNodes) {
+    if (child.nodeType === 1) {
+      const tag = child.tagName.toUpperCase();
+      const body = inBody || tag === "BODY";
+      if (body && !KEEP_UNDRAWN.has(tag) && hiddenNow(child)) continue;
+      out.appendChild(visibleClone(child, body));
+    } else {
+      out.appendChild(child.cloneNode(false));
+    }
+  }
+  return out;
+}
+
 // Whether a live element is hidden from a reader of the page.
 function hiddenNow(el) {
   if (el.getAttribute("aria-hidden") === "true" || el.hidden) return true;
   if (!el.checkVisibility) return false;
   return !el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
 }
-
-// The page PhoneAPI puts in place of a PDF holds no text; PhoneAPI reads the PDF instead.
-if (document.querySelector('meta[name="phoneapi-pdf"]')) return { pdf: location.href };
 
 const ldJson = [];
 for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
@@ -340,6 +366,7 @@ const bodyText = document.body ? document.body.innerText : "";
 let extracted = options.scope;
 let walked = null;
 let articlePublished = null;
+let articleError = null;
 let selected = null;
 if (options.selector) {
   let matches;
@@ -363,13 +390,15 @@ if (options.selector) {
   selected = matches.length;
 } else if (options.scope === "article" && readsAsArticle()) {
   try {
-    const article = new Readability(document.cloneNode(true), { serializer: (el) => el }).parse();
+    const article = new Readability(visibleCopy(), { serializer: (el) => el }).parse();
     if (article && article.content && article.textContent.trim()) {
       walked = walk([article.content], false);
       articlePublished = article.publishedTime || null;
     }
   } catch (e) {
-    // Readability can fail on unusual documents; fall back to the whole page.
+    // Readability can fail on unusual documents; the page is read whole, and PhoneAPI logs why.
+    articleError = String((e && e.name) || "Error") + ": " + String((e && e.message) || e);
+    articleError = articleError.slice(0, MAX_ERROR_CHARS);
   }
   if (!walked || walked.blocks.length === 0) {
     walked = null;
@@ -406,4 +435,5 @@ return {
   selected: selected,
   clipped: walked.clipped,
   blocks: walked.blocks,
+  articleError: articleError,
 };
