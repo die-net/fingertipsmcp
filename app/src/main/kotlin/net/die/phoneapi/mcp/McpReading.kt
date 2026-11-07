@@ -184,10 +184,7 @@ private suspend fun open(
     val tab = services.browser.openTab(url, capture)
     val loaded =
         try {
-            withTimeoutOrNull(OPEN_LOAD_MS) {
-                awaitLoad(services, tab.id)
-                true
-            } ?: false
+            withTimeoutOrNull(OPEN_LOAD_MS) { awaitLoad(services, tab.id) } != null
         } catch (e: ApiException) {
             if (!tabGone(services, tab.id, e)) cleaningUp(services, tab.id, closing) { throw e }
             return pdfTab(services, url, closing) ?: throw e
