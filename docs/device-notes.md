@@ -6,7 +6,7 @@ The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android
 
 ## Last phone run
 
-On 2026-11-07, a dev build of `main` at 4a18edd ran on the Android 11 test phone, with Chrome 156.0.8078.79, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
+On 2026-11-07, a dev build of `main` at 9e047f7 ran on the Android 11 test phone, with Chrome 156.0.8078.79. A dev build of `main` at 4a18edd ran there earlier that day, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
 
 Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
 
@@ -164,6 +164,8 @@ With only listeners counted, on the same emulator, a listing with 90 rows queued
 
 On the Android 10 emulator (kernel 4.14) the same day, the listeners had the same flags and state, and a listing through the USB path found Chrome's tab.
 
+On the Android 11 test phone on 2026-11-07, at 9e047f7, with 3 idle connections to Chrome open, `/proc/net/unix` showed 4 rows under Chrome's socket name, and 1 again after they closed. Each of 5 listings returned the 2 tabs once, in 0.10 to 0.12 s. No frozen WebView could be tried there: no `webview_devtools_remote` socket was listed, and `cached_apps_freezer` is unset.
+
 ### Still to check
 
 - That binding Chrome's Custom Tabs service works on a real Android 12 or later phone, and does not change anything visible on the Android 11 test phone.
@@ -214,9 +216,11 @@ Checked on the Android 16 emulator with Chrome 133 on 2026-10-31, with the helpe
 - With an incognito tab opened outside PhoneAPI holding a cookie, an incognito open closed it, and the new tab, opened right after, was in a new browser context with no cookies. A second session's open kept the first session's tab, saw its cookie, and got the note.
 - The Incognito Screenshot flag was in `chrome://flags`. It stayed on after Relaunch; Chrome writes flags as it shuts down, so a force stop loses the change. With it on, the video and `/v1/screenshot` showed an incognito tab's page and Chrome's incognito icon.
 
+On the Android 11 test phone on 2026-11-07, at 9e047f7, Chrome opened an incognito tab for `OPEN_PRIVATE_TAB` from the shell user, and PhoneAPI took it as such, in the one open tried. It took the screen, and after the session ended no tab was left in another browser context.
+
 ### Still to check
 
-- That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
+- Whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
 
 ## PDFs
 
@@ -406,10 +410,19 @@ Through PhoneAPI with its opens built on these events, on 2026-11-07:
 - A wait on a tab that came back `loading` connects only once the server has answered. With a server that took 20 to 40 s, `browser.settled` matched 0.5 to 1.6 s after it answered: on Chrome 133 for a plain open and incognito, on Chrome 109 for a plain open, `capture`, and incognito, 3 of 3, and on Chrome 145 for all three. `browser.loaded` on Chrome 133 did too. Before that, on Chrome 133, a `browser.settled` wait failed 503 `cdp_timeout` at 15 s, its `Page.enable` being held. On Chrome 133, 3 s waits while the server stayed silent timed out with no match.
 - A call that uses the page of such a tab fails 409 `content_unavailable` at once. On Chrome 133 and 145, during a 20 s server's silence, `read`, `find`, `evaluate`, and `snapshot` each answered in 4 to 17 ms. Then `browser.settled` matched at 20.8 s, and `read` returned the page. Before that, `read` on Chrome 133 waited for the commit, and failed 503 `cdp_timeout` at 15 s when the server took longer. The refusal lasts only while the open's watch runs, so a tab nothing listens for any more is read as before.
 
+On the Android 11 test phone with Chrome 156.0.8078.79 on 2026-11-07, at 9e047f7:
+
+- 30 of 30 first opens of arXiv PDFs in a row with Chrome in front read as `pdf`, opened in 3.9 to 6.6 s. So did 30 of 30 of a 1 KB PDF from the Mac, in 3.6 to 4.2 s. Nothing reached Downloads, and in the 45 opens where it was watched only Chrome was on top. Google Drive is installed there.
+- Plain opens came back committed, with no `loading`, hidden and in front: six public sites and a local page in 0.41 to 0.79 s, a server that took 3 s in 3.3 s, a page with no `<title>` in 0.43 to 0.58 s, and a refused connection in 0.48 to 0.55 s, as Chrome's error page. With the screen off, 9 of 9 fast pages, 3 of them with no `<title>`, came back in 0.51 to 0.59 s. So a page with no title still gets the title signal, since Chrome gives the host.
+- A hidden read of one site right after the open was 200 with 0 characters, with `document.readyState` `interactive`. That is the page still building, which `browser.settled` waits for.
+- 120 opens and closes in 3 parallel sessions with Chrome hidden, a quarter of them PDFs, all worked in 195 s. Plain opens took 0.57 s at the median, and PDFs 11.6 s, 16.7 s at most, against 6 to 7 s alone.
+- 90 more with Chrome in front and no holder ended with 78 working. 11 plain opens failed 409 `took_screen`, and 1 failed 409 `tab_stuck`. None of the 21 PDFs failed.
+- None of those 210 opens failed 500 `internal`, and the log held nothing from okio or `AdbWriter`.
+
 ### Still to check
 
 - Whether a first-run or sign-in screen keeps Chrome from opening its DevTools socket after a tab open starts it.
-- Opens built on the browser session's events on the phone's Chrome 156: the events were read there over raw DevTools, and PhoneAPI's use of them was not run there. That covers first PDF opens with Chrome in front and hidden, a plain open with the screen off, a server over 12 s, and a late save closing Chrome's download dialog.
+- A late save with Chrome in front, and whether its cancel closes Chrome's download dialog. With Chrome hidden, a save that began at 16 s was cancelled, the tab closed, and nothing reached Downloads.
 - The title at a commit on a Chrome that shows a PDF in its viewer, as under [PDFs](#pdfs).
 - A wait on a tab that came back `loading`, on the phone's Chrome 156. There a `browser.settled` wait connected to such a tab at 4a18edd and matched, and the tab read as `about:blank`, so its connection was answered, which no emulator reproduced for a tab opened on its URL. It should now wait for the commit. Why that connection was answered while a raw one at the start of a load was held was not found. So PhoneAPI's own connection may have been held at the start too, or not.
 - A call to a tab that came back `loading`, on the phone, where `read` returned 200 with no text at 4a18edd. It should now fail `content_unavailable` until the commit.
@@ -468,10 +481,11 @@ A session's own read of its tab during a take hid it on the Android 11 test phon
 
 On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, the tab stayed `visible` for 3.6 s with no calls, read over raw DevTools. The next `evaluate` hid it at once, and the placeholder became `visible`, 2 of 2 times, and a `read` left it alone. So the earlier `cdp` tap that failed `not_visible` found the tab already hidden, by the test's own `evaluate` before it. 8 of 8 tries with an `evaluate` after the release showed the tab hidden after it.
 
+At 9e047f7 on the same phone, with the tab's state read over raw DevTools, the kept tab stayed `visible` through the session's next `evaluate`, 5 of 5. A new tab went behind it, 5 of 5. A popup from a `cdp-mouse` tap, which takes no screen, left it `visible` over the next 1.7 s and through another `evaluate`, 3 of 3. A `cdp` tap takes the screen back, 3 of 3, so after one the session is the holder: a new tab or a popup then shows, 5 of 5 each, as for any holder.
+
 ### Still to check
 
 - The lost click on Chrome 109 with the tab switcher open, as above, which did not come back in 35 tries.
-- That a tab left by `cleanup` false stays on screen through the session's next `evaluate`, now that it is recorded. The tests show the selection, and no device has run it.
 
 ## Video and audio streams
 
@@ -560,6 +574,10 @@ On the Android 11 test phone on 2026-11-07, with Chrome 156 and a dev build at 4
 | `POST /v1/input/text`, `keyboard`, no `clear` | Typed, 1 of 1, with no start, and the nodes stayed off | 1.5 s |
 
 The missed taps went to the field, a paragraph, or the body. The page saw `blur`, `focus`, and two `resize` events before the touch, which landed at y 1053 to 1191, where the button sits with the keyboard up. With the nodes on and the keyboard up, the same tap clicked 9 of 9 times, at y 1048 to 1131. The start moved the page after the point was taken. With the page's bounds read first, and a wait for the layout to read the same twice, the same tap clicked 9 of 9 times in 0.76 to 0.90 s, on the button at y 1601 to 1717, where it sits with the keyboard gone. The two `resize` events came 293 to 395 ms into the call, and the touch 362 to 426 ms after the last one. A keyboard-hidden tap with the nodes off clicked 3 of 3, in 0.69 to 0.81 s. A tap with the nodes on and the keyboard up clicked 3 of 3, in 0.32 to 0.34 s.
+
+With the box read after the page's bounds, at 0f37952, the same taps clicked: 9 of 9 with the keyboard up, in 0.76 to 0.90 s, and 3 of 3 with it hidden, in 0.69 to 0.81 s. The two `resize` events came 293 to 395 ms after the call started, and the touch 362 to 426 ms after the last of them, on the button. The start still closes the keyboard, and the page sees it.
+
+At 9e047f7, with the nodes off and the keyboard up, the other touch paths landed too. A `swipe` from a selector started on the element and scrolled the page, 3 of 3, in 0.98 to 1.08 s. A `gesture` at the button clicked it, 3 of 3, in 0.63 to 0.67 s. Browser text with a selector typed into that field, 3 of 3, in 2.6 to 2.7 s.
 
 Chrome 145 on the Android 17 emulator did not turn the nodes off that day, on nine tabs, each watched for 15 s after a read. Chrome 109 on the Android 13 emulator, with tabs opened on their URL, passed an open, its listed id, a touch tap, `clear` with and without a selector, `setText`, `ui/find`, and `keyboard_show`, on one tab.
 
@@ -811,6 +829,8 @@ Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each com
 - An element in a closed `<details>` has a box on Chrome 109, 133, and 145, though it can't be seen, and none on Chrome 91. An element in `content-visibility: hidden` or in `<defs>` has a box on all four. Empty, zero-size, and `visibility: hidden` elements have one too.
 
 A tab whose server took 14, 18, or 20 s, opened through PhoneAPI at 4a18edd on the Android 11 test phone on 2026-11-07, returned `loading` true at 12.5 to 12.6 s. A `browser.settled` wait then matched within 0.4 s, 4 of 4, and `browser.loaded` within 0.1 s, 1 of 1, though the server had not answered. Until it did, the tab read as `about:blank`, with `document.readyState` `complete`, and `read` returned 200 with no text. Once it had, `read` returned the page.
+
+At 9e047f7 on the same phone, with a server that took 16 s, each open returned `loading` true at 12.3 to 12.4 s. `read`, `find`, `evaluate`, and `snapshot` failed 409 `content_unavailable` in 0.02 to 0.1 s, every time. A wait with an 800 ms limit timed out at 1.05 s. `browser.settled` then matched at 16.9 and 17.0 s, and `browser.loaded` at 16.4 and 16.5 s, and `read` returned the page. A `capture` open went the same way, with `loading` at 12.6 s and `browser.settled` at 17.3 s, and an incognito open with `loading` at 13.6 s and `browser.settled` at 18.2 s.
 
 Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A wait with `timeoutMs` 4000 was on a tab behind another (`document.visibilityState` hidden) or on screen, and the page changed 1 s in. Nothing held UiAutomation. The table counts matches. Runs after the change matched 40 to 540 ms after the page changed, and the failures before it timed out at 4 s.
 
