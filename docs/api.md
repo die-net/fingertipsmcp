@@ -332,7 +332,7 @@ Run `phoneapi server` and point a Streamable HTTP client at `http://127.0.0.1:<p
 | `wait_for` | observe or browser | Same conditions and scopes as `/v1/wait`. `snapshot` adds a capped, masked outline and `screenshot` a PNG; both need observe. `target` names the tab for browser conditions that name none |
 | `keyboard_hide` / `keyboard_show` | control | Soft keyboard |
 | `app_launch` / `app_stop` / `app_clear` | control | Package control (`stop`/`clear` need helper) |
-| `open_intent` | control | Start an intent (needs helper). The tab Chrome opens for its `data` URL is the caller's |
+| `open_intent` | control | Start an intent (needs helper). A tab Chrome opens for it is the caller's |
 | `device_wake` / `device_unlock` | control or browser | Screen on / keyguard |
 | `device_lock` | control | Lock |
 | `device_orientation` | control | Auto-rotate, or lock the screen to the current or a named rotation |

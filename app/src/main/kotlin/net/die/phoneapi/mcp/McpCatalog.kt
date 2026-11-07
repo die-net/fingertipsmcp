@@ -332,7 +332,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.CONTROL),
             available = Capabilities::appsManage,
             arguments = listOf(serializer<IntentRequest>()),
-            screen = ToolScreen.CLAIMING,
+            screen = ToolScreen.ALWAYS,
             annotations = changes,
             call = { graph, _, request -> openIntent(graph, request) },
         ),

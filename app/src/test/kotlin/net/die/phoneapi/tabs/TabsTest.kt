@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.core.BrowserService
+import net.die.phoneapi.core.IntentStart
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.lease.ScreenLease
@@ -76,59 +77,74 @@ class TabsTest {
         end(holder)
     }
 
+    /** An intent [holder] sends, which Android gave to [app]. */
+    private suspend fun Tabs.intentTo(app: String, holder: Holder.Session = a) =
+        intent(holder) { IntentStart(ActionResult(ok = true), app) }
+
     @Test
     fun `intent tabs become yours`() = runTest {
         val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        // Chrome opens the intent's tab itself, a moment after the call that sent it, and writes
-        // the URL its own way.
-        tabs.screenCall(a, claimUrl = "https://Example.com") {}
+        // Chrome opens the intent's tab itself, a moment after the call that sent it.
+        tabs.intentTo(CHROME)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
-        browser.add("from-intent", url = INTENT_URL)
+        browser.add("from-intent", url = PAGE)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
         assertEquals(listOf(true), tabs.browserFor(a).targets().map { it.owned })
         assertEquals(setOf("chrome_devtools_remote~from-intent"), store.ids)
-        // Only the first tab on the URL is the intent's; one that comes later is someone else's.
-        browser.add("later", url = INTENT_URL)
+        // Only the first new tab is the intent's; one that comes later is someone else's.
+        browser.add("later", url = PAGE)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
         assertEquals(1, tabs.count(a))
     }
 
     @Test
-    fun `a person's tab stays theirs`() = runTest {
+    fun `other apps' tabs stay free`() = runTest {
+        // The intent went to Maps, so a tab that appears now is another session's or a person's.
         val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        tabs.screenCall(a, claimUrl = INTENT_URL) {}
-        val person = browser.add("person", url = "https://example.org/")
-        val blank = browser.add("blank")
-        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
-        assertEquals(0, tabs.count(a))
-        // The intent's tab can still come after them.
-        val mine = browser.add("from-intent", url = INTENT_URL)
-        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
-        assertEquals(setOf(mine), store.ids)
-        // The person's tabs stay unowned, so another session can use them.
-        tabs.browserFor(b).read(person, BrowserReadRequest())
-        tabs.browserFor(b).read(blank, BrowserReadRequest())
-        assertEquals(2, tabs.count(b))
-    }
-
-    @Test
-    fun `old tabs on the url stay free`() = runTest {
-        val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        browser.add("person", url = INTENT_URL)
-        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        tabs.intentTo("com.google.android.apps.maps")
+        val other = browser.add("other", url = PAGE)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
         assertEquals(0, tabs.count(a))
+        tabs.browserFor(b).read(other, BrowserReadRequest())
+        assertEquals(1, tabs.count(b))
     }
 
     @Test
-    fun `no url claims nothing`() = runTest {
+    fun `a popup is not the intent's`() = runTest {
         val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        tabs.screenCall(a) {}
-        browser.add("person", url = INTENT_URL)
+        val theirs = tabs.browserFor(b).openTab("https://example.org/")
+        tabs.intentTo(CHROME)
+        val popup = browser.add("popup", opener = theirs.id, url = PAGE)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(0, tabs.count(a))
+        // The intent's tab can still come after it, and the popup goes to its opener's owner.
+        val mine = browser.add("from-intent", url = PAGE)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(
+            listOf(mine),
+            tabs.browserFor(a).targets().filter { it.owned == true }.map { it.id },
+        )
+        assertEquals(setOf(theirs.id, popup), tabs.browserFor(b).targets().map { it.id }.toSet())
+    }
+
+    @Test
+    fun `a blank tab waits for its page`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
+        tabs.intentTo(CHROME)
+        val empty = browser.add("empty")
+        browser.add("blank", url = "about:blank")
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(0, tabs.count(a))
+        browser.loads(empty, PAGE)
+        advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
+        assertEquals(setOf(empty), store.ids)
+    }
+
+    @Test
+    fun `open tabs are not the intent's`() = runTest {
+        val tabs = tabs(scope = backgroundScope)
+        browser.add("old", url = PAGE)
+        tabs.intentTo(CHROME)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
         assertEquals(0, tabs.count(a))
     }
@@ -138,11 +154,10 @@ class TabsTest {
         // DevTools takes a while to answer, so a claim's checks run late.
         browser.listMs = 300
         val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        tabs.screenCall(a, claimUrl = INTENT_URL) {}
+        tabs.intentTo(CHROME)
         tabs.finish(a)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS - 100)
-        val late = browser.add("from-intent", url = INTENT_URL)
+        val late = browser.add("from-intent", url = PAGE)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS * 2)
         assertEquals(0, tabs.count(a))
         // The tab is unowned, so another session can use it.
@@ -154,9 +169,8 @@ class TabsTest {
     fun `a late claim keeps no tab`() = runTest {
         // The claim is reading Chrome's tabs as the session ends, so it finds the intent's after.
         val tabs = tabs(scope = backgroundScope)
-        lease.withScreen(a) {}
-        tabs.screenCall(a, claimUrl = INTENT_URL) {}
-        browser.add("from-intent", url = INTENT_URL)
+        tabs.intentTo(CHROME)
+        browser.add("from-intent", url = PAGE)
         browser.listMs = 300
         advanceTimeBy(100)
         tabs.finish(a)
@@ -622,6 +636,11 @@ class TabsTest {
             return id
         }
 
+        /** Tab [id] gets a page, as a new tab does some time after it appears. */
+        fun loads(id: String, url: String) {
+            open[open.indexOfFirst { it.id == id }] = open.first { it.id == id }.copy(url = url)
+        }
+
         val activated = mutableListOf<String>()
         var shown: String? = null
         var stalled = emptySet<String>()
@@ -751,6 +770,6 @@ class TabsTest {
     private companion object {
         val SCOPES = setOf(Scope.OBSERVE, Scope.BROWSER)
         const val CHROME = "com.android.chrome"
-        const val INTENT_URL = "https://example.com/"
+        const val PAGE = "https://example.com/"
     }
 }

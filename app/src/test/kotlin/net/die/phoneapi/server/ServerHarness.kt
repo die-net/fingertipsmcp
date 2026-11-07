@@ -26,6 +26,7 @@ import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.ClipImage
 import net.die.phoneapi.core.ClipboardService
 import net.die.phoneapi.core.InputService
+import net.die.phoneapi.core.IntentStart
 import net.die.phoneapi.core.PowerService
 import net.die.phoneapi.core.UiService
 import net.die.phoneapi.core.WaitService
@@ -188,6 +189,9 @@ internal class FakeApi(
             waitMs = leaseWaitMs,
         )
 
+    /** The app Android sends intents to. */
+    @Volatile var intentApp: String? = "com.android.chrome"
+
     /** The package the fake phone has in front, which a test changes to act out a launch. */
     @Volatile var top: String? = "com.launcher"
     val tookScreen = mutableListOf<String>()
@@ -245,7 +249,7 @@ internal class FakeApi(
                         return acted()
                     }
                 },
-            apps = FakeApps,
+            apps = FakeApps { intentApp },
             waits = waits,
             browser = browser,
             power =
@@ -466,7 +470,7 @@ private val snapshot =
         compact = "compact",
     )
 
-private object FakeApps : AppsService {
+private class FakeApps(private val intentApp: () -> String?) : AppsService {
     override suspend fun list(launchableOnly: Boolean): List<AppInfo> = emptyList()
 
     override suspend fun launch(packageName: String, request: LaunchRequest) = acted()
@@ -475,7 +479,7 @@ private object FakeApps : AppsService {
 
     override suspend fun clear(packageName: String) = acted()
 
-    override suspend fun intent(request: IntentRequest) = acted()
+    override suspend fun intent(request: IntentRequest) = IntentStart(acted(), intentApp())
 }
 
 /** A browser_read with this selector fails, as when the page goes away during the read. */

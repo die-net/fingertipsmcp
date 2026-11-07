@@ -255,7 +255,8 @@ internal suspend fun openIntent(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    jsonText(services.apps.intent(request.args<IntentRequest>()))
+    val intent = request.args<IntentRequest>()
+    jsonText(services.tabs.intent(checkNotNull(services.holder)) { services.apps.intent(intent) })
 }
 
 internal suspend fun deviceWake(services: ServerServices): CallToolResult = runTool {

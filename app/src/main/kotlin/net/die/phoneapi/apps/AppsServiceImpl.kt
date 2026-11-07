@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import net.die.phoneapi.core.AppsService
 import net.die.phoneapi.core.DeviceStateTracker
 import net.die.phoneapi.core.EventBus
+import net.die.phoneapi.core.IntentStart
 import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.failureMessage
@@ -80,7 +81,7 @@ class AppsServiceImpl(
      * Android drops this app's background activity starts without an error, so intents go through
      * the helper's shell, which is allowed to start them.
      */
-    override suspend fun intent(request: IntentRequest): ActionResult {
+    override suspend fun intent(request: IntentRequest): IntentStart {
         val component =
             request.component?.let {
                 ComponentName.unflattenFromString(it)
@@ -95,22 +96,24 @@ class AppsServiceImpl(
         val packageName = request.packageName ?: component?.packageName ?: started.activityPackage
         val missing = packageName?.takeIf { !started.chooser && !awaitForeground(it) }
         invalidateSnapshots()
-        return ActionResult(
-            ok = !started.chooser && missing == null,
-            backend = "shell",
-            woke = woke,
-            seq = seq.value,
-            message =
-                when {
-                    started.chooser ->
-                        "Several apps handle ${describe(request)}, so Android is showing a " +
-                            "chooser. Name a package to pick one."
-                    missing != null ->
-                        "am start accepted ${describe(request)}, but $missing did not come to " +
-                            "the foreground."
-                    else -> started.warning
-                },
-        )
+        val result =
+            ActionResult(
+                ok = !started.chooser && missing == null,
+                backend = "shell",
+                woke = woke,
+                seq = seq.value,
+                message =
+                    when {
+                        started.chooser ->
+                            "Several apps handle ${describe(request)}, so Android is showing a " +
+                                "chooser. Name a package to pick one."
+                        missing != null ->
+                            "am start accepted ${describe(request)}, but $missing did not come " +
+                                "to the foreground."
+                        else -> started.warning
+                    },
+            )
+        return IntentStart(result, packageName)
     }
 
     private suspend fun manage(

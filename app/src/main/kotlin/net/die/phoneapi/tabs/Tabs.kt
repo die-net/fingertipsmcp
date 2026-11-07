@@ -13,12 +13,13 @@ import net.die.phoneapi.browser.CHROME_PACKAGE
 import net.die.phoneapi.browser.CHROME_SOCKET
 import net.die.phoneapi.browser.FRONT_MS
 import net.die.phoneapi.browser.parseBrowserTargetId
-import net.die.phoneapi.browser.sameUrl
 import net.die.phoneapi.core.BrowserService
+import net.die.phoneapi.core.IntentStart
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.core.settled
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.lease.ScreenLease
+import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserTarget
 
@@ -308,20 +309,8 @@ class Tabs(
     /**
      * Runs [holder]'s screen call [block], making sure Chrome shows none of another session's tabs
      * while Chrome is in front: before the call, and after it when Chrome came forward during it.
-     * With [claimUrl], the URL of an intent the call sends, the tab Chrome opens for it is the
-     * caller's, as if it had opened the tab itself.
      */
-    suspend fun <T> screenCall(
-        holder: Holder,
-        claimUrl: String? = null,
-        block: suspend () -> T,
-    ): T {
-        if (claimUrl == null || holder !is Holder.Session) return showingOwn(holder, block)
-        val known = chromeTabs()?.map { it.id }?.toSet() ?: return showingOwn(holder, block)
-        return showingOwn(holder, block).also { claimLater(holder, known, claimUrl) }
-    }
-
-    private suspend fun <T> showingOwn(holder: Holder, block: suspend () -> T): T {
+    suspend fun <T> screenCall(holder: Holder, block: suspend () -> T): T {
         // With no other session's tabs, there is nothing Chrome could show by mistake.
         if (owners.values.all { it.holder == holder }) return block()
         val before = chromeInFront()
@@ -335,6 +324,18 @@ class Tabs(
         val value = block()
         if (!before && chromeInFront()) bestEffort { showFor(holder) }
         return value
+    }
+
+    /**
+     * Starts an intent for [holder] with [start]. When Android sent it to Chrome, the tab Chrome
+     * opens for it is [holder]'s, as if it had opened the tab itself. An intent that went to
+     * another app claims nothing, so a tab that appears then is left to whoever opened it.
+     */
+    suspend fun intent(holder: Holder.Session, start: suspend () -> IntentStart): ActionResult {
+        val known = chromeTabs()?.map { it.id }?.toSet()
+        val started = start()
+        if (known != null && started.packageName == CHROME_PACKAGE) claimLater(holder, known)
+        return started.result
     }
 
     /**
@@ -357,24 +358,28 @@ class Tabs(
         }
 
     /**
-     * Gives [holder] the new Chrome tab showing [url], if one appears within [CLAIM_WAIT_MS]:
-     * Chrome handles an intent's URL after the activity starts, so the tab can show up a moment
-     * later. A new tab on another URL is not the intent's, so it stays unowned.
+     * Gives [holder] the first new tab within [CLAIM_WAIT_MS]: Chrome handles an intent's URL after
+     * the activity starts, so the tab can show up a moment later. Its URL says nothing, since the
+     * page may have redirected by now.
      */
-    private fun claimLater(holder: Holder.Session, known: Set<String>, url: String) {
+    private fun claimLater(holder: Holder.Session, known: Set<String>) {
         scope.launch {
             withTimeoutOrNull(CLAIM_WAIT_MS) {
-                while (live(holder) && !adoptNew(holder, known, url)) delay(CLAIM_POLL_MS)
+                while (live(holder) && !adoptNew(holder, known)) delay(CLAIM_POLL_MS)
             }
         }
     }
 
-    /** Gives [holder] the first tab not in [known] that shows [url]. True when it got one. */
-    private suspend fun adoptNew(holder: Holder.Session, known: Set<String>, url: String): Boolean =
-        chromeTabs()
-            .orEmpty()
-            .filter { it.id !in known && it.url?.let { shown -> sameUrl(shown, url) } == true }
-            .any { adopt(holder, it.id) }
+    /**
+     * Gives [holder] the first tab not in [known] that could be an intent's. True when it got one.
+     * A tab with an opener is a page's popup, which [adoptPopups] gives to that page's owner. A
+     * blank tab has no page yet, and may be the placeholder, which is opened before it is named.
+     */
+    private suspend fun adoptNew(holder: Holder.Session, known: Set<String>): Boolean =
+        chromeTabs().orEmpty().any {
+            val page = !it.url.isNullOrBlank() && it.url != BLANK
+            it.id !in known && it.openerId == null && page && adopt(holder, it.id)
+        }
 
     /** Gives [holder] the tab [id], if no one owns it and [holder] is still live. */
     private suspend fun adopt(holder: Holder.Session, id: String): Boolean = mutex.withLock {

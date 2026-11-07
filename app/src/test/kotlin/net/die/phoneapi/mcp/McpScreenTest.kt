@@ -47,10 +47,6 @@ class McpScreenTest {
     fun `screen tools always take it`() {
         val always = MCP_TOOLS.filter { it.screen.always }.map { it.name }.toSet()
         assertEquals(SCREEN_TOOLS, always)
-        assertEquals(
-            setOf("open_intent"),
-            tools().filter { it.screen.claimUrl(args("""{"data":"u"}""")) == "u" }.names(),
-        )
     }
 
     @Test
