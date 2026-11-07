@@ -25,9 +25,10 @@ internal class ChromeDialog(
     private val io: CoroutineDispatcher,
 ) {
     /**
-     * Whether Chrome shows a dialog, and with [host], one whose title names it, as in "example.com
-     * says". Null when it cannot tell: the screen is off or locked, so nothing of Chrome is on
-     * screen to read, or the helper could not read the tree.
+     * Whether Chrome shows a dialog, and with [host], one whose title names that whole host, as
+     * "example.com says" does and "www.example.com says" and "example.com:8080 says" do not. Null
+     * when it cannot tell: the screen is off or locked, so nothing of Chrome is on screen to read,
+     * or the helper could not read the tree.
      */
     suspend fun shown(host: String? = null): Boolean? {
         val now = state()
@@ -39,7 +40,7 @@ internal class ChromeDialog(
                         has(
                             NodeSelector(
                                 id = TITLE_ID,
-                                textContains = host,
+                                textRegex = wholeHost(host),
                                 packageName = CHROME_PACKAGE,
                             )
                         ))
@@ -52,11 +53,22 @@ internal class ChromeDialog(
     private fun has(selector: NodeSelector): Boolean =
         find(FindRequest(selector, limit = 1)).matches.isNotEmpty()
 
+    /**
+     * A pattern for [host] with no more of a host on either side. The words around it are Chrome's
+     * and change with its language, so they are not matched. The characters are spelled out because
+     * `\w` on Android takes in every script's letters, and those can touch the host in a title.
+     */
+    private fun wholeHost(host: String): String =
+        "(?<!$HOST_CHAR)${Regex.escape(host)}(?!$HOST_CHAR)"
+
     private companion object {
         /** The view Chrome draws a page's dialog in. */
         const val DIALOG_ID = "tab_modal_dialog_container"
 
         /** The dialog's title, which names the page's host. */
         const val TITLE_ID = "title"
+
+        /** A character that, next to a host, makes it part of a longer host or adds a port. */
+        const val HOST_CHAR = "[A-Za-z0-9.:-]"
     }
 }

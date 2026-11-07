@@ -66,6 +66,18 @@ On that emulator, with a page running 3 s tasks back to back, 3 `cdp` keys into 
 
 Chrome refuses a DevTools connection to a closed tab with 500 "No such target id", in Chrome 133 on the emulator and Chrome 155 on the phone, and 404 in some releases. PhoneAPI reports it as `not_found` rather than retrying.
 
+### Page dialogs
+
+Chrome draws a page's alert, confirm, or prompt in `tab_modal_dialog_container`, with the title in a view called `title`. A page held by one answers nothing over DevTools, so a `browser.dialog` wait counts a dialog already open from what is on screen.
+
+Checked with Chrome 91, 109, and 145 on the Android 10, 13, and 17 emulators on 2026-11-06:
+
+- The title is the page's host, then its port if the URL names one, then " says": `example.com says`, `127.0.0.1:8765 says`, `localhost:8766 says`. It has no scheme or path, and nothing else on the dialog names the tab. So PhoneAPI takes a title for a page's own only when it holds that whole host, with no more of a host or a port beside it. On Android 10, a `browser.dialog` wait on `example.com` timed out with `www.example.com says` in front, and matched in about 50 ms on the page whose dialog it was.
+- With Chrome 145 and a dialog up in the tab in front, a hidden tab on the same host did not answer `Runtime.evaluate` within 5 s either, nor did a new session on the tab in front. So neither the title nor the tabs can say which of two tabs on one host a dialog belongs to, and a `browser.dialog` wait on the hidden one counts it.
+- With Chrome 145, a page's own timer calling `alert` showed no dialog with no DevTools session attached, in a tab opened by `am start`. The same call from DevTools did. Why was not looked into.
+
+Not measured: the title in another language (Chrome did not come up under DevTools with `cmd locale set-app-locales`, so the match leaves out the words around the host), a dialog from a cross-origin frame (the frame was not in `Page.getFrameTree`), and a host with non-ASCII letters.
+
 ### Script worlds
 
 A world belongs to one document. `Runtime.evaluate` naming a world whose document has gone fails with code -32000 and the message `Cannot find context with specified id`, and runs nothing. A context id that never existed gets the same reply. Chrome gives -32000 for any server error, so PhoneAPI needs the message too, and it is the only thing that names this failure. Checked with Chrome 109 and 145 on the Android 13 and 17 emulators on 2026-11-06, with a reload between making the world and using it.
