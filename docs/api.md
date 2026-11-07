@@ -115,7 +115,7 @@ Authenticated errors are JSON:
 | 404 | `session_not_found` | The session a call names ended, even during the call, or belongs to another token. Start a new one. On MCP the same code names a `session` argument that is not the caller's own or one it started, and answers `/mcp` for an unknown session id |
 | 404 | `stale_ref` | A UI node ref no longer points at a node, or a browser snapshot ref is from a document the tab has since replaced, or its node has left the page; take a new snapshot |
 | 404 | *(empty body)* | Missing/invalid Bearer |
-| 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, or the PIN was rejected |
+| 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, a PIN field that could not be read or cleared, or the PIN was rejected |
 | 409 | `no_keyboard` | `mode` `keyboard` and no on-screen keyboard keys were found, or the keyboard went away during typing and stayed away |
 | 409 | `no_editor` | Setting text with no text field focused, or a `selector` field that did not take focus after the tap, so nothing was typed |
 | 409 | `wake_failed` | The screen did not turn on, for a wake or the `autoWake` before an action |

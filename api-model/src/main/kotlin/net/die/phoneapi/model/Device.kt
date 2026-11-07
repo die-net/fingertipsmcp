@@ -16,8 +16,18 @@ public data class ApiError(
 
 @Serializable public data class TreeKey(val label: String, val id: String? = null, val bounds: Rect)
 
+/**
+ * The lock screen's PIN keypad, as the helper reads it. [entered] is how many characters the PIN
+ * field holds, or null when no field was found, which does not mean it is empty. The field's text
+ * stays in the helper. [delete] can be missing while the field is empty, as with auto-confirm.
+ */
 @Serializable
-public data class PinpadKeys(val digits: Map<String, Rect> = emptyMap(), val submit: Rect? = null)
+public data class PinpadKeys(
+    val digits: Map<String, Rect> = emptyMap(),
+    val submit: Rect? = null,
+    val delete: Rect? = null,
+    val entered: Int? = null,
+)
 
 @Serializable public data class Point(val x: Float, val y: Float)
 

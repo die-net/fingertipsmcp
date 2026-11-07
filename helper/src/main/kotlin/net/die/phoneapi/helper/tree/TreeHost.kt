@@ -128,7 +128,10 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 val cleared = nodeCache.clear()
                 json.encodeToString(withWindows { ImeKeyboard.scan(it, refresh = !cleared) })
             }
-            "pinpad" -> json.encodeToString(withWindows { PinPad.keys(it) })
+            "pinpad" -> {
+                val cleared = nodeCache.clear()
+                json.encodeToString(withWindows { PinPad.keys(it, refresh = !cleared) })
+            }
             "contentBounds" -> {
                 val call = json.decodeFromString(serializer<TreePackageCall>(), body)
                 json.encodeToString(withWindows { ContentFrame.find(it, call.packageName) })

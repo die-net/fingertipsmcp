@@ -49,11 +49,18 @@ class PowerServiceImpl(
     private val touch: TouchInput,
     private val display: () -> DisplayInfo,
     private val io: CoroutineDispatcher,
-    private val random: Random = Random.Default,
+    random: Random = Random.Default,
 ) : PowerService {
     private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val lease = AwakeLease(context, settings)
     private val mutex = Mutex()
+    private val pinEntry =
+        PinEntry(
+            read = ::scanKeypad,
+            tap = { touch.tap(it).ok },
+            reveal = ::revealBouncer,
+            pause = { delay(random.nextLong(MIN_KEY_GAP_MS, MAX_KEY_GAP_MS)) },
+        )
 
     /**
      * What an unlock attempt did, and why it failed if it did. It keeps no touch points: the taps
@@ -209,20 +216,8 @@ class PowerServiceImpl(
     }
 
     private suspend fun enterPin(pin: String): Attempt {
-        // On most devices the keypad sits behind the lock screen until it is swiped away.
-        if (!scanKeypad().covers(pin)) revealBouncer()
-        // A digit tapped while the keypad still slides in can miss, and a wrong PIN counts toward
-        // lockout, so the keys have to hold still first.
-        val keypad =
-            awaitSteadyKeypad(::scanKeypad, pin, BOUNCER_WAIT_MS)
-                ?: return Attempt(ok = false, message = NO_KEYPAD)
-        for ((i, digit) in pin.withIndex()) {
-            if (i > 0) delay(random.nextLong(MIN_DIGIT_GAP_MS, MAX_DIGIT_GAP_MS))
-            if (!touch.tap(checkNotNull(keypad.digits[digit])).ok) {
-                return Attempt(ok = false, message = "A keypad tap was cancelled")
-            }
-        }
-        keypad.submit?.let { touch.tap(it) }
+        val stopped = pinEntry.type(pin)
+        if (stopped != null) return Attempt(ok = false, message = stopped)
         return if (awaitUnlocked()) {
             Attempt(ok = true, backend = "pin")
         } else {
@@ -233,7 +228,7 @@ class PowerServiceImpl(
     private suspend fun scanKeypad(): Keypad = withContext(io) { tree.pinpad().asKeypad() }
 
     private fun PinpadKeys.asKeypad(): Keypad =
-        Keypad(digits.mapKeys { (digit, _) -> digit.first() }, submit)
+        Keypad(digits.mapKeys { (digit, _) -> digit.first() }, submit, delete, entered)
 
     /** Brings up the credential prompt. */
     private suspend fun revealBouncer() {
@@ -277,17 +272,13 @@ class PowerServiceImpl(
         const val WAKE_WAIT_MS = 2_000L
         const val UNLOCK_WAIT_MS = 3_000L
         const val LOCK_WAIT_MS = 2_000L
-        const val BOUNCER_WAIT_MS = 1_500L
-        const val MIN_DIGIT_GAP_MS = 110L
-        const val MAX_DIGIT_GAP_MS = 240L
+        const val MIN_KEY_GAP_MS = 110L
+        const val MAX_KEY_GAP_MS = 240L
         const val SWIPE_MS = 220L
         const val SWIPE_FROM = 0.85f
         const val SWIPE_TO = 0.2f
 
         const val NO_PIN =
             """The lock screen is secure and no PIN is stored. Store one with `phoneapi papi PUT /v1/device/pin '{"pin":"…"}'` (admin scope), or unlock the phone by hand."""
-        const val NO_KEYPAD =
-            "No PIN keypad was found on the lock screen; a pattern or password lock cannot be " +
-                "entered automatically."
     }
 }

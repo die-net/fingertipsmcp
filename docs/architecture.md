@@ -149,7 +149,7 @@ Until the mirror draws once, the relay has nothing to redraw. Samsung's Android 
 - **Humanization is best-effort.** Injected touches aim to look like a real touchscreen; apps and Play integrity can still treat “USB debugging + shell helper” as a hostile environment.
 - **`FLAG_SECURE` and OEM policy.** Secure windows are black in captures; some devices further restrict shell capture, submix audio, or display mirroring.
 - **Not a Store-shaped app.** Foreground `specialUse` listener, shell helper, hidden APIs, and adb provisioning are fine for sideload / enterprise; they are not a normal Play distribution story.
-- **Unlock / PIN.** Stored PIN unlock taps the system keyguard UI. Layout changes, biometrics-only policies, or pattern/password locks will fail closed (`needs_user` / no keypad).
+- **Unlock / PIN.** Stored PIN unlock taps the system keyguard UI. Layout changes, biometrics-only policies, or pattern/password locks will fail closed (`needs_user` / no keypad). A cancelled entry leaves digits in the PIN field, and the next PIN would land after them and count as wrong. So the field's length is read first, leftovers go through the delete key, and when the field can't be read or emptied nothing is typed.
 
 ## Related docs
 

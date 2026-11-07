@@ -37,4 +37,13 @@ class PinKeysTest {
         assertFalse(PinKeys.isSubmit("com.android.systemui:id/key1", "1", null))
         assertFalse(PinKeys.isSubmit(null, "Delete", null))
     }
+
+    @Test
+    fun `finds the delete key`() {
+        assertTrue(PinKeys.isDelete("com.android.systemui:id/delete_button", null, "Delete"))
+        assertTrue(PinKeys.isDelete(null, null, " delete "))
+        assertTrue(PinKeys.isDelete(null, "Backspace", null))
+        assertFalse(PinKeys.isDelete("com.android.systemui:id/key_enter", null, "Enter"))
+        assertFalse(PinKeys.isDelete("com.android.systemui:id/key1", null, "1"))
+    }
 }
