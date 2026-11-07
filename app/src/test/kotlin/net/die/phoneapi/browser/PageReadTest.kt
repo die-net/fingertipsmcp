@@ -261,28 +261,32 @@ class PageReadTest {
     }
 
     @Test
-    fun `lists each URL once`() {
+    fun `lists each URL once, as the page wrote it`() {
         val shop =
             ApiJson.decodeFromString(
                 PageExtract.serializer(),
-                """{"url":"https://www.amazon.com/s","extracted":"page","blocks":[""" +
-                    """{"k":"p","r":[{"t":"Image","h":"https://www.amazon.com/dp/B01/ref=sr_1_1""" +
-                    """?crid=X&dib=Y&keywords=lint&qid=1&sr=8-1&pd_rd_w=Z"}]},""" +
-                    """{"k":"p","r":[{"t":"Lint roller","h":"https://www.amazon.com/dp/B01""" +
-                    """?keywords=lint&utm_source=a"}]},""" +
-                    """{"k":"p","r":[{"t":"Other","h":"https://www.amazon.com/dp/B02#top"}]}]}""",
+                """{"url":"https://shop.example/s","extracted":"page","blocks":[""" +
+                    """{"k":"p","r":[{"t":"Image","h":"https://shop.example/p/1""" +
+                    """?ref=search&utm_source=a&fbclid=q"}]},""" +
+                    """{"k":"p","r":[{"t":"Lint roller","h":"https://shop.example/p/1""" +
+                    """?ref=search"}]},""" +
+                    """{"k":"p","r":[{"t":"Other","h":"https://shop.example/p/2#top"}]},""" +
+                    """{"k":"p","r":[{"t":"Pipes","h":"https://shop.example/q?a=1|2"}]}]}""",
             )
         val result = findInPage(shop, BrowserFindRequest(kind = FindKind.LINKS))
-        assertEquals(2, result.total)
+        assertEquals(3, result.total)
         assertEquals(1, result.repeats)
         assertEquals(
             listOf(
-                "https://www.amazon.com/dp/B01?keywords=lint",
-                "https://www.amazon.com/dp/B02#top",
+                "https://shop.example/p/1?ref=search&utm_source=a&fbclid=q",
+                "https://shop.example/p/2#top",
+                "https://shop.example/q?a=1|2",
             ),
             result.links!!.map { it.href },
         )
         assertEquals("Image", result.links!!.first().text)
+        // A character java.net.URI refuses, as in the last link's query, keeps it same-origin.
+        assertEquals(listOf(true, true, true), result.links!!.map { it.sameOrigin })
     }
 
     @Test
@@ -295,11 +299,21 @@ class PageReadTest {
             "https://github.com/o/r/tree/x?ref=main&qid=2",
             withoutTracking("https://github.com/o/r/tree/x?ref=main&qid=2"),
         )
+        // No site has rules of its own, so a parameter that tracks on one site is kept.
         assertEquals(
-            "https://smile.amazon.co.uk/gp/product/B03?psc=1",
-            withoutTracking("https://smile.amazon.co.uk/gp/product/B03/ref=x?psc=1&pf_rd_r=Q"),
+            "https://aws.amazon.com/x/ref=y?tag=t&sr=1",
+            withoutTracking("https://aws.amazon.com/x/ref=y?tag=t&sr=1&UTM_Campaign=z"),
         )
         assertEquals("https://example.com/", withoutTracking("https://example.com/?utm_medium=e"))
+    }
+
+    @Test
+    fun `finds the origin of a URL as Chrome writes it`() {
+        assertEquals("https://a.example:443", origin("https://a.example/x?q=1|2"))
+        assertEquals("http://a.example:8080", origin("http://user@a.example:8080/"))
+        assertEquals("http://[::1]:80", origin("http://[::1]/x"))
+        assertEquals("http://[::1]:9", origin("http://[::1]:9"))
+        assertNull(origin("mailto:a@example.com"))
     }
 
     @Test
