@@ -1,9 +1,7 @@
 package net.die.phoneapi.helper
 
 import android.util.Log
-import java.io.File
 import java.io.IOException
-import java.nio.channels.FileLock
 import net.die.phoneapi.helper.compat.HiddenApi
 
 /**
@@ -15,12 +13,6 @@ import net.die.phoneapi.helper.compat.HiddenApi
  */
 object Main {
     private const val TAG = "PhoneApiHelper"
-
-    /**
-     * Where [InstanceLock] keeps its files, writable by the shell user on every release. A file
-     * left after its helper exits is harmless, since only a held lock counts.
-     */
-    private const val LOCK_DIR = "/data/local/tmp"
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -55,11 +47,12 @@ object Main {
     }
 
     /** Held for the life of the process; dropping it would let a second helper start. */
-    private var instance: FileLock? = null
+    private var instance: AutoCloseable? = null
 
     private fun run(packageName: String) {
-        holdInstance(packageName)
+        // The lock's address type is a hidden class, so the exemption comes first.
         HiddenApi.exempt()
+        holdInstance(packageName)
         val helper = HelperImpl()
         helper.pinPackage(packageName)
         val classpath = System.getenv("CLASSPATH").orEmpty()
@@ -71,16 +64,24 @@ object Main {
     private fun holdInstance(packageName: String) {
         try {
             instance =
-                InstanceLock(File(LOCK_DIR)).acquire(packageName)
+                InstanceLock().acquire(packageName)
                     ?: run {
                         Log.i(TAG, "A helper for $packageName is already running")
                         halt(0)
                     }
         } catch (e: IOException) {
-            // Without the lock a second launch could start a second helper, which the app stops
-            // when it registers. Running is still better than leaving the app with none.
-            Log.w(TAG, "Could not take the helper lock", e)
+            runUnlocked(e)
+        } catch (e: IllegalStateException) {
+            runUnlocked(e)
         }
+    }
+
+    /**
+     * Without the lock a second launch could start a second helper, which the app stops when it
+     * registers. Running is still better than leaving the app with none.
+     */
+    private fun runUnlocked(why: Exception) {
+        Log.w(TAG, "Could not take the helper lock", why)
     }
 
     @Suppress("ExitOutsideMain") // This process is the helper, so exit codes are how it reports.
