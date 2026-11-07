@@ -54,9 +54,9 @@ class BrowserRefTest {
             harness.socket(
                 forward() +
                     harness.frameTree(5) +
-                    harness.serverTextFrame(
-                        """{"id":6,"error":{"code":-32000,"message":"No node with given id found"}}"""
-                    )
+                    refused(6, "No node found for given backend id") +
+                    world(7) +
+                    refused(9, "No node with given id found")
             )
         val (service, _) = service(harness.socket(harness.snapshotFrames()), tap)
         val error = harness.virtual {
@@ -65,7 +65,71 @@ class BrowserRefTest {
         }
         assertEquals("stale_ref", error)
         // Nothing fetches the tree again to look the id up in a document it did not come from.
-        assertEquals(FORWARD + "Page.getFrameTree" + "DOM.scrollIntoViewIfNeeded", tap.methods())
+        assertEquals(
+            FORWARD +
+                listOf(
+                    "Page.getFrameTree",
+                    "DOM.scrollIntoViewIfNeeded",
+                    "Page.getFrameTree",
+                    "Page.createIsolatedWorld",
+                    "DOM.resolveNode",
+                ),
+            tap.methods(),
+        )
+    }
+
+    @Test
+    fun `ref to a removed node is stale`() {
+        // Chrome still answers for a removed node by its backend id, until the page lets it go.
+        val tap =
+            harness.socket(
+                forward() +
+                    harness.frameTree(5) +
+                    refused(6, "Node is detached from document") +
+                    world(7) +
+                    connected(9, false)
+            )
+        val (service, _) = service(harness.socket(harness.snapshotFrames()), tap)
+        val error = harness.virtual {
+            service.snapshot(TAB)
+            harness.failure { service.tap(TAB, BrowserTapRequest(ref = "9", humanize = false)) }
+        }
+        assertEquals("stale_ref", error)
+    }
+
+    @Test
+    fun `hidden ref is offscreen`() {
+        val tap =
+            harness.socket(
+                forward() +
+                    harness.frameTree(5) +
+                    refused(6, "Node does not have a layout object") +
+                    world(7) +
+                    connected(9, true)
+            )
+        val (service, _) = service(harness.socket(harness.snapshotFrames()), tap)
+        val error = harness.virtual {
+            service.snapshot(TAB)
+            harness.failure { service.tap(TAB, BrowserTapRequest(ref = "9", humanize = false)) }
+        }
+        assertEquals("offscreen", error)
+    }
+
+    @Test
+    fun `ref with no quads is offscreen`() {
+        val tap =
+            harness.socket(
+                forward() +
+                    harness.frameTree(5) +
+                    harness.serverTextFrame("""{"id":6,"result":{}}""") +
+                    harness.serverTextFrame("""{"id":7,"result":{"quads":[]}}""")
+            )
+        val (service, _) = service(harness.socket(harness.snapshotFrames()), tap)
+        val error = harness.virtual {
+            service.snapshot(TAB)
+            harness.failure { service.tap(TAB, BrowserTapRequest(ref = "9", humanize = false)) }
+        }
+        assertEquals("offscreen", error)
     }
 
     @Test
@@ -175,6 +239,22 @@ class BrowserRefTest {
         harness.switched() +
             harness.serverTextFrame("""{"id":1,"result":{}}""") +
             harness.visibility(2, "visible")
+
+    /** Chrome refuses command [id], with the code it gives any refusal. */
+    private fun refused(id: Int, message: String): ByteArray =
+        harness.serverTextFrame("""{"id":$id,"error":{"code":-32000,"message":"$message"}}""")
+
+    /** Replies from [id] on to making an isolated world: the frame, then the world. */
+    private fun world(id: Int): ByteArray =
+        harness.frameTree(id) +
+            harness.serverTextFrame("""{"id":${id + 1},"result":{"executionContextId":7}}""")
+
+    /** Replies from [id] on to reading a node's `isConnected`: its handle, then the answer. */
+    private fun connected(id: Int, value: Boolean): ByteArray =
+        harness.serverTextFrame("""{"id":$id,"result":{"object":{"objectId":"o"}}}""") +
+            harness.serverTextFrame(
+                """{"id":${id + 1},"result":{"result":{"type":"boolean","value":$value}}}"""
+            )
 
     /** Replies to a touch tap on ref 9 of the snapshot's document. */
     private fun tapFrames(): ByteArray =

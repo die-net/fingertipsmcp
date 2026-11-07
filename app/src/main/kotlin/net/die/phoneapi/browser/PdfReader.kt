@@ -310,10 +310,7 @@ internal class PdfReader(private val script: suspend () -> String) {
                 ?.root
                 ?.backendNodeId ?: return null
         val handle =
-            cdp.call("DOM.resolveNode", buildJsonObject { put("backendNodeId", root) })
-                .decodeCdp<Resolved>()
-                ?.`object`
-                ?.objectId ?: return null
+            resolvedNode(cdp, buildJsonObject { put("backendNodeId", root) }) ?: return null
         return if (mainFrame(cdp).loaderId == loader) OwnPage(cdp, handle) else null
     }
 
@@ -515,10 +512,6 @@ private data class Paused(
 @Serializable private data class DocumentRoot(val root: DocumentNode? = null)
 
 @Serializable private data class DocumentNode(val backendNodeId: Int? = null)
-
-@Serializable private data class Resolved(val `object`: Handle? = null)
-
-@Serializable private data class Handle(val objectId: String? = null)
 
 @Serializable
 private data class Loaded(

@@ -668,7 +668,23 @@ Seen while checking, and not changed:
 
 - On the Android 10 emulator, 4 of 205 taps before the change and 4 of 160 after it failed `503` `cdp_error`, saying Android 10 reaches DevTools over USB, though the tunnel's forward and reverse were in place. The next tap worked. The table leaves these out.
 - On the Android 16 emulator, the first run after a boot stalled twice, once before the change and once after it. A tap got no reply within 12 s, and the first time adb stopped answering too, until a reboot. It did not happen again in later runs, and the cause is not known.
-- A tap on a selector whose element is `display: none` fails at once with `cdp_error` `Node does not have a layout object`, on Chrome 133 and 145, and does not wait out `waitMs`.
+
+Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each command sent straight over DevTools. All refusals have code -32000.
+
+| Node | `DOM.scrollIntoViewIfNeeded` | `DOM.getContentQuads` | `DOM.describeNode` |
+|---|---|---|---|
+| `display: none`, or inside one | `Node does not have a layout object` | Chrome 91: `Could not compute content quads.` Chrome 109, 133, 145: an empty list | Answers |
+| `display: contents` with a child | Chrome 91: `Node does not have a layout object`. Chrome 109 on: works | Chrome 91: `Could not compute content quads.` Chrome 109 on: one quad | Answers |
+| `display: contents` with no child, `<option>` in a closed `<select>`, `<template>`, `<head>` | As for `display: none` | As for `display: none` | Answers |
+| Removed by script, by node id | `Could not find node with given id` | The same | The same |
+| Removed by script, by backend node id | `Node is detached from document` | As for `display: none` | Answers |
+| Backend node id Chrome never gave | `No node found for given backend id` | Not run | Not run |
+
+- So neither the scroll nor the quads tells a hidden node from a removed one by anything but text, and only a node id gets a refusal for a removed node. A removed node with no reference left, after `HeapProfiler.collectGarbage`, still answered by its backend node id on all four.
+- `Accessibility.getPartialAXTree` gives both nodes `ignored` with `notRendered`. Only `parentId`, on Chrome 145, differs, and on Chrome 91 neither has one. `DOM.pushNodesByBackendIdsToFrontend` gives a removed node a new node id.
+- `DOM.resolveNode` with an isolated world's `executionContextId`, then `Runtime.callFunctionOn` reading `isConnected`, tells them apart. It was true for a hidden node, in the page or in a same-origin frame, and false for a removed one, on Chrome 91 and 109 over DevTools. Through PhoneAPI it held for nodes in the page on Chrome 91 and 145. A backend id Chrome never gave is refused with `No node with given id found`.
+- `DOM.focus` says `Element is not focusable` for a hidden node and for a visible `<div>` alike, on Chrome 91.
+- An element in a closed `<details>` has a box on Chrome 109, 133, and 145, though it can't be seen, and none on Chrome 91. An element in `content-visibility: hidden` or in `<defs>` has a box on all four. Empty, zero-size, and `visibility: hidden` elements have one too.
 
 Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A wait with `timeoutMs` 4000 was on a tab behind another (`document.visibilityState` hidden) or on screen, and the page changed 1 s in. Nothing held UiAutomation. The table counts matches. Runs after the change matched 40 to 320 ms after the page changed, and the failures before it timed out at 4 s.
 
@@ -718,6 +734,7 @@ Seen while checking, and not changed:
 
 ### Still to check
 
+- The hidden-node taps through PhoneAPI on Chrome 109 and 133, whose commands were read only over DevTools, and on the phone's Chrome 156.
 - That `DOM.documentUpdated` comes before Chrome refuses a dropped node id on the phone's Chrome 156, as it does on Chrome 91, 109, 133, and 145. Without it, a lookup fails `cdp_error` as it did before `withNodeIds`, and a new call works.
 - A browser wait's limit on the Android 10 USB path.
 - That `DOM.getBoxModel` lays out a hidden tab on the phone's Chrome 156, and on Chrome 91 and 109, as it does on 133 and 145. Without it, a `visible` wait on a hidden tab doesn't match a new node, as it didn't before.

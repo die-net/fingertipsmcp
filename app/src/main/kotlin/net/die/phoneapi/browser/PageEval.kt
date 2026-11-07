@@ -86,11 +86,16 @@ private suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
         ?.executionContextId
         ?: throw ApiException(502, "cdp_error", "Chrome did not return an isolated world")
 
+/** The object id `DOM.resolveNode` gives for the node [params] name, or null if it gives none. */
+internal suspend fun resolvedNode(cdp: CdpSession, params: JsonObject): String? =
+    cdp.call("DOM.resolveNode", params).decodeCdp<Resolved>()?.`object`?.objectId
+
 /**
- * Runs [body], the statements of a function, in the own world of the document that [objectId] is an
- * object of, with that object as `this`. Script there leaves globals behind, so this is only for a
- * document with no site script to see them, such as the page [PdfReader] makes. Chrome runs it in
- * the object's document or not at all, so a document loaded in its place never runs it.
+ * Runs [body], the statements of a function, in the world [objectId] was resolved in, with that
+ * object as `this`. Script in a document's own world leaves globals behind, so an object from there
+ * is only for a document with no site script to see them, such as the page [PdfReader] makes.
+ * Chrome runs it in the object's document or not at all, so a document loaded in its place never
+ * runs it.
  */
 internal suspend fun callOn(
     cdp: CdpSession,
@@ -149,6 +154,10 @@ private fun exceptionMessage(details: ExceptionText): String {
 
 @Serializable private data class WorldResult(val executionContextId: Int? = null)
 
+@Serializable private data class Resolved(val `object`: Handle? = null)
+
+@Serializable private data class Handle(val objectId: String? = null)
+
 @Serializable
 private data class EvalPayload(
     val result: RemoteObject? = null,
@@ -171,9 +180,6 @@ private data class ExceptionObject(
 )
 
 private const val ISOLATED_WORLD = "phoneapi"
-
-/** The JSON-RPC code Chrome gives a command it could not carry out, for any reason. */
-private const val SERVER_ERROR = -32_000
 
 /** Chrome's error when a Runtime call names an execution context that no longer exists. */
 private const val NO_CONTEXT = "Cannot find context with specified id"
