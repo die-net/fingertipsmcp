@@ -25,11 +25,12 @@ import net.die.phoneapi.tree.TreeSession
 /**
  * Types text by tapping the on-screen keyboard, setting the field text, or injecting key events.
  */
-class TextTyper(
+internal class TextTyper(
     private val tree: TreeSession,
     private val touch: TouchInput,
     private val state: DeviceStateTracker,
     private val keyInjector: InjectKeyBackend,
+    private val imeShow: ImeShow,
     private val random: Random = Random.Default,
 ) {
 
@@ -98,7 +99,17 @@ class TextTyper(
     ): ActionResult? {
         val unsupported = request.text.filterNot { it == '\n' || it in ' '..'~' }.toSet()
         if (unsupported.isNotEmpty()) throw unsupportedChars(unsupported)
-        awaitKeyboard(state.state, ::keys) ?: return null
+        val ready =
+            keyboardReady(
+                clearing = request.clear,
+                await = { awaitKeyboard(state.state, ::keys) != null },
+                raise = {
+                    val shown = imeShow.showForFocused()
+                    points += shown?.points.orEmpty()
+                    shown?.ok == true
+                },
+            )
+        if (!ready) return null
         if (request.clear) clearWithKeyboard(points)
         request.text.forEachIndexed { i, c ->
             if (i > 0) delay(cadence(request))
@@ -199,6 +210,17 @@ class TextTyper(
         const val FOCUS_WAIT_MS = 1_000L
     }
 }
+
+/**
+ * Whether a keyboard is up to type on, raising it when [clearing] replaces the field's text and a
+ * field has focus but no keyboard shows, as after Chrome is started. Only then, since [raise] taps
+ * the field, and that moves the caret that text would otherwise go in at.
+ */
+internal suspend fun keyboardReady(
+    clearing: Boolean,
+    await: suspend () -> Boolean,
+    raise: suspend () -> Boolean,
+): Boolean = await() || (clearing && raise() && await())
 
 /**
  * Taps the key for [c], pressing shift or a page key first when it doesn't show. A read can find no

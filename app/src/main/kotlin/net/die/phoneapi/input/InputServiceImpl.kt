@@ -26,6 +26,7 @@ import net.die.phoneapi.model.SwipeDirection
 import net.die.phoneapi.model.SwipeRequest
 import net.die.phoneapi.model.TapRequest
 import net.die.phoneapi.model.TextRequest
+import net.die.phoneapi.tree.PageNodes
 import net.die.phoneapi.tree.TreeSession
 
 class InputServiceImpl(
@@ -37,9 +38,10 @@ class InputServiceImpl(
     private val keys: InjectKeyBackend,
     private val state: DeviceStateTracker,
     private val display: () -> DisplayInfo,
+    private val pageNodes: PageNodes,
 ) : InputService {
-    private val typer = TextTyper(tree, touch, state, keys)
     private val imeShow = ImeShow(tree, touch, state)
+    private val typer = TextTyper(tree, touch, state, keys, imeShow)
 
     override suspend fun tap(request: TapRequest): ActionResult =
         action(request.autoWake) {
@@ -162,10 +164,15 @@ class InputServiceImpl(
     private suspend fun awaitImeHidden(): Boolean =
         withTimeoutOrNull(IME_HIDE_WAIT_MS) { state.state.first { !it.ime.visible } } != null
 
-    /** Wakes if needed, runs [block] off the main thread, and fills in `woke` and `seq`. */
+    /**
+     * Wakes if needed, runs [block] off the main thread, and fills in `woke` and `seq`. Only
+     * reading the tree fails for want of a page's nodes, which an action does before it types or
+     * swipes, so [block] can run again once they are back.
+     */
     private suspend fun action(autoWake: Boolean, block: suspend () -> ActionResult): ActionResult {
         val woke = prepare(autoWake)
-        val result = withContext(io) { block() }
+        val result =
+            withContext(io) { pageNodes.restoring(state.current.foregroundPackage) { block() } }
         tree.invalidate()
         return result.copy(woke = woke, seq = seq.value)
     }

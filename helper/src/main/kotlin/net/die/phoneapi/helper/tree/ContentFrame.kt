@@ -4,34 +4,45 @@ import android.graphics.Rect as AndroidRect
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import net.die.phoneapi.model.ApiException
+import net.die.phoneapi.model.PAGE_NODES_OFF
 import net.die.phoneapi.model.Rect
 
 /**
  * The WebView that is actually showing the page. Chrome's window includes the toolbar, so quads
- * have to be added to this view's origin, not the window's.
+ * have to be added to this view's origin, not the window's. [roots] gives the root of each
+ * application window, of the package named or of every one for null, which this recycles. Reads go
+ * through [cache]'s age limit, or a tab just brought forward reads as the page that was there
+ * before, which is no page at all.
  */
-internal object ContentFrame {
-    private const val MIN_EDGE = 20
-    private const val COMPOSITOR_ID = "/compositor_view_holder"
-
-    fun find(windows: List<AccessibilityWindowInfo>, packageName: String): Rect {
-        val wanted = packageName.takeIf { it.isNotEmpty() }
-        var best: AndroidRect? = null
-        var shown = false
-        var off = false
-        for (window in windows) {
-            val root = ownedRoot(window, wanted) ?: continue
-            shown = true
-            try {
-                best = larger(best, search(root))
-                off = off || (best == null && bridgeOff(root))
-            } finally {
-                NodeCompat.recycle(root)
-            }
-        }
-        val found = best ?: throw if (off) pageNodesOff() else unavailable(shown)
-        return Rect(found.left, found.top, found.right, found.bottom)
+internal class ContentFrame(
+    private val cache: NodeCacheAge,
+    private val roots: (String?) -> List<AccessibilityNodeInfo>,
+) {
+    fun find(packageName: String): Rect = cache.read {
+        locate(roots(packageName.takeIf { it.isNotEmpty() }))
     }
+
+    /** Whether a window on screen has a page Chrome turned the nodes off for. */
+    fun nodesOff(): Boolean = cache.read {
+        val open = roots(null)
+        try {
+            open.any(::bridgeOff)
+        } finally {
+            open.forEach(NodeCompat::recycle)
+        }
+    }
+
+    private fun locate(open: List<AccessibilityNodeInfo>): Rect =
+        try {
+            val best = open.fold(null as AndroidRect?) { best, root -> larger(best, search(root)) }
+            val found =
+                best
+                    ?: throw if (open.any(::bridgeOff)) pageNodesOff()
+                    else unavailable(open.isNotEmpty())
+            Rect(found.left, found.top, found.right, found.bottom)
+        } finally {
+            open.forEach(NodeCompat::recycle)
+        }
 
     /**
      * Whether Chrome has turned off the page's accessibility nodes, which leaves the page on screen
@@ -59,7 +70,10 @@ internal object ContentFrame {
             val child = holder.getChild(index) ?: continue
             try {
                 val rect = AndroidRect().also(child::getBoundsInScreen)
-                val bare = child.childCount == 0 && !child.contentDescription.isNullOrEmpty()
+                val bare =
+                    child.childCount == 0 &&
+                        !child.contentDescription.isNullOrEmpty() &&
+                        !isContent(child)
                 if (bare && child.isVisibleToUser && rect == box) return true
             } finally {
                 NodeCompat.recycle(child)
@@ -67,16 +81,6 @@ internal object ContentFrame {
         }
         return false
     }
-
-    /** The page is on screen, but the tree cannot place it. The app recovers from this one. */
-    private fun pageNodesOff(): ApiException =
-        ApiException(
-            409,
-            "page_nodes_off",
-            "Chrome turned off its accessibility nodes for this page, so PhoneAPI cannot place " +
-                "a touch on it. The page itself is fine: browser_read and input cdp still work. " +
-                "Starting Chrome with app_launch, or switching tabs and back, turns them on again.",
-        )
 
     /**
      * Why there is no page to tap. When the browser has a window on screen but none shows the page,
@@ -97,19 +101,6 @@ internal object ContentFrame {
                     "what is there."
             },
         )
-
-    private fun ownedRoot(
-        window: AccessibilityWindowInfo,
-        packageName: String?,
-    ): AccessibilityNodeInfo? {
-        if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return null
-        val root = window.root ?: return null
-        if (packageName != null && root.packageName?.toString() != packageName) {
-            NodeCompat.recycle(root)
-            return null
-        }
-        return root
-    }
 
     private fun search(node: AccessibilityNodeInfo): AndroidRect? {
         var best = boundsOf(node)
@@ -145,4 +136,39 @@ internal object ContentFrame {
     }
 
     private fun area(rect: AndroidRect): Int = rect.width() * rect.height()
+
+    companion object {
+        private const val MIN_EDGE = 20
+        private const val COMPOSITOR_ID = "/compositor_view_holder"
+
+        /** The page is on screen, but its nodes are gone. Actions recover from this one. */
+        fun pageNodesOff(): ApiException =
+            ApiException(
+                409,
+                PAGE_NODES_OFF,
+                "Chrome turned off its accessibility nodes for this page, so PhoneAPI cannot see " +
+                    "what is in it or place a touch on it. The page itself is fine: browser_read " +
+                    "and input cdp still work. Starting Chrome with app_launch, or switching " +
+                    "tabs and back, turns them on again.",
+            )
+
+        /** The roots of [windows]' application windows, of [packageName] when it is not null. */
+        fun applicationRoots(
+            windows: List<AccessibilityWindowInfo>,
+            packageName: String?,
+        ): List<AccessibilityNodeInfo> = windows.mapNotNull { ownedRoot(it, packageName) }
+
+        private fun ownedRoot(
+            window: AccessibilityWindowInfo,
+            packageName: String?,
+        ): AccessibilityNodeInfo? {
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return null
+            val root = window.root ?: return null
+            if (packageName != null && root.packageName?.toString() != packageName) {
+                NodeCompat.recycle(root)
+                return null
+            }
+            return root
+        }
+    }
 }

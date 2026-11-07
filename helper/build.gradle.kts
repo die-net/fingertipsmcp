@@ -6,6 +6,8 @@ plugins {
 android {
     namespace = "net.die.phoneapi.helper"
     buildFeatures { aidl = true }
+    // Tests build AccessibilityNodeInfo fakes, whose base class is android.jar's stub.
+    testOptions.unitTests.isReturnDefaultValues = true
 }
 
 dependencies {

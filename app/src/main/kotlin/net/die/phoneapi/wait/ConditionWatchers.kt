@@ -8,6 +8,7 @@ import net.die.phoneapi.core.STATE_POLL_MS
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DeviceStateSummary
 import net.die.phoneapi.model.FindRequest
+import net.die.phoneapi.model.PAGE_NODES_OFF
 import net.die.phoneapi.model.ScreenState
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.tree.TreeSession
@@ -64,9 +65,10 @@ internal class ConditionWatchers(
             try {
                 Check(test(tree.find(request).matches.firstOrNull()))
             } catch (e: ApiException) {
-                if (e.error != "stale_ref") throw e
-                // A read just after the page changed can match the old page from the cache. That
-                // says nothing about the node, which would make `absent` match, so look again.
+                if (e.error != "stale_ref" && e.error != PAGE_NODES_OFF) throw e
+                // A read just after the page changed can match the old page from the cache, and a
+                // page with its nodes off shows none. Neither says anything about the node, which
+                // would make `absent` match, so look again.
                 pollAgain()
             }
         }

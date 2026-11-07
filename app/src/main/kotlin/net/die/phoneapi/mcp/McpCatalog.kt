@@ -167,7 +167,7 @@ private val TOOLS: List<McpTool> =
         McpTool(
             name = "ui_snapshot",
             description =
-                "Compact outline of the visible nodes on screen, with refs for ui_act. Covers app windows, plus system windows such as dialogs and the notification shade when they are focused or large. The keyboard is listed without its contents. Use it when you do not know what is on screen. To act on something whose label you know, tap or type_text with a text selector, with no snapshot first. To see what an action did, use wait_for with snapshot true rather than calling this again. Shows up to maxNodes lines (default 400); when anything is left out, the first line ends with truncated and the next lines say how much, so narrow with window or ui_find, or raise maxNodes. textOnly drops positions, ids, states, and actions. Password and one-time-code fields and card numbers are masked unless redact is false. Canvas content such as maps and Street View shows little, so use a screenshot there.",
+                "Compact outline of the visible nodes on screen, with refs for ui_act. Covers app windows, plus system windows such as dialogs and the notification shade when they are focused or large. The keyboard is listed without its contents. Use it when you do not know what is on screen. To act on something whose label you know, tap or type_text with a text selector, with no snapshot first. To see what an action did, use wait_for with snapshot true rather than calling this again. Shows up to maxNodes lines (default 400); when anything is left out, the first line ends with truncated and the next lines say how much, so narrow with window or ui_find, or raise maxNodes. textOnly drops positions, ids, states, and actions. Password and one-time-code fields and card numbers are masked unless redact is false. Canvas content such as maps and Street View shows little, so use a screenshot there. When the first line ends with page_nodes_off, Chrome has turned off the page's nodes, so none of the page shows here: use browser_read, or any tap or typing call, which brings them back.",
             scopes = setOf(Scope.OBSERVE),
             available = Capabilities::uiSnapshot,
             arguments = listOf(serializer<SnapshotArgs>()),
@@ -178,7 +178,7 @@ private val TOOLS: List<McpTool> =
         McpTool(
             name = "ui_find",
             description =
-                "Find nodes by selector and return each match's bounds and actions. Much smaller than ui_snapshot when you know what you want. Use index when several nodes match. Secrets are masked as in ui_snapshot unless redact is false.",
+                "Find nodes by selector and return each match's bounds and actions. Much smaller than ui_snapshot when you know what you want. Use index when several nodes match. Secrets are masked as in ui_snapshot unless redact is false. page_nodes_off means nothing matched and Chrome has turned off the page's nodes, so the page could not be searched.",
             scopes = setOf(Scope.OBSERVE),
             available = Capabilities::uiSnapshot,
             arguments = listOf(serializer<FindRequest>()),

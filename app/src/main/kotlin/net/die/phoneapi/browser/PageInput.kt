@@ -19,7 +19,6 @@ import net.die.phoneapi.model.BrowserTextRequest
 import net.die.phoneapi.model.KeyRequest
 import net.die.phoneapi.model.Point
 import net.die.phoneapi.model.Rect
-import net.die.phoneapi.model.TextMode
 import net.die.phoneapi.model.TextRequest
 import net.die.phoneapi.model.TimedPoint
 
@@ -222,11 +221,7 @@ internal class PageInput(
         request: BrowserTextRequest,
         focus: TapTarget?,
     ): ActionResult {
-        if (request.input in TOUCH_INPUTS) {
-            showTab(cdp, pkg)
-            // These work through the field's node, so the page's nodes have to be on first.
-            if (request.clear || request.mode == TextMode.SET_TEXT) contentBounds(pkg)
-        }
+        if (request.input in TOUCH_INPUTS) showTab(cdp, pkg)
         if (focus != null) focusField(cdp, id, focus, pkg, request.input)
         return when (request.input) {
             BrowserInput.AUTO,

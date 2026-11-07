@@ -29,6 +29,7 @@ internal class SnapshotEngine(
     private val imePackage: () -> String?,
     private val nodes: NodeRegistry,
     private val nodeCache: NodeCacheAge,
+    private val content: ContentFrame,
     private val screenRect: () -> Rect,
 ) {
     private data class Built(val seq: Long, val windows: List<UiWindow>, val cut: TreeCut)
@@ -41,11 +42,16 @@ internal class SnapshotEngine(
     }
 
     suspend fun snapshot(options: SnapshotOptions, summary: DeviceStateSummary): UiSnapshot {
+        var nodesOff = false
         val built =
             withContext(io) {
                 mutex.withLock {
                     val seq = this@SnapshotEngine.seq.value
-                    nodeCache.read { build(windows(), options, seq) }
+                    nodeCache
+                        .read { build(windows(), options, seq) }
+                        .also {
+                            nodesOff = content.nodesOff()
+                        }
                 }
             }
         val redactor = Redactor()
@@ -53,7 +59,7 @@ internal class SnapshotEngine(
         val compact =
             if (options.format == SnapshotFormat.JSON) null
             else {
-                val header = CompactFormatter.header(built.seq, summary)
+                val header = CompactFormatter.header(built.seq, summary, nodesOff)
                 CompactFormatter.format(
                     if (redactor.count > 0) "$header redacted=${redactor.count}" else header,
                     shown,
@@ -71,6 +77,7 @@ internal class SnapshotEngine(
             windows,
             compact,
             redacted = redactor.count,
+            pageNodesOff = nodesOff,
         )
     }
 
@@ -93,6 +100,8 @@ internal class SnapshotEngine(
                     }
                     selector.index?.let { i -> listOfNotNull(matches.getOrNull(i)) } ?: matches
                 }
+            // No match on a page with no nodes says nothing about the page.
+            if (picked.isEmpty() && content.nodesOff()) throw ContentFrame.pageNodesOff()
             if (!request.redact) return@withContext FindResult(seq, picked)
             val redactor = Redactor()
             val shown = redactor.nodes(picked)

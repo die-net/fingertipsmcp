@@ -345,7 +345,26 @@ What was tried from there:
 | `Target.activateTarget` to another tab and back | Yes, 2 of 2, and they stayed |
 | Starting Chrome's activity while it is in front | Yes, 3 of 3, in 0.3 to 0.9 s, and they stayed |
 
-Chrome keeps the tab selected through an activity start, so PhoneAPI uses that, as tapping Chrome's icon would. A tap on a collapsed page then took 1.2 s and clicked, and the tab switcher on Chrome 133 still failed `content_unavailable`, with no start. `clear` read the page's node as an empty field, since it was the focused node and has no text, so it reported success and typed after the old text: on the same emulator a field holding `seed text` ended as `seed textNew Text`, as it did on the phone. With a node that takes no text counting as no field, and a browser text call with `clear` or `setText` bringing the nodes back first, all four ways through ended as `New Text`, in 0.7 to 5.6 s. Without a selector the keyboard did not come back after the activity start, so `auto` used `setText` and said so, and `keyboard` mode there would fail `no_keyboard`. `POST /v1/input/text` has no page to bring back, so it fails `text_not_cleared` and types nothing. `ui/find`, `ui/snapshot`, and `keyboard_show` still see no web nodes while the nodes are off.
+Chrome keeps the tab selected through an activity start, so PhoneAPI uses that, as tapping Chrome's icon would. A tap on a collapsed page then took 1.2 s and clicked, and the tab switcher on Chrome 133 still failed `content_unavailable`, with no start. `clear` read the page's node as an empty field, since it was the focused node and has no text, so it reported success and typed after the old text: on the same emulator a field holding `seed text` ended as `seed textNew Text`, as it did on the phone. With a node that takes no text counting as no field, and a browser text call with `clear` or `setText` bringing the nodes back first, all four ways through ended as `New Text`, in 0.7 to 5.6 s. The keyboard did not come back by itself after the activity start, though the field kept focus.
+
+On the same emulator on 2026-11-07, every call that acts got its nodes back the same way, from the input calls as well as the browser ones. Each row started with a page whose nodes were off and `seed text` in its field:
+
+| Call | Result | Time |
+| --- | --- | --- |
+| Browser text, `clear`, no selector, `auto` and `keyboard` | `New Text`, by the keyboard, with no `setText` | 9.3 to 9.9 s |
+| Browser text, `clear`, no selector, `setText` | `New Text` | 0.6 s |
+| `POST /v1/input/text`, `clear`, `keyboard` | `New Text` | 8.4 s |
+| `POST /v1/input/text`, `clear`, `setText` | `New Text` | 0.5 s |
+| `POST /v1/input/tap` with a page's text as selector | Clicked once | 3.0 s |
+| `POST /v1/ime/show`, keyboard hidden, with and without a selector | Keyboard up, 4 of 4 | 0.5 to 0.8 s |
+
+Reads did not start Chrome, and the nodes stayed off after them. `ui/snapshot` said `pageNodesOff`, `ui/find` for the page's button failed `page_nodes_off`, `ui/find` for `url_bar` still matched, and a `wait` for that button to be `absent` timed out rather than matching.
+
+Chrome's address bar is editable, so with the nodes off a search for editable nodes finds it and no page field. That is why the focused field is asked for with `focused` in the selector: a search that filters afterward finds something, so nothing says the nodes are off.
+
+Chrome 145 on the Android 17 emulator did not turn the nodes off that day, on nine tabs, each watched for 15 s after a read. Chrome 109 on the Android 13 emulator, with tabs opened on their URL, passed an open, its listed id, a touch tap, `clear` with and without a selector, `setText`, `ui/find`, and `keyboard_show`, on one tab.
+
+A touch call on a new tab on Chrome 133 failed `content_unavailable` 2 times in about 20 that day, once on the first tab after the helper started and once right after a tab closed. The same call a second later worked. The tree was not read at the moment it failed, so why is not known.
 
 `contentBounds` was also the one read that skipped the node cache's age limit, so a tab just brought forward could read as the page before it. That is the first tap refused in the first paragraph, with the node never read: a first touch on a new tab failed `content_unavailable` in 3 of 5 tries, and in none of 5 once it read through the limit. Chrome 109 did not collapse in these runs. Host load was 20 to 30 throughout, so these times are loose.
 
@@ -570,6 +589,7 @@ From the 2026-11-06 audit fixes, what the emulators could not settle. The rest w
 - Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
 - Opening a tab, past what [PDFs](#pdfs) says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
 - `app_launch` without the helper on Android 10 and 11 and on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator. A browser wait's limit on the Android 10 USB path.
-- Touch on a page Chrome turned the nodes off for, as under [UiAutomation](#uiautomation): whether starting Chrome shows a page a blur or `visibilitychange`, whether an activity start brings the nodes back on a phone, where opening and closing a tab did, and Chrome 145. Whether `ui/find` and `keyboard_show` should recover too, and whether the keyboard should be brought back after the start.
+- Touch on a page Chrome turned the nodes off for, as under [UiAutomation](#uiautomation): whether starting Chrome shows a page a blur or `visibilitychange`, and whether an activity start brings the nodes back on a phone, where opening and closing a tab did.
+- The occasional `content_unavailable` on a new tab on Chrome 133, as under [UiAutomation](#uiautomation): what the tree holds when it happens.
 - The lost click on Chrome 109 with the tab switcher open, under [Screen hand-offs](#screen-hand-offs), which did not come back in 35 tries.
 - Starting activities, as [Starting activities](#starting-activities) describes: all of it on phones other than the Android 11 test phone, since an OEM can change this interface; the wait running out at 20 s, which no emulator reached; an incognito open, whose start runs only on a Chrome that reports a tab's profile (Chrome 91 and 109 stop before it, with `Chrome did not say which profile a new tab is in`).
