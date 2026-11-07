@@ -279,6 +279,109 @@ class BrowserTapWaitTest {
         assertEquals(2, page.methods().count { it == "DOM.focus" })
     }
 
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `waits for a box`() {
+        val page =
+            harness.socket(opening() + document(5) + node(6) + refused(7, NO_LAYOUT) + found(8))
+        val start = harness.clock.now
+        assertTrue(tapThrough(page, waitMs = 1_500).ok)
+        assertEquals(200L, harness.clock.now - start)
+        assertEquals(2, page.methods().count { it == "DOM.querySelector" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `waits past refused quads`() {
+        // Chrome before 109 refuses the quads of a node that lost its box after the scroll.
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    node(6) +
+                    harness.serverTextFrame("""{"id":7,"result":{}}""") +
+                    refused(8, "Could not compute content quads.") +
+                    found(9)
+            )
+        assertTrue(tapThrough(page, waitMs = 1_500).ok)
+        assertEquals(2, page.methods().count { it == "DOM.querySelector" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `waits past empty quads`() {
+        // Chrome from 109 on answers for a node that lost its box after the scroll.
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    node(6) +
+                    harness.serverTextFrame("""{"id":7,"result":{}}""") +
+                    harness.serverTextFrame("""{"id":8,"result":{"quads":[]}}""") +
+                    found(9)
+            )
+        assertTrue(tapThrough(page, waitMs = 1_500).ok)
+        assertEquals(2, page.methods().count { it == "DOM.querySelector" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `no box ends offscreen`() {
+        // Each poll finds the element with no box, more often than the wait allows.
+        val hidden =
+            (0 until 100).fold(byteArrayOf()) { all, n ->
+                all + document(5 + n * 3) + node(6 + n * 3) + refused(7 + n * 3, NO_LAYOUT)
+            }
+        val page = harness.socket(opening() + hidden)
+        val start = harness.clock.now
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 1_500) }
+        assertEquals("offscreen", error.error)
+        assertEquals(409, error.status)
+        assertEquals(1_500L, harness.clock.now - start)
+        assertEquals(8, page.methods().count { it == "DOM.querySelector" })
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `no box with no wait`() {
+        val page = harness.socket(opening() + document(5) + node(6) + refused(7, NO_LAYOUT))
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 0) }
+        assertEquals("offscreen", error.error)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `removed under the scroll`() {
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    node(6) +
+                    refused(7, "Could not find node with given id") +
+                    document(8) +
+                    harness.serverTextFrame("""{"id":9,"result":{"nodeId":0}}""")
+            )
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 300) }
+        assertEquals("not_found", error.error)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `an unknown command is final`() {
+        val page =
+            harness.socket(
+                opening() +
+                    document(5) +
+                    node(6) +
+                    harness.serverTextFrame(
+                        """{"id":7,"error":{"code":-32601,"message":"'DOM.scrollIntoViewIfNeeded' wasn't found"}}"""
+                    )
+            )
+        val error = assertThrows(ApiException::class.java) { tapThrough(page, waitMs = 5_000) }
+        assertEquals("cdp_error", error.error)
+        assertEquals(1, page.methods().count { it == "DOM.querySelector" })
+    }
+
     /** The replies before a tap's first lookup, on a tab that is showing. */
     private fun opening() =
         harness.switched() +
@@ -296,6 +399,10 @@ class BrowserTapWaitTest {
             harness.serverTextFrame(
                 """{"id":$id,"error":{"code":-32000,"message":"Could not find node with given id"}}"""
             )
+
+    /** Chrome refuses command [id], with the code it gives any refusal. */
+    private fun refused(id: Int, message: String) =
+        harness.serverTextFrame("""{"id":$id,"error":{"code":-32000,"message":"$message"}}""")
 
     /** The replies to a lookup from [id] on that finds the element, and to the tap's metrics. */
     private fun found(id: Int) =
@@ -321,5 +428,10 @@ class BrowserTapWaitTest {
                 BrowserTapRequest(selector = "a", waitMs = waitMs),
             )
         }
+    }
+
+    private companion object {
+        /** What Chrome says to a scroll to a node with no layout object. */
+        const val NO_LAYOUT = "Node does not have a layout object"
     }
 }

@@ -29,6 +29,9 @@ internal data class CdpEvent(val method: String, val params: JsonObject, val seq
  */
 internal class CdpRejected(val code: Int?, message: String) : Exception(message)
 
+/** The JSON-RPC code Chrome gives a command it could not carry out, for any reason. */
+internal const val SERVER_ERROR = -32_000
+
 /** What Chrome said when it refused the command behind this error, or null when it did not. */
 internal val ApiException.rejected: CdpRejected?
     get() = cause as? CdpRejected
