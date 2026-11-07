@@ -47,7 +47,7 @@ The screen lease and tab ownership are keyed by holder, so the viewer and every 
 One MCP client is usually one session, so its subagents share a turn at the screen and a set of tabs, and parallel ones tap over each other. `session_start` gives a subagent or parallel task a session of its own:
 
 - It returns a new session id, under the session that called it and bound to the same token. Every other tool takes an optional `session` argument naming it, and a call with it acts as that session: its own place in the screen queue, its own tabs, its own grace period and notes. Without the argument, a call acts as the caller's own session.
-- A session can name only itself or sessions it started. Another session's id, or one that has ended, fails with `not_found` and a message to call `session_start`.
+- A session can name only itself or sessions it started. Another session's id, or one that has ended, fails with `session_not_found` and a message to call `session_start`.
 - A session and one it started never wait for each other's screen. A screen call while the other one holds the screen fails at once with `session_conflict`, saying which way round it is: a session from `session_start` called while its starter held the screen, or the starter called while one of its sessions held it. Waiting would queue the caller's own work behind itself, and after 30 seconds the idle-holder rule would hand the screen over with a cleanup the caller never asked for. Two sessions started by the same one still wait for each other, since that is parallel work.
 - Tabs are not shared between them. A tab that belongs to another session in the same family still fails with `not_found`, but the message says it belongs to the caller's own session or one from `session_start`, and how to use it. A tab of an unrelated session gets the plain `not_found`, so nothing about other clients leaks.
 - `session_end` ends one, as `DELETE` would: cleanup if it held the screen, and the tabs it opened close. It also ends after 20 minutes unused, and when the session that started it ends.
@@ -60,7 +60,7 @@ The model carries the id, so it can forget it or pass a stale one. A forgotten i
 Scripts run sequences such as unlock, launch an app, tap a field, type. Another holder must not take the screen between two of those steps, so REST has sessions too, the same ones MCP has.
 
 - `POST /v1/sessions` creates a session and returns `{"id": "...", "idleMs": 1200000}`. It is bound to the calling token, counts toward the same caps as MCP sessions (16 per token, 32 in all), and fails with 429 `too_many_sessions` past them. Any token can create one; the admin scope is only for listing and ending other sessions.
-- Every REST call that needs a session carries its id in `Mcp-Session-Id`, the header MCP uses, so one id works on both. An id another token created, or one that has ended, gets 404 `not_found`, as on `/mcp`.
+- Every REST call that needs a session carries its id in `Mcp-Session-Id`, the header MCP uses, so one id works on both. An id another token created, or one that has ended, gets 404 `session_not_found`, as on `/mcp`. The two read the same, so an id says nothing about other clients.
 - `DELETE /v1/sessions/current`, with the header, ends the caller's session the way an MCP `DELETE` does: cleanup if it held the screen, its opened tabs close, and its claimed tabs go back to being unowned. Idle expiry after 20 minutes without a request, revoking the token, and the admin `DELETE /v1/sessions/{hash}` end it too. So does removing a scope from the token once the session has an MCP transport, since its tools were built for the old scopes.
 - `POST /v1/screen/release`, with the header, is the REST counterpart of `screen_release`: cleanup, then the next waiter gets the screen, and the session keeps its tabs. It takes the same optional `cleanup`, as in [Handing the screen to a person](#handing-the-screen-to-a-person).
 
@@ -168,7 +168,7 @@ Agents never take the screen over. They queue behind a viewer like anyone else.
 
 ## Tabs
 
-A tab belongs to the holder that opened it, or that claimed it. A tab Chrome opens for an `open_intent` or `app_launch` belongs to the session that made that call too: PhoneAPI notes Chrome's tabs before the call and claims the first new ones to appear in the next 2 seconds, since Chrome handles the intent's URL after the activity starts. A session that ends meanwhile claims none.
+A tab belongs to the holder that opened it, or that claimed it. A tab Chrome opens for an `open_intent` belongs to the session that made that call too: PhoneAPI notes Chrome's tabs before the call and claims the first new one showing the intent's `data` URL in the next 2 seconds, since Chrome handles that URL after the activity starts. A new tab on any other URL stays unowned, so a tab a person opens meanwhile is not taken. That includes a tab whose page has already redirected, and any tab after an `app_launch`, which has no URL to match; the caller claims such a tab by using it. A session that ends meanwhile claims none, and a call that opens or claims a tab as its session ends fails with `session_not_found` and leaves no owner: a tab it opened closes.
 
 A tab id that no longer works says why: the tab closed, as a session's tabs do when it ends, or it belongs to another session.
 

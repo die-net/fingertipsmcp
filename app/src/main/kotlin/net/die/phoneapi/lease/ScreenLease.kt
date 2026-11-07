@@ -467,7 +467,7 @@ class ScreenLease(
 
     /**
      * Forgets [holder], as when its session ends or its socket closes. Its calls waiting for the
-     * screen fail with `not_found`, and its screen goes with cleanup.
+     * screen fail with `session_not_found`, and its screen goes with cleanup.
      */
     suspend fun forget(holder: Holder) {
         mutex.withLock {
@@ -476,7 +476,7 @@ class ScreenLease(
                 ?.let { waiter ->
                     queue.remove(waiter)
                     waiter.granted.completeExceptionally(
-                        ApiException.notFound(
+                        ApiException.sessionNotFound(
                             "The session ended while this call waited for the screen."
                         )
                     )

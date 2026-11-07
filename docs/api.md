@@ -44,7 +44,7 @@ Scopes on a token:
 
 A REST call that acts on the phone or its tabs runs as a session, as an MCP client does, so a script's steps hold the screen and its tabs together. [sharing.md](sharing.md#rest-sessions) has the design.
 
-- `POST /v1/sessions` starts one (any token, whatever its scopes) → 201 `SessionStarted` with its `id`. Send the id in `Mcp-Session-Id` on every call that needs a session. Without it a call fails with **428** `session_required`; with the id of a session that ended or belongs to another token, **404** `not_found`.
+- `POST /v1/sessions` starts one (any token, whatever its scopes) → 201 `SessionStarted` with its `id`. Send the id in `Mcp-Session-Id` on every call that needs a session. Without it a call fails with **428** `session_required`; with the id of a session that ended or belongs to another token, **404** `session_not_found`. Those two read the same, and so does an id that never existed.
 - Calls that need a session: wake, unlock, lock, orientation, the UI tree and its actions, screenshots, input, IME, app launch, stop, and clear, intents, waits, and every `/v1/browser/` route.
 - Calls that need none: `GET /v1/device`, `GET /v1/apps`, the PIN routes, the OpenAPI document, the events socket, the viewer and its sockets and streams, and session and token admin.
 - `DELETE /v1/sessions/current` ends the session named in the header: cleanup if it held the screen, and the tabs it opened close. `POST /v1/screen/release` lets its screen go and keeps its tabs. A session also ends after 20 minutes without a request.
@@ -111,7 +111,8 @@ Authenticated errors are JSON:
 | --- | --- | --- |
 | 400 | `bad_request` | Bad JSON, enum, or query |
 | 403 | `forbidden` | Missing scope |
-| 404 | `not_found` | Unknown id, tab, session, or package (authenticated), or nothing handles an intent |
+| 404 | `not_found` | Unknown id, tab, session hash, or package (authenticated), or nothing handles an intent |
+| 404 | `session_not_found` | The session a call names ended, even during the call, or belongs to another token. Start a new one. On MCP the same code names a `session` argument that is not the caller's own or one it started, and answers `/mcp` for an unknown session id |
 | 404 | `stale_ref` | A UI node ref no longer points at a node, or a browser snapshot ref is from a document the tab has since replaced, or its node has left the page; take a new snapshot |
 | 404 | *(empty body)* | Missing/invalid Bearer |
 | 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, or the PIN was rejected |
@@ -331,7 +332,7 @@ Run `phoneapi server` and point a Streamable HTTP client at `http://127.0.0.1:<p
 | `wait_for` | observe or browser | Same conditions and scopes as `/v1/wait`. `snapshot` adds a capped, masked outline and `screenshot` a PNG; both need observe. `target` names the tab for browser conditions that name none |
 | `keyboard_hide` / `keyboard_show` | control | Soft keyboard |
 | `app_launch` / `app_stop` / `app_clear` | control | Package control (`stop`/`clear` need helper) |
-| `open_intent` | control | Start an intent (needs helper) |
+| `open_intent` | control | Start an intent (needs helper). The tab Chrome opens for its `data` URL is the caller's |
 | `device_wake` / `device_unlock` | control or browser | Screen on / keyguard |
 | `device_lock` | control | Lock |
 | `device_orientation` | control | Auto-rotate, or lock the screen to the current or a named rotation |

@@ -299,7 +299,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.CONTROL),
             available = always,
             arguments = listOf(serializer<PackageArg>(), serializer<LaunchRequest>()),
-            screen = ToolScreen.CLAIMING,
+            screen = ToolScreen.ALWAYS,
             annotations = changes,
             call = { graph, _, request -> appLaunch(graph, request) },
         ),

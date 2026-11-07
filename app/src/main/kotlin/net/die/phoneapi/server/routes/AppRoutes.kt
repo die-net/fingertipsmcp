@@ -29,9 +29,7 @@ fun Route.appRoutes(services: ServerServices) {
         post("/v1/apps/{pkg}/launch") {
             val request = bodyOrDefault(call, LaunchRequest())
             call.respond(
-                withScreen(call, services, claimNew = true) {
-                    services.apps.launch(call.packageName(), request)
-                }
+                withScreen(call, services) { services.apps.launch(call.packageName(), request) }
             )
         }
         post("/v1/apps/{pkg}/stop") {
@@ -43,7 +41,9 @@ fun Route.appRoutes(services: ServerServices) {
         post("/v1/intents") {
             val request = call.receive<IntentRequest>()
             call.respond(
-                withScreen(call, services, claimNew = true) { services.apps.intent(request) }
+                withScreen(call, services, claimUrl = request.data) {
+                    services.apps.intent(request)
+                }
             )
         }
     }

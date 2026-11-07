@@ -163,7 +163,7 @@ class ScreenLeaseTest {
         val waiting = async { apiError { lease.withScreen(a) {} } }
         runCurrent()
         lease.forget(a)
-        assertEquals("not_found", waiting.await().error)
+        assertEquals("session_not_found", waiting.await().error)
         assertTrue(lease.holds(b))
     }
 

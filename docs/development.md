@@ -71,7 +71,7 @@ Open the app for screen reading and taps, wireless debugging, and the computers 
 
 Calls that act on the phone or its tabs need a session, as [api.md](api.md#sessions) describes. `papi` starts one the first time the server answers 428 `session_required`, keeps its id in the session file next to the pairing file, and sends it on every call. So a sequence of `papi` calls holds the screen and its tabs as one client, and another client cannot take the screen between two of them unless they sit idle for 30 s while it waits.
 
-- If the session ended, after 20 minutes without a request or by an admin, `papi` starts a new one and says so on stderr. The new one has neither the old one's screen nor its tabs.
+- If the session ended, after 20 minutes without a request or by an admin, the server answers 404 `session_not_found`, and `papi` starts a new one and says so on stderr. The new one has neither the old one's screen nor its tabs.
 - Set `PAPI_SESSION` to use another session instead of the kept one, for example to run two scripts as separate clients, or to act as an MCP client's session with the id its `initialize` returned.
 - `phoneapi-dev session id` prints the kept session, and `phoneapi-dev session end` ends it, closing the tabs it opened, and removes the session file.
 

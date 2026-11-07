@@ -185,6 +185,9 @@ class McpSessions(
 
     internal fun get(id: String): McpSession? = sessions[id]
 
+    /** Whether [id] is a session that has not ended. [end] drops it before it runs [onEnd]. */
+    fun isLive(id: String): Boolean = sessions.containsKey(id)
+
     /** Starts a session for `POST /v1/sessions`, with no transport, and returns its id. */
     fun startRest(tokenId: String, tokenName: String): String {
         admit(tokenId)

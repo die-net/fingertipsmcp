@@ -33,6 +33,13 @@ public class ApiException(
 
         public fun notFound(what: String): ApiException = ApiException(404, "not_found", what)
 
+        /**
+         * The session a call names has ended, or it is another token's. The two read the same, so
+         * the answer says nothing about other clients.
+         */
+        public fun sessionNotFound(what: String): ApiException =
+            ApiException(404, "session_not_found", what)
+
         public fun unavailable(error: String, message: String): ApiException =
             ApiException(503, error, message)
 
