@@ -173,6 +173,35 @@ class TextTyperWaitsTest {
     }
 
     @Test
+    fun `reaches keys Gboard names`() = runTest {
+        for ((c, name) in listOf('^' to "circumflex accent", '|' to "vertical line")) {
+            val board = GboardPages()
+            val tapped = ArrayList<String>()
+            pressKeyFor(c, board::keys) {
+                tapped += it.label
+                board.press(it)
+            }
+            assertEquals(listOf("Symbol keyboard", "More symbols", name), tapped)
+        }
+    }
+
+    @Test
+    fun `typing goes on from symbols`() = runTest {
+        // Gboard stays on the page a call typed from, so the next call starts there.
+        val board = GboardPages()
+        pressKeyFor('%', board::keys, board::press)
+        assertEquals(GBOARD_MORE, board.keys())
+        val ime = MutableStateFlow(summary(imeVisible = true))
+        assertEquals(GBOARD_MORE, awaitKeyboard(ime, board::keys))
+        val tapped = ArrayList<String>()
+        pressKeyFor('d', board::keys) {
+            tapped += it.label
+            board.press(it)
+        }
+        assertEquals(listOf("Letter keyboard", "d"), tapped)
+    }
+
+    @Test
     fun `shift is pressed at most twice`() = runTest {
         // A keyboard whose shift does nothing.
         val tapped = ArrayList<String>()
@@ -246,6 +275,24 @@ class TextTyperWaitsTest {
 
     private fun key(top: Int) = listOf(ImeKey("q", null, Rect(0, top, 10, top + 10)))
 
+    /** Gboard's three pages, which change as their page keys are pressed. */
+    private class GboardPages {
+        private var page = GBOARD_LETTERS
+
+        fun keys(): List<ImeKey> = page
+
+        fun press(key: ImeKey) {
+            page =
+                when (key.label) {
+                    "Symbol keyboard",
+                    "Symbols" -> GBOARD_SYMBOLS
+                    "More symbols" -> GBOARD_MORE
+                    "Letter keyboard" -> GBOARD_LETTERS
+                    else -> page
+                }
+        }
+    }
+
     private fun summary(imeVisible: Boolean) =
         DeviceStateSummary(
             ScreenState.ON,
@@ -264,6 +311,31 @@ class TextTyperWaitsTest {
         val LETTERS = labels("qwertyuiop".map { it.toString() } + "?123")
         val SYMBOLS = labels("1234567890".map { it.toString() } + listOf("=\\<", "ABC"))
         val MORE = labels(listOf("%", "^", "~", "?123", "ABC"))
+        val GBOARD_LETTERS =
+            labels("qwertyuiopasdfghjklzxcvbnm".map { it.toString() } + "Symbol keyboard")
+        val GBOARD_SYMBOLS =
+            labels(
+                "1234567890@".map { it.toString() } +
+                    listOf("Number sign", "Dollar sign", "More symbols", "Letter keyboard")
+            )
+        val GBOARD_MORE =
+            labels(
+                listOf(
+                    "Tilde",
+                    "grave accent",
+                    "vertical line",
+                    "π",
+                    "÷",
+                    "×",
+                    "¢",
+                    "€",
+                    "¥",
+                    "circumflex accent",
+                    "Percent sign",
+                    "Symbols",
+                    "Letter keyboard",
+                )
+            )
 
         fun keyboard(letter: String) =
             listOf(letter, "Shift").map { ImeKey(it, null, Rect(0, 0, 10, 10)) }
