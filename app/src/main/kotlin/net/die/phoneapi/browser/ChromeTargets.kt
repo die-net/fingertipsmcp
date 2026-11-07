@@ -27,10 +27,8 @@ internal fun chromeTargets(
     socket: String,
     pid: Int?,
     packageName: String?,
-): List<BrowserTarget> {
-    val infos = result.decodeCdp<TargetInfos>()?.targetInfos ?: return emptyList()
-    return infos.mapNotNull {
-        if (it.type != "page") return@mapNotNull null
+): List<BrowserTarget> =
+    chromePages(result).map {
         BrowserTarget(
             id = browserTargetId(socket, it.targetId),
             type = it.type,
@@ -42,24 +40,23 @@ internal fun chromeTargets(
             openerId = it.openerId?.let { opener -> browserTargetId(socket, opener) },
         )
     }
-}
 
 /**
  * Each of Chrome's tabs, by its Chrome target id, with the browser context it belongs to. Normal
  * tabs share one context and incognito tabs another.
  */
 internal fun chromeContexts(result: JsonObject): Map<String, String?> =
-    result
-        .decodeCdp<TargetInfos>()
-        ?.targetInfos
-        .orEmpty()
-        .filter { it.type == "page" }
-        .associate { it.targetId to it.browserContextId }
+    chromePages(result).associate { it.targetId to it.browserContextId }
 
-@Serializable private data class TargetInfos(val targetInfos: List<TargetInfo> = emptyList())
+/** The tabs in a `Target.getTargets` reply. */
+internal fun chromePages(result: JsonObject): List<ChromePage> =
+    result.decodeCdp<TargetInfos>()?.targetInfos.orEmpty().filter { it.type == "page" }
 
+@Serializable private data class TargetInfos(val targetInfos: List<ChromePage> = emptyList())
+
+/** One target in a `Target.getTargets` reply. */
 @Serializable
-private data class TargetInfo(
+internal data class ChromePage(
     val targetId: String,
     val type: String = "page",
     val title: String? = null,

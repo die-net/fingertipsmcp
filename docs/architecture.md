@@ -89,7 +89,7 @@ An open listens on a browser session from before the tab exists, with `Target.se
 
 | State | What says so | Then |
 | --- | --- | --- |
-| The tab exists, and its id | `Target.createTarget`'s reply, and on Chrome 91 and 109 the `Target.targetCreated` before the number it answers with | The tab is the caller's, and off the screen if it should be |
+| The tab exists, and its id | `Target.createTarget`'s reply. Chrome 91 and 109 answer with the Android tab's number, and there it is the page on `Target.getTargets` that discover did not replay | The tab is the caller's, and off the screen if it should be |
 | The page committed | `Target.targetInfoChanged` with a title, for a tab opened on its URL. `Page.frameNavigated` with `Page.navigate`'s loader id, for one that navigates | The open returns the tab |
 | Chrome is saving the URL | `Browser.downloadWillBegin` with the tab's id as its `frameId` | A PDF's save is cancelled, and up to 2 s go to the tab closing or Chrome's viewer committing |
 | The tab closed | `Target.targetDestroyed` | The URL was saved, so a stand-in reads it |

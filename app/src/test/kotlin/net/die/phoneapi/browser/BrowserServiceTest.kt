@@ -574,6 +574,10 @@ class BrowserServiceTest {
                 """"attached":false}}}"""
         )
 
+    /** Chrome's reply [command] to `Target.getTargets`, listing [infos]. */
+    internal fun listed(command: Int, infos: String): ByteArray =
+        serverTextFrame("""{"id":$command,"result":{"targetInfos":[$infos]}}""")
+
     /** A browser session hearing the tab [id] get a title, which it first does at its commit. */
     internal fun titled(
         id: String = "abc",
