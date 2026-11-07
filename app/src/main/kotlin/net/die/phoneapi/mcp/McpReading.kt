@@ -471,7 +471,7 @@ private fun stateNotes(result: BrowserReadResult, show: Boolean): List<String> =
     if (readyState != null && readyState != "complete") {
         add("# readyState=$readyState: the page is still loading")
     }
-    if (result.clipped) add("# clipped: the page has more text than reading takes")
+    if (result.clipped) add(if (result.extracted == "data") DATA_CLIPPED else TEXT_CLIPPED)
     addAll(pageNotes(result))
 }
 
@@ -716,6 +716,9 @@ private fun quoted(text: String): String =
     "\"" + oneLine(text).replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 private val WHITESPACE = Regex("\\s+")
+private const val TEXT_CLIPPED = "# clipped: the page has more text than reading takes"
+private const val DATA_CLIPPED =
+    "# clipped: the page has more data than one read takes, so blobs or values past it are left out"
 private const val MAX_LISTED_FEEDS = 5
 private const val MAX_LISTED_BLOBS = 5
 

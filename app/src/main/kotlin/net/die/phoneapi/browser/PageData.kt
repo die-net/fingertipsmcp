@@ -33,6 +33,8 @@ internal data class DataExtract(
     val visibility: String? = null,
     val status: Int = 0,
     val blobs: List<DataBlobText> = emptyList(),
+    /** How many blobs the page has past the most `page-data.js` lists. */
+    val more: Int = 0,
 )
 
 /**
@@ -137,7 +139,7 @@ internal fun decodeData(result: EvalResult): DataExtract {
  * the rest is counted and hashed as it is written.
  */
 internal fun readData(extract: DataExtract, request: BrowserReadRequest): BrowserReadResult {
-    val blobs = DataBlobs(extract.blobs)
+    val blobs = DataBlobs(extract.blobs, extract.more)
     val path = request.path
     val sink = WindowSink(request.offset, request.maxChars + 1)
     val values = onJson {
@@ -170,6 +172,7 @@ internal fun readData(extract: DataExtract, request: BrowserReadRequest): Browse
             offset = request.offset,
             returnedChars = 0,
             truncated = false,
+            clipped = blobs.clipped,
             values = values,
         )
     if (changed == false) return header
@@ -199,7 +202,7 @@ internal fun findData(extract: DataExtract, request: BrowserFindRequest): Browse
             )
         }
     val search = DataSearch(queries.map { queryPattern(it, request.regex) }, request)
-    val blobs = DataBlobs(extract.blobs)
+    val blobs = DataBlobs(extract.blobs, extract.more)
     val path = request.path
     onJson {
         if (path != null) {
@@ -301,17 +304,32 @@ private fun linePaths(
     return sorted.associateWith { offset -> pathOf[lineOf.getValue(offset)].orEmpty() }
 }
 
-/** The blobs of one data read, each scanned in place when a path reaches it. */
-private class DataBlobs(private val list: List<DataBlobText>) {
+/**
+ * The blobs of one data read, each scanned in place when a path reaches it, and how many [more] the
+ * page has past them.
+ */
+private class DataBlobs(private val list: List<DataBlobText>, private val more: Int) {
     private val scans = HashMap<String, JsonScan>()
 
+    /**
+     * Whether a read left values out: blobs past those listed, when it read every blob, or values
+     * past the most a `*` path reads.
+     */
+    var clipped = false
+        private set
+
     private fun scan(name: String, text: String): JsonScan = scans.getOrPut(name) { JsonScan(text) }
+
+    private fun everyBlob() {
+        if (more > 0) clipped = true
+    }
 
     /**
      * Calls [visit] with the root of each blob, for a search of every blob. A response with no text
      * to read, such as one that is not JSON, is skipped; the outline says why.
      */
     fun forEachRoot(visit: (String, JsonScan, Int) -> Unit) {
+        everyBlob()
         for (blob in list) {
             if (blob.missing != null) continue
             val text = blob.text ?: throw ApiException.badRequest(notRead(blob))
@@ -338,6 +356,12 @@ private class DataBlobs(private val list: List<DataBlobText>) {
             val root = scan.space(0)
             sink.append("${blob.name}: ${describe(scan, root)}, from ${blob.source}\n")
             outlineKids(scan, root, blob.name, 1, sink)
+        }
+        if (more > 0) {
+            everyBlob()
+            sink.append(
+                "\n… ${plural(more, "more blob")} past these, which a read does not reach\n"
+            )
         }
     }
 
@@ -390,6 +414,7 @@ private class DataBlobs(private val list: List<DataBlobText>) {
     fun resolve(path: String, visit: (String, JsonScan, Int) -> Unit): String? {
         val segments = path.removePrefix("/").split('/')
         val first = segments[0]
+        if (first == "*") everyBlob()
         val roots = if (first == "*") list else listOfNotNull(list.firstOrNull { it.name == first })
         if (roots.isEmpty()) return noBlob(first)
         // A response that cannot be read is the page's doing, not a mistake in the path.
@@ -404,6 +429,7 @@ private class DataBlobs(private val list: List<DataBlobText>) {
             val scan = scan(blob.name, text)
             walk.walk(scan, scan.space(0), blob.name, 1)
         }
+        if (walk.clipped) clipped = true
         return walk.why(path)
     }
 
@@ -438,14 +464,22 @@ private class PathWalk(
     private var count = 0
     private var reason: String? = null
 
+    /** Whether values past [MAX_PATH_VALUES] were left out. */
+    var clipped = false
+        private set
+
     fun fail(why: String) {
         if (reason == null) reason = why
     }
 
     /** Walks from the value at [value], whose path is [at], with segment [k] next. */
     fun walk(scan: JsonScan, value: Int, at: String, k: Int) {
-        if (count >= MAX_PATH_VALUES) return
+        if (clipped) return
         if (k == segments.size) {
+            if (count >= MAX_PATH_VALUES) {
+                clipped = true
+                return
+            }
             count++
             visit(at, scan, value)
             return
