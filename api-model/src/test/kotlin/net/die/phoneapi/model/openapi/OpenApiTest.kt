@@ -41,4 +41,24 @@ class OpenApiTest {
         val security = document["security"]!!.jsonArray.single().jsonObject
         assertTrue(security.containsKey("bearer"))
     }
+
+    /** These routes take an empty POST as the request's defaults, so the body is optional. */
+    @Test
+    fun `optional bodies are not required`() {
+        val paths = phoneApiOpenApi()["paths"]!!.jsonObject
+        fun required(path: String) =
+            paths[path]!!
+                .jsonObject["post"]!!
+                .jsonObject["requestBody"]!!
+                .jsonObject["required"]!!
+                .jsonPrimitive
+                .content
+                .toBoolean()
+        assertEquals(false, required("/v1/device/unlock"))
+        assertEquals(false, required("/v1/apps/{pkg}/launch"))
+        assertEquals(false, required("/v1/screen/release"))
+        assertEquals(true, required("/v1/input/tap"))
+        val release = paths["/v1/screen/release"]!!.jsonObject["post"]!!.jsonObject
+        assertTrue(release["requestBody"].toString().contains("ScreenReleaseRequest"))
+    }
 }

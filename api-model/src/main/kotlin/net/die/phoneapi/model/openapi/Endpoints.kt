@@ -44,6 +44,7 @@ import net.die.phoneapi.model.OrientationRequest
 import net.die.phoneapi.model.PinStatus
 import net.die.phoneapi.model.PointerFrame
 import net.die.phoneapi.model.Scope
+import net.die.phoneapi.model.ScreenReleaseRequest
 import net.die.phoneapi.model.SessionInfo
 import net.die.phoneapi.model.SessionStarted
 import net.die.phoneapi.model.SetPinRequest
@@ -84,6 +85,8 @@ public data class ApiEndpoint(
     public val responseContentType: String? = response?.let { JSON },
     /** The body's type when it is not JSON, such as an image. */
     public val requestContentType: String? = null,
+    /** False when the route takes an empty body as the request type's defaults. */
+    public val requestRequired: Boolean = true,
 ) {
     public companion object {
         public const val JSON: String = "application/json"
@@ -117,6 +120,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             "Dismiss the keyguard.",
             serializer<UnlockRequest>(),
             serializer<ActionResult>(),
+            requestRequired = false,
         ),
         endpoint(
             ApiMethod.POST,
@@ -285,6 +289,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             "Launch an app.",
             serializer<LaunchRequest>(),
             serializer<ActionResult>(),
+            requestRequired = false,
         ),
         endpoint(
             ApiMethod.POST,
@@ -373,7 +378,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/browser/targets/{id}/tap",
             setOf(Scope.BROWSER),
-            "Tap a ref or CSS selector. input touch (default) brings the tab forward; input cdp needs the tab showing in Chrome on screen; input cdp-mouse clicks a background tab, even with Chrome hidden.",
+            "Tap a ref or CSS selector. input auto (default) is touch for a session that holds the screen, and cdp-mouse otherwise. touch brings the tab forward; cdp needs the tab showing in Chrome on screen; cdp-mouse clicks a background tab, even with Chrome hidden.",
             serializer<BrowserTapRequest>(),
             serializer<ActionResult>(),
         ),
@@ -381,7 +386,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/browser/targets/{id}/swipe",
             setOf(Scope.BROWSER),
-            "Swipe in CSS viewport pixels, or by direction. input touch (default) or cdp, which needs the tab showing in Chrome on screen.",
+            "Swipe in CSS viewport pixels, or by direction. input auto (default) is touch, which brings the tab forward; cdp needs the tab showing in Chrome on screen.",
             serializer<BrowserSwipeRequest>(),
             serializer<ActionResult>(),
         ),
@@ -389,7 +394,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/browser/targets/{id}/gesture",
             setOf(Scope.BROWSER),
-            "Pointer paths in CSS viewport pixels. input touch (default) or cdp, which needs the tab showing in Chrome on screen.",
+            "Pointer paths in CSS viewport pixels. input auto (default) is touch, which brings the tab forward; cdp needs the tab showing in Chrome on screen.",
             serializer<BrowserGestureRequest>(),
             serializer<ActionResult>(),
         ),
@@ -397,7 +402,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/browser/targets/{id}/key",
             setOf(Scope.BROWSER),
-            "Press a key. input touch (default) or cdp. cdp rejects device keys such as HOME.",
+            "Press a key. input auto (default) is touch for a session that holds the screen and has the control scope, and cdp otherwise. cdp rejects device keys such as HOME.",
             serializer<BrowserKeyRequest>(),
             serializer<ActionResult>(),
         ),
@@ -405,7 +410,7 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/browser/targets/{id}/text",
             setOf(Scope.BROWSER),
-            "Type text. input touch uses the hardware text modes; input cdp inserts it.",
+            "Type text. input auto (default) is touch for a session that holds the screen, and cdp otherwise. touch uses the hardware text modes; cdp inserts it.",
             serializer<BrowserTextRequest>(),
             serializer<ActionResult>(),
         ),
@@ -509,8 +514,10 @@ public val phoneApiEndpoints: List<ApiEndpoint> =
             ApiMethod.POST,
             "/v1/screen/release",
             emptySet(),
-            "Let the screen go for the session named in Mcp-Session-Id, with cleanup. The session keeps its tabs, and its next call that needs the screen takes it again.",
-            response = serializer<ActionResult>(),
+            "Let the screen go for the session named in Mcp-Session-Id, with cleanup unless cleanup is false. The session keeps its tabs, and its next call that needs the screen takes it again.",
+            serializer<ScreenReleaseRequest>(),
+            serializer<ActionResult>(),
+            requestRequired = false,
         ),
         endpoint(
             ApiMethod.GET,
@@ -545,6 +552,7 @@ private fun endpoint(
     status: Int = if (method == ApiMethod.DELETE && response == null) 204 else 200,
     responseContentType: String? = null,
     requestContentType: String? = null,
+    requestRequired: Boolean = true,
 ): ApiEndpoint =
     ApiEndpoint(
         method = method,
@@ -556,4 +564,5 @@ private fun endpoint(
         status = status,
         responseContentType = responseContentType ?: response?.let { ApiEndpoint.JSON },
         requestContentType = requestContentType,
+        requestRequired = requestRequired,
     )

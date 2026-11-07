@@ -107,7 +107,7 @@ private fun operation(endpoint: ApiEndpoint, schemas: JsonSchemas): JsonObject =
         put(
             "requestBody",
             buildJsonObject {
-                put("required", true)
+                put("required", endpoint.requestRequired)
                 put("content", jsonContent(schemas.schema(request.descriptor)))
             },
         )
