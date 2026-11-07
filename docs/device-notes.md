@@ -751,7 +751,7 @@ Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A
 
 A wait that spanned a navigation on a hidden tab matched 10 of 10 on each Chrome after the change, with its looks running through the load.
 
-The "before" builds above held a change to touch input as well, which was on the branch by accident. The waits were run again on Chrome 133 on builds without the fix, and on one with it merged with main. Each run started 45 s after the install, except the one with the fix and the first run at 4a18edd.
+The "before" builds above held a change to touch input as well, which was on the branch by accident. The waits were run again on Chrome 133 on builds without the fix, and on one with it merged with main. The first two rows started 45 s after an install.
 
 | Build | `present` css | `present` text | `visible`, hidden | `visible`, shown | `absent` |
 |---|---|---|---|---|---|
@@ -759,7 +759,7 @@ The "before" builds above held a change to touch input as well, which was on the
 | Main at a8ed3f8, without the fix | 1 of 10 | 1 of 10 | 0 of 5 | 5 of 5 | Not run |
 | With the fix, on main at 87cae01 | 6 of 6 | 4 of 6 | 3 of 3 | 3 of 3 | 6 of 6 |
 
-So a wait without the fix could match by chance, when something else woke it, 1 to 2.3 s after the change at 4a18edd. What woke it was not looked into. `visible` on a hidden tab never matched, since a look there could not see the box. The two misses with the fix were `502` at set-up, as below.
+So a wait without the fix could match by chance, when something else woke it, 0.9 to 2.3 s after the change at 4a18edd. What woke it was not looked into. `visible` on a hidden tab never matched, since a look there could not see the box. The two misses with the fix were `502` at set-up, as below.
 
 What Chrome did, the same on 133 and 145:
 
@@ -788,7 +788,7 @@ Through PhoneAPI on the larger page, on screen with rows changing, a wait for a 
 
 Seen while checking, and not changed:
 
-- On Chrome 133, 2 of about 90 waits failed `502` `cdp_error` `Could not open Chrome's DevTools socket`, one on the build before the change and one after it, the `present` text miss in the first table. The next wait worked. Chrome 145 had none in about 90. In the runs after them, 4 of 42 failed the same way or with `DevTools closed the WebSocket`, two on a build with the fix and two without, all within about a minute of an install. The two runs that started 45 s after an install had none in 60. The cause is not known.
+- On Chrome 133, 2 of about 90 waits failed `502` `cdp_error` `Could not open Chrome's DevTools socket`, one on the build before the change and one after it, the `present` text miss in the first table. The next wait worked. Chrome 145 had none in about 90. In the runs after them, 4 of about 45 failed the same way or with `DevTools closed the WebSocket`, two on a build with the fix and two without, all within about a minute of an install. The two runs that started 45 s after an install had none in 60. The cause is not known.
 - On Chrome 145, `PUT /json/new` fails with HTTP 500 `Could not create new page`. PhoneAPI's own tab calls work.
 - On Chrome 145, a tab opened while Chrome was behind the home screen reported `visible`, though Chrome wasn't drawing it, and showed no quads for a new node, as a hidden tab does.
 
