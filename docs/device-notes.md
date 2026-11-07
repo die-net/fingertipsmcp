@@ -6,7 +6,7 @@ The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android
 
 ## Last phone run
 
-On 2026-11-07, a dev build of `main` at 2acb53e ran on the Android 11 test phone, with Chrome 156.0.8078.79, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
+On 2026-11-07, a dev build of `main` at 4a18edd ran on the Android 11 test phone, with Chrome 156.0.8078.79, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
 
 Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
 
@@ -78,7 +78,36 @@ On that emulator, with a page running 3 s tasks back to back, 3 `cdp` keys into 
 
 ### Closed tabs
 
-Chrome refuses a DevTools connection to a closed tab with 500 "No such target id", in Chrome 133 on the emulator and Chrome 155 on the phone, and 404 in some releases. PhoneAPI reports it as `not_found` rather than retrying.
+Chrome refuses a DevTools connection to a closed tab with 500 "No such target id", in Chrome 133 on the emulator and Chrome 155 on the phone, and 404 in some releases. PhoneAPI reports it as `not_found` rather than retrying. Chrome 156 on the phone did the same on 2026-11-07, every time: 30 of 30 reconnects after a cancelled save closed a tab, and 10 of 10 after `Target.closeTarget` closed a tab with a call waiting on it. That call's connection dropped with no answer. After the saves, `Target.targetDestroyed` had already come, so a reconnect ahead of that event was not tried.
+
+### Target events
+
+Chrome 156 on the Android 11 test phone on 2026-11-07, over raw DevTools, on a browser session with `Target.setDiscoverTargets`. Times are from the call that started it. Chrome hidden and Chrome in front gave the same events, unless noted.
+
+| Tab | `targetCreated` | `targetId` | Then |
+| --- | --- | --- | --- |
+| `Target.createTarget`, blank or a URL | 13 to 41 ms, before the reply at 89 to 167 ms, in every try | The reply's | `url` is empty in the event |
+| `am start` of a `VIEW` intent | 290 ms, with `am` back at 166 ms | Not known ahead | `url` empty, then `targetInfoChanged` at 548 ms |
+| `window.open` with a user gesture | 154 ms | Not known ahead | `openerId` set, `url` empty |
+| `/json/new` | None | None | 500 `Could not create new page` |
+
+| Close | `targetDestroyed` | Off `/json/list` |
+| --- | --- | --- |
+| `Target.closeTarget` | 28 to 50 ms | 44 to 66 ms |
+| `/json/close` | 28 ms | 37 ms |
+| `window.close()` from its opener | 112 ms | Not read |
+| A cancelled PDF save, Chrome hidden | 10 of 10, 25 ms after `Browser.downloadWillBegin` at the median, 29 ms at most | 13 to 23 ms after that |
+| A cancelled PDF save, Chrome in front | 20 of 20, 38 ms at the median, 99 ms at most | 18 to 52 ms after that |
+
+- A cancelled save's tab sends `targetInfoChanged` with an empty `url` just before `targetDestroyed`. Its page connection closes within 6 ms of `targetDestroyed`. `downloadWillBegin`'s `frameId` was the `targetId` in all 30, and it came 119 to 181 ms after `createTarget` was sent, after the reply each time.
+- Discover answers in about 6 ms, with a `targetCreated` for each tab read before the reply, `attached` false. A second `setDiscoverTargets` replays nothing.
+- The replay has one more target than `/json/list` and `Target.getTargets`: a page on `chrome-native://newtab/` with no `browserContextId`. So the replay and the list can't be compared as sets.
+- Open on a URL, `targetInfoChanged` comes twice. The first is at the start of the navigation, about 130 ms in, with the URL and an empty title, so it does not mean a commit. A PDF that never commits can send it too. The second comes at the commit, with a title, which is the host until the page sets one.
+- With the screen off, a fast page opened on its URL sent only the second, at 392 to 476 ms, in 2 tries.
+- A blank tab that then navigates sends one, 25 to 36 ms after `Page.frameNavigated`, in 4 of 4, and none at the start.
+- A tab opened on its URL does not answer `Page.enable` on a new connection until the commit, 1.7 to 1.8 s in with a server that took 1.5 s. So `Page.frameNavigated` did not reach that session in 16 of 16 tries, 8 hidden and 8 in front, slow and fast. Before the reply it sends `frameStartedNavigating`, at about 150 ms with the navigation's loader id, and `frameStoppedLoading`. `Page.setLifecycleEventsEnabled` then gives `commit`, `DOMContentLoaded`, and `load` at once, and `Page.getFrameTree` the URL and that loader id.
+- `location.hash` and `history.pushState` send `targetInfoChanged` with the new URL, 3 to 8 ms before `Page.navigatedWithinDocument`. Setting `document.title` sent nothing in 700 ms.
+- A refused connection sends the URL at the start, then a title at 400 to 600 ms, with no `Page.frameNavigated` on a session opened right after creating the tab.
 
 ### Page dialogs
 
@@ -264,6 +293,12 @@ The stand-in's commit, with Chrome in front, on 2026-11-07. Over raw DevTools, o
 - Against a 1 KB PDF from the Mac, many first opens failed `cdp_error` `DevTools closed the WebSocket` in 0.1 to 0.65 s, with or without the wait: 14 of 40 without it, and 46 of 129 with it, on Chrome 133, and 9 of 40 on Chrome 145. Chrome closed the saved tab during `listedId`'s `Target.getTargetInfo`. In all 9 on Chrome 145, logged after the drop, the tab was off `Target.getTargets`, and a new connection was refused. So a session that drops now reconnects to see whether Chrome refuses, and answers `not_found` if it does.
 - With both changes, 110 of 110 first opens read as `pdf` on Chrome 145, and 79 of 80 on Chrome 133. The one that failed was the first of its burst, a 503 from the wireless debugging port lookup, which came right on the next open. Nothing reached Downloads on Chrome 145. On Chrome 145 the stand-in also read with the wait in place, so `Page.frameNavigated` reaches its session there.
 
+On the Android 11 test phone on 2026-11-07, with Chrome 156.0.8078.79 and Chrome in front:
+
+- Over raw DevTools, with the navigation fulfilled as `PdfReader` does, `Page.frameNavigated` reached the stand-in's session with `Page.navigate`'s loader id in 20 of 20 tries, a median of 14 ms after the reply, and 9 to 23 ms.
+- With a page held on a paused script, a `nodeId` taken before `DOMContentLoaded` failed `DOM.resolveNode` after it, `No node with given id found`, 20 of 20 times. The `backendNodeId` worked 20 of 20.
+- Through PhoneAPI at 4a18edd, 30 of 30 first opens of arXiv PDFs in a row read as `pdf`, in up to 6.2 s, and so did 30 of 30 of a 1 KB PDF from the Mac, opened in 3.2 to 4.1 s. Nothing reached Downloads. Over raw DevTools, that small PDF's save closes the tab about 40 ms after it starts, so it can race the id lookup. Which opens raced can't be told from outside. Two more arXiv URLs were withdrawn papers, which answer 404 with a page, and read as a page.
+
 Checked through PhoneAPI on the Android 16 emulator, Chrome 133 with `AndroidOpenPdfInline` on, on 2026-11-05, against 22 public PDFs and the scoring in `pdftotext`. Word recall against `pdftotext` was 95 to 100% for papers in one and two columns, menus, the RFC, a Census report whose table pages carry `/Rotate 90`, an IRS form, a Supreme Court opinion, slides, a designed annual report, and Chinese and Arabic reports. Running headers and footers, which `pdftotext` keeps, account for most of the rest.
 - Bookmarks gave the outline where a PDF has real ones: every bookmark of the papers, the RFC, and the RISC-V manual came out as a heading at its depth, and 803 of the RP2350 datasheet's 1168, the rest being past the 2,000,000-character cap. Census and a menu had bookmarks that name nothing on the page, so they used the size and numbering rules.
 - The first read of the 1371-page RP2350 datasheet took 12.4 s in 2 s steps; a find after it took 0.4 s.
@@ -286,9 +321,8 @@ On the Android 10 emulator with Chrome 91 on 2026-11-06, the takeover of an arXi
 ### Still to check
 
 - What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
-- That `Page.frameNavigated` reaches the stand-in's session with the navigation's loader id on the phone's Chrome 156, as it does on Chrome 109, 133, and 145. Without it, a takeover fails `page_error` after 5 s. Also that a `backendNodeId` outlives `DOMContentLoaded` there, and that Chrome 156 refuses a connection to a tab that closed during a call.
 - How long a long PDF takes to read on the phone, against DevTools' 15 s call limit. Also `browser_read` end to end through PhoneAPI on Android 17, which was checked only over raw DevTools. Also a PDF from a site whose service worker answers navigations, which may answer before DevTools can pause it.
-- Opening a tab, past what this section says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
+- Opening a tab, past what this section says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
 - On Chrome 145, `loaderId` from `Page.getFrameTree`, and the PDF takeover. On Chrome 133, whether `Runtime.callFunctionOn` works on a `DOM.resolveNode` handle in the stand-in and `Page.navigate` returns only after the fulfil were not looked at apart from the reads that depend on them. A site whose service worker answers the navigation itself. A quick PDF through Chrome 133's viewer: only the 17 s one was seen to return text, since the two `url` reads of a quick one were cut off in the test's output.
 
 ## Starting Chrome
@@ -362,12 +396,11 @@ With a viewer on the Android 16 and Android 13 emulators on 2026-11-06:
 
 A session's own read of its tab during a take hid it on the Android 11 test phone on 2026-11-06 too, and taps then landed on the placeholder.
 
-On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, a `cdp` tap failed `not_visible` and the tab went from `visible` to `hidden`, in the one try that read it.
+On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, the tab stayed `visible` for 3.6 s with no calls, read over raw DevTools. The next `evaluate` hid it at once, and the placeholder became `visible`, 2 of 2 times, and a `read` left it alone. So the earlier `cdp` tap that failed `not_visible` found the tab already hidden, by the test's own `evaluate` before it. Each call that acts ends in `Tabs.afterInput`, whose `showFor` with no holder counts the session's own tab as another's and selects the placeholder. That last step is from the code. 8 of 8 tries with an `evaluate` after the release showed the tab hidden after it.
 
 ### Still to check
 
 - The lost click on Chrome 109 with the tab switcher open, as above, which did not come back in 35 tries.
-- Why a `cdp` tap after a release without cleanup hid the tab.
 
 ## Video and audio streams
 
@@ -441,6 +474,22 @@ Reads did not start Chrome, and the nodes stayed off after them. `ui/snapshot` s
 
 Chrome's address bar is editable, so with the nodes off a search for editable nodes finds it and no page field. That is why the focused field is asked for with `focused` in the selector: a search that filters afterward finds something, so nothing says the nodes are off.
 
+On the Android 11 test phone on 2026-11-07, with Chrome 156 and a dev build at 4a18edd, the nodes were off after a run of calls ending in keyboard typing, 25 of 25 times: open a tab, open a second, show the first, close the second, two taps, tap a field, and type. No step before the typing left them off, in 2 tries of each, with one read at the end. Typing on a lone tab did not, in 14 tries. A `ui/find` of page text just before and after the typing kept them on, 4 of 4, and a snapshot of 5 nodes did not, 3 of 3. A quiet tab read every 3 to 7 s stayed whole for 50 s. So the 5 s after the first read is not all that decides it on the phone. An activity start brought them back, `pageNodesOff` being false in the 14 reads after one, and the page saw `blur` then `focus`, 23 of 23, with no `visibilitychange`.
+
+| Call, with the nodes off | Result | Time |
+| --- | --- | --- |
+| Browser `touch` tap, keyboard hidden | Clicked, 3 of 3 | 0.4 to 0.5 s |
+| Browser `touch` tap, keyboard up | 200, and the tap missed, 9 of 9 | 0.5 to 0.8 s |
+| `POST /v1/input/tap` by text, keyboard hidden | Clicked, 2 of 2 | 0.3 s |
+| `POST /v1/input/tap` by text, keyboard up | 404 `not_found`, with the button under the keyboard, 1 of 1 | 0.3 s |
+| `POST /v1/input/text`, `clear`, `keyboard` | Replaced, 9 of 9 | 7.5 to 7.9 s |
+| `POST /v1/input/text`, `clear`, `auto` | Replaced, 1 of 1 | 7.7 s |
+| `POST /v1/input/text`, `clear`, `setText` | Replaced, 1 of 1 | 0.2 s |
+| Browser text, `clear` | Replaced, 2 of 2 | 7.8 to 7.9 s |
+| `POST /v1/input/text`, `keyboard`, no `clear` | Typed, 1 of 1, with no start, and the nodes stayed off | 1.5 s |
+
+The missed taps went to the field, a paragraph, or the body. The page saw `blur`, `focus`, and two `resize` events before the touch, which landed at y 1053 to 1191, where the button sits with the keyboard up. With the nodes on and the keyboard up, the same tap clicked 9 of 9 times, at y 1048 to 1131. So it looks like the start moves the page after the point is taken.
+
 Chrome 145 on the Android 17 emulator did not turn the nodes off that day, on nine tabs, each watched for 15 s after a read. Chrome 109 on the Android 13 emulator, with tabs opened on their URL, passed an open, its listed id, a touch tap, `clear` with and without a selector, `setText`, `ui/find`, and `keyboard_show`, on one tab.
 
 A touch call on a new tab on Chrome 133 failed `content_unavailable` 2 times in about 20 that day, once on the first tab after the helper started and once right after a tab closed. The same call a second later worked. The tree was not read at the moment it failed, so why is not known.
@@ -457,7 +506,6 @@ With the app killed and restarted beside a live helper, on the Android 13 and 16
 - A release and a dev helper side by side, with the UiAutomation contention, which needs a release build.
 - The occasional `content_unavailable` on a new tab on Chrome 133, as above: what the tree holds when it happens.
 - UiAutomation idling out after the app process is killed and restarted, as above.
-- Touch on a page Chrome turned the nodes off for, as above: whether starting Chrome shows a page a blur or `visibilitychange`, and whether an activity start brings the nodes back on a phone, where opening and closing a tab did.
 
 ## The on-screen keyboard
 
@@ -485,11 +533,10 @@ The merged code typed the same cases exactly on the Android 11 test phone on 202
 
 `keyboard_show` on the Android 16 emulator on 2026-11-06: without a selector, with a field focused, the keyboard came up in 1.5 s. With a selector, one try said `The keyboard did not appear`, two worked, and three failed `not_found`, the Chrome node collapse above being the likely cause.
 
-On the Android 11 test phone on 2026-11-07, keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The nodes were not read on that try. They were there in the other 15.
+On the Android 11 test phone on 2026-11-07, at 2acb53e, keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The likely cause is the page's nodes being off. The 15 tries that worked ran `ui/find` between steps, which keeps them on. With no such reads, the same steps left the nodes off 25 of 25 times at 4a18edd, where `clear` recovers, as under [UiAutomation](#uiautomation). Each such `clear` took 7.5 to 7.9 s, against 2 s with the nodes on. The failure itself was not run again on the old build.
 
 ### Still to check
 
-- Why keyboard `clear` failed once in 16 tries on the Android 11 test phone.
 
 ## MCP SDK
 
@@ -646,6 +693,7 @@ Selector lookups across a load, on 2026-11-07. Each page held its parser on a sc
 
 - A node id or search taken before `DOMContentLoaded` was refused after it, and one taken before a commit was refused after that, 10 of 10 on Chrome 109 and 20 of 20 on Chrome 133. `DOM.querySelector`, `DOM.scrollIntoViewIfNeeded`, `DOM.getContentQuads`, and `DOM.focus` said `Could not find node with given id`. `DOM.resolveNode` said `No node with given id found`, and `DOM.getSearchResults` said `No search session with given id found`. All three have code -32000, the code of any refusal, so the code doesn't name this one.
 - `DOM.documentUpdated` reached the session before the first refusal, with `DOM.querySelector` sent over and over across the change. That held for every try: 30 at `DOMContentLoaded` and 30 at a commit on Chrome 91, and 20 of each on Chrome 109, 133, and 145. It held without `DOM.enable`, since `DOM.getDocument` enables the domain. At a commit it follows `Page.frameNavigated`. A commit to another site on Chrome 133 and 145 did the same, 20 of 20 each. On Chrome 109 one such try did, and the rest did not run, because the test lost the live tab among that emulator's 53 old ones.
+- Chrome 156 on the Android 11 test phone did the same on 2026-11-07: `DOM.documentUpdated` came first in 20 of 20 tries at `DOMContentLoaded` and 20 of 20 at a commit. The refusal read `Could not find node with given id`.
 - A second `DOM.getDocument` sends no `DOM.documentUpdated`, so a lookup does not set off its own retry.
 
 Through PhoneAPI, on the build before `withNodeIds` and on the build with it. A tap on a selector that appears only as the parser finishes polls until it matches. A wait of 0 ms, sent over and over, looks once each time and counts per `DOMContentLoaded`. The third wait was woken by a page fetching every 15 ms, with a `browser.request` condition beside it.
@@ -686,7 +734,9 @@ Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each com
 - `DOM.focus` says `Element is not focusable` for a hidden node and for a visible `<div>` alike, on Chrome 91.
 - An element in a closed `<details>` has a box on Chrome 109, 133, and 145, though it can't be seen, and none on Chrome 91. An element in `content-visibility: hidden` or in `<defs>` has a box on all four. Empty, zero-size, and `visibility: hidden` elements have one too.
 
-Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A wait with `timeoutMs` 4000 was on a tab behind another (`document.visibilityState` hidden) or on screen, and the page changed 1 s in. Nothing held UiAutomation. The table counts matches. Runs after the change matched 40 to 320 ms after the page changed, and the failures before it timed out at 4 s.
+A tab whose server took 14, 18, or 20 s, opened through PhoneAPI at 4a18edd on the Android 11 test phone on 2026-11-07, returned `loading` true at 12.5 to 12.6 s. A `browser.settled` wait then matched within 0.4 s, 4 of 4, and `browser.loaded` within 0.1 s, 1 of 1, though the server had not answered. Until it did, the tab read as `about:blank`, with `document.readyState` `complete`, and `read` returned 200 with no text. Once it had, `read` returned the page.
+
+Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A wait with `timeoutMs` 4000 was on a tab behind another (`document.visibilityState` hidden) or on screen, and the page changed 1 s in. Nothing held UiAutomation. The table counts matches. Runs after the change matched 40 to 540 ms after the page changed, and the failures before it timed out at 4 s.
 
 | Condition | Page change | Tab | Before, 133 | Before, 145 | After, 133 | After, 145 |
 |---|---|---|---|---|---|---|
@@ -700,6 +750,16 @@ Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A
 | `absent` | Element removed | Shown | 3 of 3 | 3 of 3 | 5 of 5 | 7 of 7 |
 
 A wait that spanned a navigation on a hidden tab matched 10 of 10 on each Chrome after the change, with its looks running through the load.
+
+The "before" builds above held a change to touch input as well, which was on the branch by accident. The waits were run again on Chrome 133 on builds without the fix, and on one with it merged with main. Each run started 45 s after the install, except the one with the fix and the first run at 4a18edd.
+
+| Build | `present` css | `present` text | `visible`, hidden | `visible`, shown | `absent` |
+|---|---|---|---|---|---|
+| 4a18edd, without the touch change | 4 of 10 | 1 of 10 | 0 of 5 | 5 of 5 | Not run |
+| Main at a8ed3f8, without the fix | 1 of 10 | 1 of 10 | 0 of 5 | 5 of 5 | Not run |
+| With the fix, on main at 87cae01 | 6 of 6 | 4 of 6 | 3 of 3 | 3 of 3 | 6 of 6 |
+
+So a wait without the fix could match by chance, when something else woke it, 1 to 2.3 s after the change at 4a18edd. What woke it was not looked into. `visible` on a hidden tab never matched, since a look there could not see the box. The two misses with the fix were `502` at set-up, as below.
 
 What Chrome did, the same on 133 and 145:
 
@@ -728,14 +788,13 @@ Through PhoneAPI on the larger page, on screen with rows changing, a wait for a 
 
 Seen while checking, and not changed:
 
-- On Chrome 133, 2 of about 90 waits failed `502` `cdp_error` `Could not open Chrome's DevTools socket`, one on the build before the change and one after it, the `present` text miss in the table. The next wait worked. Chrome 145 had none in about 90.
+- On Chrome 133, 2 of about 90 waits failed `502` `cdp_error` `Could not open Chrome's DevTools socket`, one on the build before the change and one after it, the `present` text miss in the first table. The next wait worked. Chrome 145 had none in about 90. In the runs after them, 4 of 42 failed the same way or with `DevTools closed the WebSocket`, two on a build with the fix and two without, all within about a minute of an install. The two runs that started 45 s after an install had none in 60. The cause is not known.
 - On Chrome 145, `PUT /json/new` fails with HTTP 500 `Could not create new page`. PhoneAPI's own tab calls work.
 - On Chrome 145, a tab opened while Chrome was behind the home screen reported `visible`, though Chrome wasn't drawing it, and showed no quads for a new node, as a hidden tab does.
 
 ### Still to check
 
 - The hidden-node taps through PhoneAPI on Chrome 109 and 133, whose commands were read only over DevTools, and on the phone's Chrome 156.
-- That `DOM.documentUpdated` comes before Chrome refuses a dropped node id on the phone's Chrome 156, as it does on Chrome 91, 109, 133, and 145. Without it, a lookup fails `cdp_error` as it did before `withNodeIds`, and a new call works.
 - A browser wait's limit on the Android 10 USB path.
 - That `DOM.getBoxModel` lays out a hidden tab on the phone's Chrome 156, and on Chrome 91 and 109, as it does on 133 and 145. Without it, a `visible` wait on a hidden tab doesn't match a new node, as it didn't before.
 - What a look costs on a phone. The times above are from an emulator on a faster CPU.
