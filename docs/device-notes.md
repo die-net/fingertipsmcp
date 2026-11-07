@@ -264,6 +264,8 @@ The Android 13 emulator showed the same thing on 2026-11-06. After one search, `
 
 `IAdbManager.getAdbWirelessPort()` does give it. `adb shell service call adb 10` on the Android 12 test phone returned 41609 while mDNS found nothing. It needs `MANAGE_DEBUGGING`, which the Shell package holds on Android 11, 12, and 13. The helper reached it on the Android 13, 16, and 17 emulators.
 
+A release build with the helper no longer exempt from R8, signed with the debug key, on the Android 16 emulator on 2026-11-06: the helper registered (protocol 7), `/v1/device` listed every capability, and a session's wake, `ui/snapshot` (a full launcher tree once UiAutomation had connected; the first snapshot before that connect came back with no windows), screenshot, injected tap, and clipboard listener registration all ran, with nothing about a missing class in logcat. A second launch for the same package logged "already running" and exited while the first, running as shell, kept the abstract name.
+
 ## Still to check on the phone
 
 - That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
