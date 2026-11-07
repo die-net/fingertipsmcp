@@ -139,7 +139,7 @@ class TextTyper(
             throw ApiException(
                 409,
                 "text_not_cleared",
-                "The field would not clear, so nothing was typed",
+                "The field would not clear, or PhoneAPI could not see it, so nothing was typed",
             )
         }
     }

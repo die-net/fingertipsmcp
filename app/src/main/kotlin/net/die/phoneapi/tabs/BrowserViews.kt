@@ -33,7 +33,10 @@ internal class SessionBrowser(
     private val holder: Holder.Session,
     private val related: (Holder.Session) -> Boolean,
 ) : BrowserService {
-    override suspend fun targets(): List<BrowserTarget> = tabs.visible(holder, base.targets())
+    override suspend fun targets(): List<BrowserTarget> {
+        tabs.sweep()
+        return tabs.visible(holder, base.targets())
+    }
 
     override suspend fun openTab(
         url: String,
@@ -53,7 +56,11 @@ internal class SessionBrowser(
     override suspend fun incognitoTabs(): Set<String> = emptySet()
 
     override suspend fun closeTab(id: String): ActionResult =
-        mine(id) { base.closeTab(id) }.also { tabs.closed(id) }
+        mine(id) {
+                tabs.requireOffPersonsScreen(id)
+                base.closeTab(id)
+            }
+            .also { tabs.closed(id) }
 
     override suspend fun activate(id: String) = mine(id) { base.activate(id) }
 
@@ -107,7 +114,7 @@ internal class SessionBrowser(
         input: BrowserInput? = null,
         block: suspend () -> T,
     ): T {
-        val value = mine(id, block)
+        val value = mine(id) { tabs.besidePerson(holder, id, block) }
         forward(id, input == BrowserInput.TOUCH)
         tabs.afterInput(holder)
         return value

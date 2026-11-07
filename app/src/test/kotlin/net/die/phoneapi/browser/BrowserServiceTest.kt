@@ -50,7 +50,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab`() {
-        val sockets = ArrayDeque(listOf(created(), committedPage()))
+        val sockets = ArrayDeque(listOf(created(), ownTarget(), committedPage()))
         val service =
             service(byteArrayOf(), sockets = CHROME, open = { socket(sockets.removeFirst()) })
         val target = virtual { service.openTab("https://example.com/") }
@@ -62,7 +62,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab behind`() {
-        val sockets = ArrayDeque(listOf(created(), committedPage()))
+        val sockets = ArrayDeque(listOf(created(), ownTarget(), committedPage()))
         val service =
             service(
                 byteArrayOf(),
@@ -516,6 +516,10 @@ class BrowserServiceTest {
     /** A browser socket's reply to `Target.createTarget`, for a tab with Chrome id [id]. */
     internal fun created(id: String = "abc"): ByteArray =
         switched() + serverTextFrame("""{"id":1,"result":{"targetId":"$id"}}""")
+
+    /** A new tab's own connection, naming the target `Target.getTargets` lists it under. */
+    internal fun ownTarget(id: String = "abc"): ByteArray =
+        switched() + serverTextFrame("""{"id":1,"result":{"targetInfo":{"targetId":"$id"}}}""")
 
     /** A new tab's page socket, through a navigation that commits at once. */
     internal fun committedPage(): ByteArray =

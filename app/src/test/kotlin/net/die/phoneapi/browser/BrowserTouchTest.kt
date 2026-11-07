@@ -145,6 +145,136 @@ class BrowserTouchTest {
         assertEquals(emptyList<String>(), launched)
     }
 
+    /** A tap's page socket, up to its element's box. */
+    private fun tapPage() =
+        harness.socket(
+            harness.switched() +
+                empty(1) +
+                harness.visibility(2, "visible") +
+                harness.serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
+                harness.serverTextFrame("""{"id":6,"result":{"nodeId":4}}""") +
+                empty(7) +
+                harness.serverTextFrame(harness.quad(8)) +
+                harness.serverTextFrame(harness.metrics(9))
+        )
+
+    private fun nodesOff() = ApiException(409, "page_nodes_off", "Chrome turned the nodes off")
+
+    @Test
+    fun `nodes off come back`() {
+        // Chrome turned the page's nodes off, with nothing over the page. Starting it undoes that.
+        val page = tapPage()
+        val launched = mutableListOf<String>()
+        val touched = mutableListOf<Rect>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = {
+                    if (launched.isEmpty()) throw nodesOff()
+                    Rect(0, 283, 1080, 2339)
+                },
+                showPackage = { launched += it },
+                touch = { hit, _ ->
+                    touched += hit
+                    ActionResult(ok = true, backend = "inject")
+                },
+            )
+        harness.virtual {
+            service.tap(TAB, BrowserTapRequest(selector = "a", humanize = false, waitMs = 0))
+        }
+        assertEquals(listOf("com.android.chrome"), launched)
+        assertEquals(1, touched.size)
+    }
+
+    @Test
+    fun `clear brings nodes back first`() {
+        // Clearing reads the field's node, so with the nodes off it would see no field at all.
+        val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
+        val order = mutableListOf<String>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = {
+                    if ("launch" !in order) throw nodesOff()
+                    Rect(0, 283, 1080, 2339)
+                },
+                showPackage = { order += "launch" },
+                type = {
+                    order += "type"
+                    ActionResult(ok = true, backend = "inject")
+                },
+            )
+        harness.virtual {
+            service.text(TAB, BrowserTextRequest(text = "hi", clear = true, input = TOUCH))
+        }
+        assertEquals(listOf("launch", "type"), order)
+    }
+
+    @Test
+    fun `plain typing needs no nodes`() {
+        // Keyboard keys are in the keyboard's window, so nothing is restarted for them.
+        val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
+        val launched = mutableListOf<String>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = { throw nodesOff() },
+                showPackage = { launched += it },
+                type = { ActionResult(ok = true, backend = "inject") },
+            )
+        harness.virtual { service.text(TAB, BrowserTextRequest(text = "hi", input = TOUCH)) }
+        assertEquals(emptyList<String>(), launched)
+    }
+
+    @Test
+    fun `nodes that stay off fail once`() {
+        val page = tapPage()
+        val launched = mutableListOf<String>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = { throw nodesOff() },
+                showPackage = { launched += it },
+            )
+        val error = harness.virtual {
+            harness.failure {
+                service.tap(TAB, BrowserTapRequest(selector = "a", humanize = false, waitMs = 0))
+            }
+        }
+        assertEquals("page_nodes_off", error)
+        assertEquals(listOf("com.android.chrome"), launched)
+    }
+
+    @Test
+    fun `a launch counts with nodes off`() {
+        // Chrome came forward for the key, and its page has no nodes. A key needs no box.
+        val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
+        var asks = 0
+        val launched = mutableListOf<String>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                inFront = { asks++ > 0 },
+                content = { throw nodesOff() },
+                showPackage = { launched += it },
+                press = { ActionResult(ok = true, backend = "inject") },
+            )
+        harness.virtual {
+            service.key(TAB, BrowserKeyRequest(key = "ENTER", input = BrowserInput.TOUCH))
+        }
+        assertEquals(listOf("com.android.chrome"), launched)
+    }
+
     @Test
     fun `unloaded tab reloads first`() {
         // Chrome reports the crash, so input fails with tab_reloaded and nothing is brought up.

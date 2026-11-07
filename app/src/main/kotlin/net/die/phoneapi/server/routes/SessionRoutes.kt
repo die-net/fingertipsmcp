@@ -41,7 +41,10 @@ fun Route.sessionRoutes(services: ServerServices, sessions: McpSessions) {
         }
     }
     scoped(Scope.ADMIN) {
-        get("/v1/sessions") { call.respond(sessions.list()) }
+        get("/v1/sessions") {
+            services.tabs.forgetClosed()
+            call.respond(sessions.list())
+        }
         delete("/v1/sessions/{hash}") {
             val hash = call.parameters["hash"] ?: throw ApiException.badRequest("hash required")
             if (!sessions.endByHash(hash)) throw ApiException.notFound("session $hash")

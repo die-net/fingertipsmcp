@@ -7,6 +7,7 @@ import java.util.LinkedHashMap
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -121,6 +122,7 @@ internal class BrowserServiceImpl(
     scope: CoroutineScope? = null,
 ) : BrowserService {
     private val axTrees = newAxCache()
+    private val probe = openProbe?.let { TabProbe(io, it, websocketKey) }
     private val privateTabs =
         IncognitoTabs(
             targets = { socket ->
@@ -131,7 +133,6 @@ internal class BrowserServiceImpl(
             openPrivateTab = openPrivateTab,
         )
     private val locator = ElementLocator(axTrees)
-    private val probe = openProbe?.let { TabProbe(io, it, websocketKey) }
     private val timers = scope?.let {
         TimerWatch(
             it,
@@ -178,7 +179,7 @@ internal class BrowserServiceImpl(
             gestureAt = gestureAt,
             pressKey = pressKey,
             typeText = typeText,
-            contentBounds = contentBounds,
+            contentBounds = ::pageBounds,
             appUp = { pkg -> appUp(pkg) },
             quads = locator::quads,
             focusNode = locator::focus,
@@ -309,8 +310,37 @@ internal class BrowserServiceImpl(
             useCdp(socket, "/devtools/browser") { cdp ->
                 cdp.call("Target.createTarget", buildJsonObject { put("url", url) })
             }
-        return created.decodeCdp<CreatedTarget>()?.targetId
-            ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
+        val given =
+            created.decodeCdp<CreatedTarget>()?.targetId
+                ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
+        var listed: String? = null
+        try {
+            return listedId(socket, given).also { listed = it }
+        } finally {
+            // No caller has its id yet, so an unowned tab would stay open for good.
+            if (listed == null) {
+                withContext(NonCancellable) { closeQuietly(browserTargetId(socket, given)) }
+            }
+        }
+    }
+
+    /**
+     * The id `Target.getTargets` lists the new tab [given] under. Chrome 109 answers
+     * `Target.createTarget` with the Android tab's number and lists the same tab by a hex id, and
+     * everything that compares ids, from who owns a tab to the startup sweep, needs one id per tab.
+     * A page's own connection names its target as the list does, and takes either id. A tab that
+     * has closed already keeps [given], for [TabOpener] to find it gone.
+     */
+    private suspend fun listedId(socket: String, given: String): String {
+        val info =
+            try {
+                usePage(socket, given) { it.call("Target.getTargetInfo") }
+            } catch (e: ApiException) {
+                if (e.error == "not_found") return given
+                throw e
+            }
+        return info.decodeCdp<OwnTarget>()?.targetInfo?.targetId
+            ?: throw ApiException(502, "cdp_error", "Chrome did not name a new tab's target")
     }
 
     override suspend fun navigate(id: String, url: String): BrowserTarget {
@@ -661,6 +691,23 @@ internal class BrowserServiceImpl(
     }
 
     /**
+     * Where [pkg]'s page is drawn. Chrome can turn off a page's accessibility nodes while it stays
+     * on screen, which only something like Chrome being started again undoes, as
+     * docs/device-notes.md records. So that one failure starts it, as tapping its icon would, and
+     * waits for the nodes. The page stays selected, and when the nodes do not come the failure says
+     * so. Chrome's timer is out of PhoneAPI's reach, since UiAutomation is no service it lists.
+     */
+    private suspend fun pageBounds(pkg: String?): Rect =
+        try {
+            contentBounds(pkg)
+        } catch (e: ApiException) {
+            if (e.error != "page_nodes_off" || pkg == null) throw e
+            showPackage(pkg)
+            settled(APPEAR_MS) { hasContent { contentBounds(pkg) } }
+            contentBounds(pkg)
+        }
+
+    /**
      * Chrome holds a touch for a hidden tab and plays it once Chrome shows, so a cdp touch is
      * refused up front rather than left to land later. [requireShowing] covers a background tab
      * while Chrome is on screen.
@@ -768,6 +815,10 @@ private fun nodeRef(ref: String): String {
 
 @Serializable private data class ClosedTarget(val success: Boolean? = null)
 
+@Serializable private data class OwnTarget(val targetInfo: OwnTargetInfo? = null)
+
+@Serializable private data class OwnTargetInfo(val targetId: String? = null)
+
 @Serializable private data class NavigateResult(val errorText: String? = null)
 
 internal const val AX_TREE_CACHE_CAP = 16
@@ -840,6 +891,6 @@ private suspend fun hasContent(bounds: suspend () -> Rect): Boolean =
         bounds()
         true
     } catch (e: ApiException) {
-        if (e.error != "content_unavailable") throw e
+        if (e.error != "content_unavailable" && e.error != "page_nodes_off") throw e
         false
     }
