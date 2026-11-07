@@ -16,7 +16,6 @@ import net.die.phoneapi.core.EventBus
 import net.die.phoneapi.core.PowerService
 import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.awaitDeviceState
-import net.die.phoneapi.core.settled
 import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.failureMessage
 import net.die.phoneapi.input.SwipeSpec
@@ -132,13 +131,18 @@ class PowerServiceImpl(
         return mutex.withLock { wakeIfOff() }
     }
 
-    /** Turns the screen on. A failed wake still lets the action run against a dark screen. */
+    /**
+     * Turns the screen on, or fails with `wake_failed`, so an action does not run against a dark
+     * screen that cannot take it.
+     */
     private suspend fun wakeIfOff(): Boolean {
         if (screenOn()) return false
         turnScreenOn()
-        val on = awaitScreenOn()
-        if (!on) Log.w(TAG, "Auto-wake did not turn the screen on")
-        return on
+        if (!awaitScreenOn()) {
+            Log.w(TAG, "Auto-wake did not turn the screen on")
+            throw wakeFailed()
+        }
+        return true
     }
 
     private fun screenOn(): Boolean = state.refresh().screen == ScreenState.ON
@@ -172,36 +176,46 @@ class PowerServiceImpl(
         return enterPin(pin)
     }
 
-    /** A lock screen with no credential only has to be swiped (or told) out of the way. */
+    /**
+     * A lock screen with no credential only has to be told out of the way. The helper's shell may
+     * dismiss it. Without the helper, the keyguard's own dismiss request from [WakeActivity] is all
+     * there is, and Android drops that activity start while PhoneAPI is in the background. Each
+     * says what failed rather than trying the next.
+     */
     private suspend fun dismissInsecure(): Attempt {
-        if (shell.isAvailable) {
-            val result = shell.exec(listOf("wm", "dismiss-keyguard"))
-            if (result.ok && awaitUnlocked())
-                return Attempt(ok = true, backend = "dismiss-keyguard")
+        if (!shell.isAvailable) {
+            WakeActivity.start(context, dismissKeyguard = true)
+            if (awaitUnlocked()) return Attempt(ok = true, backend = REQUEST_DISMISS)
+            return failedDismiss(
+                REQUEST_DISMISS,
+                "The lock screen stayed up. The shell helper is not running, and Android ignores " +
+                    "this app's request to dismiss it from the background.",
+            )
         }
-        WakeActivity.start(context, dismissKeyguard = true)
-        if (awaitUnlocked()) return Attempt(ok = true, backend = "requestDismissKeyguard")
-        swipeUp()
-        return if (awaitUnlocked()) {
-            Attempt(ok = true, backend = "swipe")
-        } else {
-            Attempt(ok = false, backend = "swipe", message = "The lock screen would not go away")
+        val result = shell.exec(listOf("wm", "dismiss-keyguard"))
+        if (!result.ok) {
+            return failedDismiss(
+                WM_DISMISS,
+                "wm dismiss-keyguard failed: ${result.failureMessage()}",
+            )
         }
+        if (awaitUnlocked()) return Attempt(ok = true, backend = WM_DISMISS)
+        return failedDismiss(WM_DISMISS, "The lock screen stayed up after wm dismiss-keyguard.")
+    }
+
+    private fun failedDismiss(backend: String, message: String): Attempt {
+        Log.w(TAG, "Unlock by $backend failed: $message")
+        return Attempt(ok = false, backend = backend, message = message)
     }
 
     private suspend fun enterPin(pin: String): Attempt {
-        var keypad = scanKeypad()
-        if (!keypad.covers(pin)) {
-            // On most devices the keypad sits behind the lock screen until it is swiped away.
-            revealBouncer()
-            settled(BOUNCER_WAIT_MS) {
-                keypad = scanKeypad()
-                keypad.covers(pin)
-            }
-        }
-        if (!keypad.covers(pin)) {
-            return Attempt(ok = false, message = NO_KEYPAD)
-        }
+        // On most devices the keypad sits behind the lock screen until it is swiped away.
+        if (!scanKeypad().covers(pin)) revealBouncer()
+        // A digit tapped while the keypad still slides in can miss, and a wrong PIN counts toward
+        // lockout, so the keys have to hold still first.
+        val keypad =
+            awaitSteadyKeypad(::scanKeypad, pin, BOUNCER_WAIT_MS)
+                ?: return Attempt(ok = false, message = NO_KEYPAD)
         for ((i, digit) in pin.withIndex()) {
             if (i > 0) delay(random.nextLong(MIN_DIGIT_GAP_MS, MAX_DIGIT_GAP_MS))
             if (!touch.tap(checkNotNull(keypad.digits[digit])).ok) {
@@ -256,6 +270,8 @@ class PowerServiceImpl(
 
     private companion object {
         const val TAG = "PhoneApiPower"
+        const val WM_DISMISS = "dismiss-keyguard"
+        const val REQUEST_DISMISS = "requestDismissKeyguard"
         const val ACCELEROMETER_ROTATION = "accelerometer_rotation"
         const val USER_ROTATION = "user_rotation"
         const val WAKE_WAIT_MS = 2_000L

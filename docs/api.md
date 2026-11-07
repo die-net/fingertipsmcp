@@ -117,7 +117,7 @@ Authenticated errors are JSON:
 | 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, or the PIN was rejected |
 | 409 | `no_keyboard` | `mode` `keyboard` and no on-screen keyboard keys were found, or the keyboard went away during typing and stayed away |
 | 409 | `no_editor` | Setting text with no text field focused, or a `selector` field that did not take focus after the tap, so nothing was typed |
-| 409 | `wake_failed` | The screen did not turn on |
+| 409 | `wake_failed` | The screen did not turn on, for a wake or the `autoWake` before an action |
 | 409 | `lock_failed` | The helper could not lock the screen |
 | 409 | `key_failed` | The helper did not deliver the key |
 | 409 | `gesture_cancelled` | The system cancelled an injected touch |
