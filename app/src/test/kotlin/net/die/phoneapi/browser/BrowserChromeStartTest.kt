@@ -15,7 +15,7 @@ class BrowserChromeStartTest {
     fun `opening starts chrome`() {
         val shown = mutableListOf<String>()
         val sockets =
-            ArrayDeque(listOf(harness.created(), harness.ownTarget(), harness.committedPage()))
+            ArrayDeque(listOf(harness.opened(), harness.ownTarget(), harness.committedPage()))
         val service =
             harness.service(
                 byteArrayOf(),

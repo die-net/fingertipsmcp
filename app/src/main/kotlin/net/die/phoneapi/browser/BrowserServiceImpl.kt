@@ -272,27 +272,31 @@ internal class BrowserServiceImpl(
             )
         val remembered = if (incognito) null else opener.remembered(tab, created)
         if (remembered != null) return remembered
-        // The tab opens blank and loads after, so what Chrome does with the URL comes to a session
-        // already listening, and recording can start before the load. A tab opened on its URL can
-        // save it before anyone is. The blank page stays in the tab's history, so the page sees
-        // history.length 2, as it does after a person types a URL into a new tab.
+        // Recording has to start before the page loads, so the tab opens blank and loads after.
+        // The blank page stays in the tab's history, so the page sees history.length 2, not 1.
         val recording = capture && pageUrl != BLANK
-        val chromeId =
-            if (incognito) {
+        fun hook(id: String): suspend (String) -> Unit = {
+            created(it)
+            // A stand-in holds PhoneAPI's own page, so it has no responses to record.
+            if (recording && it == id) capture(it, on = true)
+        }
+        if (incognito) {
+            val chromeId =
                 privateTabs.open(chrome, browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE)
-            } else {
-                createTab(chrome.name, BLANK)
+            val id = browserTargetId(chrome.name, chromeId)
+            // An incognito tab opens on Chrome's new tab page, so it loads the page after too.
+            return opener.follow(tab.copy(id = id), true, true, NO_SAVE, hook(id))
+        }
+        // A tab opens on its URL, since Chrome opens a PDF it saved in another app, taking the
+        // screen, when a tab navigated to it, and not when a new tab opened on it. So the save is
+        // heard on the browser session, which is listening before the tab exists.
+        return useCdp(chrome.name, "/devtools/browser") { cdp ->
+            withTabSaves(cdp, { newTab(cdp, if (recording) BLANK else pageUrl) }) { given, saves ->
+                val chromeId = listedTab(chrome.name, given)
+                val id = browserTargetId(chrome.name, chromeId)
+                opener.follow(tab.copy(id = id), recording, false, saves.forTab(chromeId), hook(id))
             }
-        val id = browserTargetId(chrome.name, chromeId)
-        return opener.follow(
-            tab.copy(id = id),
-            incognito,
-            created = {
-                created(it)
-                // A stand-in holds PhoneAPI's own page, so it has no responses to record.
-                if (recording && it == id) capture(it, on = true)
-            },
-        )
+        }
     }
 
     override fun awaitingPage(id: String): Boolean = opener.awaitingPage(id)
@@ -305,14 +309,17 @@ internal class BrowserServiceImpl(
 
     override suspend fun chromeStopped(): Boolean = noChromeSocket(::socketList)
 
-    private suspend fun createTab(socket: String, url: String): String {
-        val created =
-            useCdp(socket, "/devtools/browser") { cdp ->
-                cdp.call("Target.createTarget", buildJsonObject { put("url", url) })
-            }
-        val given =
-            created.decodeCdp<CreatedTarget>()?.targetId
-                ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
+    private suspend fun createTab(socket: String, url: String): String =
+        listedTab(socket, useCdp(socket, "/devtools/browser") { cdp -> newTab(cdp, url) })
+
+    /** Opens a tab on [cdp], a session on the browser, and returns the id Chrome answers with. */
+    private suspend fun newTab(cdp: CdpSession, url: String): String =
+        cdp.call("Target.createTarget", buildJsonObject { put("url", url) })
+            .decodeCdp<CreatedTarget>()
+            ?.targetId ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
+
+    /** The id Chrome lists the new tab [given] under, closing the tab if that can't be had. */
+    private suspend fun listedTab(socket: String, given: String): String {
         var listed: String? = null
         try {
             return listedId(socket, given).also { listed = it }

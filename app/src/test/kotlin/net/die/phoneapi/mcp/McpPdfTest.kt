@@ -39,7 +39,7 @@ class McpPdfTest {
         apiClient().use { http ->
             val read = call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
             assertTrue(read.contains("# opened target=$SECOND"), read)
-            assertTrue(read.contains("saves this PDF to Downloads"), read)
+            assertTrue(read.contains("does not show this PDF"), read)
             assertTrue(read.contains("pdf text"), read)
             assertFalse(read.contains("isError\":true"), read)
         }
