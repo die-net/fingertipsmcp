@@ -104,11 +104,7 @@ class BrowserShownTest {
         val result = harness.virtual { service.read(TAB, BrowserReadRequest(show = true)) }
         assertEquals(true, woke)
         assertEquals("", launched)
-        // Replies are queued before the commands, so the socket can close before the last
-        // commands are written. bringToFront is the first, so it is always there.
-        val sent = shown.methods()
-        assertEquals("Page.bringToFront", sent.first())
-        assertEquals(1, sent.count { it == "Page.bringToFront" })
+        assertEquals(ONE_PICK, shown.methods())
         assertEquals(true, result.shown)
     }
 
@@ -129,7 +125,7 @@ class BrowserShownTest {
             )
         harness.virtual { service.snapshot(TAB, BrowserSnapshotOptions(show = true)) }
         assertEquals("com.android.chrome", launched)
-        assertEquals("Page.bringToFront", shown.methods().first())
+        assertEquals(ONE_PICK, shown.methods())
     }
 
     @Test
@@ -234,5 +230,11 @@ class BrowserShownTest {
 
     private companion object {
         const val TAB = "chrome_devtools_remote~abc"
+
+        /** One script run in an isolated world: the frame, the world, the evaluation. */
+        val IN_WORLD = listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate")
+
+        /** One pick that holds: select, check, wait for the text, check again. */
+        val ONE_PICK = listOf("Page.bringToFront") + IN_WORLD + IN_WORLD + IN_WORLD
     }
 }
