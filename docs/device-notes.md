@@ -97,6 +97,24 @@ Holding Chrome's Custom Tabs binding was checked on the Android 16 emulator, wit
 
 On the phone on 2026-10-22, PhoneAPI held the binding (`chromeKept`).
 
+## Starting activities
+
+`am start` exits 0 when Android refuses an intent, and prints the result code as text. So the helper makes the call `am` makes, on `IActivityTaskManager`, and PhoneAPI decides from the code: `startActivityAndWait` when a call needs to know what took the intent, as `am start -W` does, and `startActivity` otherwise.
+
+Read from `framework.jar` on the emulators on 2026-11-06:
+
+- `startActivityAndWait` takes `(IApplicationThread, String, Intent, String, IBinder, String, int, int, ProfilerInfo, Bundle, int)` on Android 10. Android 13, 16, and 17 add a `String`, the calling feature id, after the calling package. `startActivity` is the same without the last `int`, the user. The helper places the arguments by their types.
+- The `ActivityManager.START_*` codes PhoneAPI uses had the same values on all four: `START_SUCCESS` 0, `START_RETURN_INTENT_TO_CALLER` 1, `START_TASK_TO_FRONT` 2, `START_DELIVERED_TO_TOP` 3, `START_SWITCHES_CANCELED` 100, `START_INTENT_NOT_RESOLVED` -91, `START_CLASS_NOT_FOUND` -92, `START_PERMISSION_DENIED` -94. The SDK hides them, so PhoneAPI has its own copies.
+
+Run through `POST /v1/intents` and `POST /v1/apps/{pkg}/launch` on the Android 10, 13, and 17 emulators the same day:
+
+- An intent nothing handles gave -91 and a missing class -92, both as `not_found`. Categories, extras, and flags reached the activity.
+- A component that is not exported gets no code. Android throws `SecurityException`, `Permission Denial: starting Intent { … } not exported from uid …`, and the helper reports that as `START_PERMISSION_DENIED` with the exception's message.
+- A `VIEW` for Chrome on Android 10 gave `START_TASK_TO_FRONT` with Chrome already open, which goes back to the client as a warning, as it did from `am`.
+- A chooser has no code. `android.intent.action.WEB_SEARCH`, which has two handlers on the Android 17 image, gave 0 with `android/com.android.internal.app.ResolverActivity` as the activity that took it, the same as `am start -W` printed. So that name is the only sign of a chooser, and PhoneAPI matches it, and `ChooserActivity`, as text.
+- The wait lasts as long as the launch. A cold start of Settings returned about 0.5 s after Android logged `Displayed`, at 0.7 to 1.6 s, and the first one after a boot took 5 s.
+- Without the wait, `startActivity` started Chrome's launcher entry for a tab open with Chrome stopped, on all three.
+
 ## Incognito tabs
 
 DevTools cannot open an incognito tab. Chrome on Android fails `Target.createBrowserContext`, and opens a normal tab when `Target.createTarget` names the incognito tabs' `browserContextId`. So PhoneAPI starts Chrome's "New Incognito tab" shortcut instead, as [sharing.md](sharing.md#incognito-tabs) describes.
@@ -388,5 +406,6 @@ From the 2026-11-06 audit fixes, what the emulators could not settle. The rest w
 - UiAutomation idling out after the app process is killed and restarted, as under [UiAutomation](#uiautomation).
 - The `_adb-tls-pairing` record's name on Android 11.
 - `chrome-input-check` on Android 11 and a newer phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
-- Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that `am start -W` reports `com.android.chrome` in its `Activity:` line for a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
+- Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
 - Opening a tab (none of this has run on a device): `Page.enable` and `Page.getFrameTree` on a page socket right after `Target.createTarget`, with the frame on `about:blank` until the commit and `Page.frameNavigated` sent for it, and with the first frame's `url` not empty. `Page.downloadWillBegin` on Chrome for Android: whether it is sent to a page session at all, for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
+- Starting activities, as [Starting activities](#starting-activities) describes: all of it on Android 11, whose signature was not read, and on any phone, since an OEM can change this interface; the wait running out at 20 s, which no emulator reached; an incognito open, whose start runs only on a Chrome that reports a tab's profile (Chrome 91 and 109 stop before it, with `Chrome did not say which profile a new tab is in`).

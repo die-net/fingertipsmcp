@@ -1,6 +1,7 @@
 package net.die.phoneapi.helper
 
 import android.content.ClipData
+import android.content.Intent
 import android.os.Binder
 import android.os.ParcelFileDescriptor
 import android.os.Process
@@ -11,6 +12,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import java.io.File
+import net.die.phoneapi.helper.compat.ActivityStarter
 import net.die.phoneapi.helper.compat.AdbPort
 import net.die.phoneapi.helper.compat.AudioTap
 import net.die.phoneapi.helper.compat.InputInjector
@@ -28,6 +30,7 @@ internal open class HelperImpl : IHelper.Stub() {
     @Volatile private var treeClient: ITreeClient? = null
     private val tree by lazy { TreeHost { treeClient } }
     private val topTask by lazy { TopTask() }
+    private val activities by lazy { ActivityStarter() }
     private val clipboard by lazy { ShellClipboard() }
 
     /**
@@ -122,6 +125,9 @@ internal open class HelperImpl : IHelper.Stub() {
         privileged("tree") { tree.call(op, payload) }
 
     override fun topPackage(): String? = privileged("topTask") { topTask.packageName() }
+
+    override fun startActivity(intent: Intent, timeoutMs: Long): StartResult =
+        privileged("startActivity") { activities.start(intent, timeoutMs) }
 
     override fun primaryClip(): ClipData? = privileged("clip") { clipboard.primaryClip() }
 

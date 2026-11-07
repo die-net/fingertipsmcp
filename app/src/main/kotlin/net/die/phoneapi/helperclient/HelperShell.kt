@@ -1,8 +1,10 @@
 package net.die.phoneapi.helperclient
 
+import android.content.Intent
 import android.os.RemoteException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import net.die.phoneapi.apps.ActivityStart
 import net.die.phoneapi.helper.ShellResult as HelperShellResult
 import net.die.phoneapi.model.ApiException
 
@@ -56,6 +58,32 @@ class HelperShell(
                 }
             }
         return delivered.toShellResult()
+    }
+
+    /**
+     * Starts [intent] as the shell user, which may start activities from the background. With a
+     * [waitMs], waits up to that long for it to be drawn, and the result names what took it. Throws
+     * `503 helper_unavailable` when the helper isn't running, or `503 helper_error`, as when this
+     * Android lacks the call.
+     */
+    internal suspend fun startActivity(intent: Intent, waitMs: Long = 0): ActivityStart {
+        val proxy = helper.require()
+        val started =
+            withContext(dispatcher) {
+                try {
+                    proxy.startActivity(intent, waitMs)
+                } catch (e: RemoteException) {
+                    throw helperError("The start did not run: ${e.message.orEmpty()}", e)
+                } catch (e: IllegalStateException) {
+                    throw helperError("The start did not run: ${e.message.orEmpty()}", e)
+                }
+            }
+        return ActivityStart(
+            code = started.code,
+            activity = started.activity,
+            timedOut = started.timedOut,
+            refusal = started.refusal,
+        )
     }
 
     private companion object {
