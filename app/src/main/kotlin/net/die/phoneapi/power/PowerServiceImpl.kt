@@ -18,6 +18,7 @@ import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.failureMessage
+import net.die.phoneapi.input.GESTURE_CANCELLED
 import net.die.phoneapi.input.SwipeSpec
 import net.die.phoneapi.input.TouchInput
 import net.die.phoneapi.model.ActionResult
@@ -57,7 +58,7 @@ class PowerServiceImpl(
     private val pinEntry =
         PinEntry(
             read = ::scanKeypad,
-            tap = { touch.tap(it).ok },
+            tap = { went { touch.tap(it) } },
             reveal = ::revealBouncer,
             pause = { delay(random.nextLong(MIN_KEY_GAP_MS, MAX_KEY_GAP_MS)) },
         )
@@ -241,8 +242,19 @@ class PowerServiceImpl(
         val x = screen.widthPx / 2f
         val from = Point(x, screen.heightPx * SWIPE_FROM)
         val to = Point(x, screen.heightPx * SWIPE_TO)
-        touch.swipe(from, to, SwipeSpec(durationMs = SWIPE_MS, fling = true))
+        // A swipe the system cancelled leaves the keyguard up, which the caller reads for itself.
+        went { touch.swipe(from, to, SwipeSpec(durationMs = SWIPE_MS, fling = true)) }
     }
+
+    /** Whether [touching] got through, since an unlock has its own answer to a cancelled touch. */
+    private suspend fun went(touching: suspend () -> Unit): Boolean =
+        try {
+            touching()
+            true
+        } catch (e: ApiException) {
+            if (e.error != GESTURE_CANCELLED) throw e
+            false
+        }
 
     private fun wakeFailed() =
         ApiException(

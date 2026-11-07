@@ -362,10 +362,7 @@ internal class PageInput(
                 val rect =
                     screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
                 // Humanized like any other touch: the request has no switch for it.
-                val tapped = touchAt(rect, true)
-                if (!tapped.ok) {
-                    throw ApiException(409, "gesture_cancelled", "The system cancelled the touch")
-                }
+                touchAt(rect, true)
             }
             BrowserInput.CDP,
             BrowserInput.CDP_MOUSE -> focusNode(cdp, id, focus)

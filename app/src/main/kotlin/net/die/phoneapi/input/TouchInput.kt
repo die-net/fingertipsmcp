@@ -4,17 +4,48 @@ import android.view.ViewConfiguration
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.channels.ReceiveChannel
+import net.die.phoneapi.model.ActionResult
+import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DisplayInfo
 import net.die.phoneapi.model.Point
 import net.die.phoneapi.model.PointerFrame
 import net.die.phoneapi.model.Rect
 import net.die.phoneapi.model.TimedPoint
 
-data class TouchOutcome(val ok: Boolean, val backend: String, val points: List<Point>)
+/** The error of a touch the system cancelled. */
+internal const val GESTURE_CANCELLED = "gesture_cancelled"
 
-/** Humanized touches injected through the helper. */
-class TouchInput(
-    private val inject: InjectTouchBackend,
+/** A touch that went through, and where it landed. */
+data class TouchOutcome(val backend: String, val points: List<Point>)
+
+/** What a call that made this touch answers. */
+fun TouchOutcome.asResult() = ActionResult(ok = true, backend = backend, points = points)
+
+/** What [TouchInput] needs to put a touch on the screen. */
+internal interface TouchInjector {
+    val name: String
+
+    /** Injects [pointers] on their schedule, and gives false if the system cancelled them. */
+    suspend fun shapedPerform(
+        pointers: List<List<TimedPoint>>,
+        fingers: List<List<FingerShape>>,
+    ): Boolean
+
+    /** Injects one gesture as [frames] arrive. */
+    suspend fun playLive(
+        first: PointerFrame,
+        frames: ReceiveChannel<PointerFrame>,
+        clamp: (PointerFrame) -> PointerFrame,
+    )
+}
+
+/**
+ * Humanized touches injected through the helper. Every touch that the system cancels fails 409
+ * [GESTURE_CANCELLED] here, so no caller can report it as done.
+ */
+class TouchInput
+internal constructor(
+    private val inject: TouchInjector,
     private val humanizer: Humanizer,
     private val display: () -> DisplayInfo,
 ) {
@@ -81,12 +112,14 @@ class TouchInput(
         within: Rect? = null,
     ): TouchOutcome {
         val clamped = clampPoints(pointers, display(), within)
-        val ok = inject.shapedPerform(clamped, fingers)
+        if (!inject.shapedPerform(clamped, fingers)) {
+            throw ApiException(409, GESTURE_CANCELLED, "The system cancelled the touch")
+        }
         val reported = clamped.flatMap { path ->
             if (withEnds && path.size > 1) listOf(path.first(), path.last())
             else listOf(path.first())
         }
-        return TouchOutcome(ok, inject.name, reported.map { Point(it.x, it.y) })
+        return TouchOutcome(inject.name, reported.map { Point(it.x, it.y) })
     }
 
     private companion object {

@@ -63,12 +63,11 @@ import net.die.phoneapi.input.InjectKeyBackend
 import net.die.phoneapi.input.InjectTouchBackend
 import net.die.phoneapi.input.InputServiceImpl
 import net.die.phoneapi.input.TouchInput
-import net.die.phoneapi.input.TouchOutcome
+import net.die.phoneapi.input.asResult
 import net.die.phoneapi.lease.ForegroundWatch
 import net.die.phoneapi.lease.ScreenCleanup
 import net.die.phoneapi.lease.ScreenLease
 import net.die.phoneapi.mcp.McpSessions
-import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.EventTypes
 import net.die.phoneapi.model.HelperStatus
@@ -324,14 +323,6 @@ class AppGraph(
             usbDevtools.open(name, readTimeoutMs)
         }
 
-    private fun touched(outcome: TouchOutcome) =
-        ActionResult(
-            ok = outcome.ok,
-            backend = outcome.backend,
-            points = outcome.points,
-            message = if (outcome.ok) null else "The system cancelled the gesture",
-        )
-
     /**
      * Screen on, keyguard down, and [pkg]'s task is on top, even with no web content showing, such
      * as Chrome's start screen. Asks the helper, since foregroundPackage can be stale.
@@ -417,13 +408,10 @@ class AppGraph(
             openProbe = { name -> openDevtools(name, TabProbe.PROBE_MS) },
             openCapture = { name -> openDevtools(name, 0) },
             contentBounds = { pkg -> tree.contentBounds(pkg.orEmpty()) },
-            touchAt = { rect, humanize ->
-                val outcome = touch.tap(rect, humanize = humanize)
-                touched(outcome)
-            },
-            swipeAt = { from, to, spec, page -> touched(touch.swipe(from, to, spec, page)) },
+            touchAt = { rect, humanize -> touch.tap(rect, humanize = humanize).asResult() },
+            swipeAt = { from, to, spec, page -> touch.swipe(from, to, spec, page).asResult() },
             gestureAt = { pointers, humanize, page ->
-                touched(touch.gesture(pointers, humanize, page))
+                touch.gesture(pointers, humanize, page).asResult()
             },
             pressKey = { request -> input.key(request) },
             typeText = { request -> input.text(request) },

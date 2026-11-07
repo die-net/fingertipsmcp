@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.StateFlow
 import net.die.phoneapi.core.UiService
 import net.die.phoneapi.helper.tree.ActionNames
 import net.die.phoneapi.input.TouchInput
+import net.die.phoneapi.input.asResult
 import net.die.phoneapi.model.ActionMode
 import net.die.phoneapi.model.ActionResult
 import net.die.phoneapi.model.ApiException
@@ -39,19 +40,17 @@ class HelperUiService(
         val click = action.equals(ActionNames.CLICK, ignoreCase = true)
         val longClick = action.equals(ActionNames.LONG_CLICK, ignoreCase = true)
         val result =
-            if (request.mode == ActionMode.REAL && (click || longClick)) {
-                val target = tree.touchTarget(ref, request.force)
-                val outcome = if (click) touch.tap(target) else touch.longPress(target)
-                ActionResult(
-                    ok = outcome.ok,
-                    backend = outcome.backend,
-                    points = outcome.points,
-                    message = if (outcome.ok) null else "The system cancelled the gesture",
-                )
-            } else {
-                tree.act(ref, action, request.text)
+            try {
+                if (request.mode == ActionMode.REAL && (click || longClick)) {
+                    val target = tree.touchTarget(ref, request.force)
+                    (if (click) touch.tap(target) else touch.longPress(target)).asResult()
+                } else {
+                    tree.act(ref, action, request.text)
+                }
+            } finally {
+                // A touch the system cancelled partway may still have changed the screen.
+                tree.invalidate()
             }
-        tree.invalidate()
         return result.copy(woke = woke, seq = seq.value)
     }
 }

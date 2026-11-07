@@ -21,11 +21,11 @@ import net.die.phoneapi.model.TimedPoint
  * Touches through the helper's `InputManager.injectInputEvent`, stamped with the real touchscreen
  * so they are not accessibility gestures.
  */
-class InjectTouchBackend(
+internal class InjectTouchBackend(
     private val helper: HelperConnection,
     private val io: CoroutineContext,
-) {
-    val name = "inject"
+) : TouchInjector {
+    override val name = "inject"
 
     /** The touchscreen axes. CDP maps the same finger fractions through them. */
     internal suspend fun touchscreen(): TouchscreenInfo {
@@ -48,7 +48,7 @@ class InjectTouchBackend(
      * Injects [pointers] on their schedule. A touch still down when this ends early, as when the
      * call is cancelled or a person takes the screen over, is cancelled, as [playLive] does.
      */
-    internal suspend fun shapedPerform(
+    override suspend fun shapedPerform(
         pointers: List<List<TimedPoint>>,
         fingers: List<List<FingerShape>>,
     ): Boolean = gestures.withLock {
@@ -76,10 +76,10 @@ class InjectTouchBackend(
      * or the gesture is cancelled. Closing [frames], or cancelling this coroutine, injects
      * `ACTION_CANCEL` while a contact is still down so the touch is released.
      */
-    suspend fun playLive(
+    override suspend fun playLive(
         first: PointerFrame,
         frames: ReceiveChannel<PointerFrame>,
-        clamp: (PointerFrame) -> PointerFrame = { it },
+        clamp: (PointerFrame) -> PointerFrame,
     ) {
         gestures.withLock {
             val proxy = helper.require()
