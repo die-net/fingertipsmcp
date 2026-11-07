@@ -811,7 +811,7 @@ internal const val AX_TREE_CACHE_CAP = 16
 internal val TOUCH_INPUTS = setOf(BrowserInput.TOUCH, BrowserInput.AUTO)
 
 /** A snapshot's accessibility tree, and the loader id of the document it read. */
-internal class AxSnapshot(val tree: JsonObject, val loaderId: String?)
+internal data class AxSnapshot(val tree: JsonObject, val loaderId: String?)
 
 /** The last accessibility tree of each target, at most [cap] of them, oldest dropped first. */
 internal class AxTreeCache(cap: Int) {

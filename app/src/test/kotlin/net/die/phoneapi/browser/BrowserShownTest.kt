@@ -179,7 +179,7 @@ class BrowserShownTest {
     }
 
     @Test
-    fun `a tab that does not answer may be showing`() {
+    fun `silent tab may be showing`() {
         // A busy page, or one a dialog holds, answers nothing: that is not "not showing".
         val service = harness.service(harness.switched(), sockets = BrowserServiceTest.CHROME)
         assertNull(harness.virtual { service.showing(TAB) })

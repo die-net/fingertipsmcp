@@ -137,7 +137,7 @@ class NetworkCaptureTest {
         }
 
     @Test
-    fun `a broken session is not a missing body`() {
+    fun `broken session is no lost body`() {
         // The answer to the body request breaks the session, as a dropped socket does: that is not
         // Chrome saying it no longer has the body.
         val page =
@@ -191,7 +191,7 @@ class NetworkCaptureTest {
         }
 
     @Test
-    fun `records a burst while its scope is busy`() {
+    fun `records a burst while busy`() {
         // More events in a row than the session's event flow replays. The capture's own scope
         // does not run until the end, as when its threads are busy, so only recording on the
         // session's reader sees them all.
@@ -205,7 +205,7 @@ class NetworkCaptureTest {
         val page = harness.socket(harness.switched() + reply(1, "{}") + burst + reply(2, "{}"))
         val held = StandardTestDispatcher()
         lateinit var opened: PageLink
-        val capture = NetworkCapture(CoroutineScope(held), { link(page).also { opened = it } })
+        val capture = NetworkCapture(CoroutineScope(held), { _ -> link(page).also { opened = it } })
         harness.clock.run {
             capture.start(TAB)
             // Its reply comes after the burst, so the reader has handled every event by then.

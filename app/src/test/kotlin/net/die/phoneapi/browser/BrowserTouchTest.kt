@@ -49,7 +49,7 @@ class BrowserTouchTest {
     }
 
     @Test
-    fun `the tap that focuses a field is humanized`() {
+    fun `focusing tap is humanized`() {
         val page =
             harness.socket(
                 harness.switched() +
@@ -81,7 +81,7 @@ class BrowserTouchTest {
     }
 
     @Test
-    fun `touch input wakes only when asked`() {
+    fun `touch wakes only when asked`() {
         val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
         val wakes = mutableListOf<Boolean>()
         val service =
@@ -106,7 +106,7 @@ class BrowserTouchTest {
     }
 
     @Test
-    fun `a covered page is not relaunched`() {
+    fun `covered page is not relaunched`() {
         // Chrome is in front, but a menu covers its page, so there is no content to tap.
         val page =
             harness.socket(
@@ -146,7 +146,7 @@ class BrowserTouchTest {
     }
 
     @Test
-    fun `an unloaded tab reloads before it comes forward`() {
+    fun `unloaded tab reloads first`() {
         // Chrome reports the crash, so input fails with tab_reloaded and nothing is brought up.
         val page =
             harness.socket(

@@ -75,7 +75,7 @@ class PageInputTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes the socket it opens.
-    fun `cdp swipe needs the touchscreen's axes`() {
+    fun `cdp swipe needs touch axes`() {
         // Without the helper there are no axes to size the contact by, so nothing is sent.
         val page =
             harness.socket(

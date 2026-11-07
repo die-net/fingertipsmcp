@@ -35,7 +35,7 @@ class BrowserRefTest {
     }
 
     @Test
-    fun `a ref from another document is stale`() {
+    fun `ref from new document is stale`() {
         // A tap or script navigated the tab since the snapshot, so the node id may name another
         // element now.
         val tap = harness.socket(forward() + harness.frameTree(5, loader = "L2"))
@@ -49,7 +49,7 @@ class BrowserRefTest {
     }
 
     @Test
-    fun `a ref whose node has gone is stale`() {
+    fun `ref to gone node is stale`() {
         val tap =
             harness.socket(
                 forward() +

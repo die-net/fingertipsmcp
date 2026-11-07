@@ -15,11 +15,12 @@ import org.junit.jupiter.api.Test
 
 /** When the adbd DevTools socket closes itself. */
 @OptIn(ExperimentalCoroutinesApi::class) // The virtual clock is moved by hand.
+@Suppress("MissingUseCall") // Each test closes its socket by hand, to see what closing does.
 class AdbDevtoolsSocketTest {
     private var released = 0
 
     @Test
-    fun `an answering peer keeps the socket`() = runTest {
+    fun `answering peer keeps socket`() = runTest {
         val socket = socket(byteArrayOf(1, 2, 3))
         assertEquals(1, socket.input.read())
         // Far past the answer timeout, as a 30 s tap wait or a long cdp gesture runs.

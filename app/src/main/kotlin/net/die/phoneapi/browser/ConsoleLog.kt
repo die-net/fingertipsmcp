@@ -17,8 +17,8 @@ import net.die.phoneapi.model.ConsoleResult
 internal suspend fun collectLogs(session: CdpSession, timeoutMs: Long): ConsoleResult {
     val entries = Collections.synchronizedList(mutableListOf<Pair<Long, ConsoleEntry>>())
     session
-        .listen { event -> logEntry(event)?.let { entries += event.seq to it } }
-        .use {
+        .listen { event -> logEntry(event)?.let { entry -> entries += event.seq to entry } }
+        .use { _ ->
             session.call("Runtime.enable")
             val replayed = session.callCounted("Log.enable").eventsBefore
             delay(timeoutMs)
