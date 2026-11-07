@@ -15,11 +15,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.WaitRequest
@@ -106,7 +106,6 @@ class McpSessionTest {
             val id = initialize(http, alice)
             val deleted = http.delete("/mcp") { headers(alice, id) }
             assertEquals(HttpStatusCode.OK, deleted.status)
-            settle { ended.isNotEmpty() }
             assertEquals(listOf(id), ended)
             val after = rpc(http, alice, id, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""")
             assertEquals(HttpStatusCode.NotFound, after.status)
@@ -261,10 +260,13 @@ class McpSessionTest {
 
     @Test
     fun `a call cut off ends cleanly`() = testApplication {
+        val waiting = CompletableDeferred<Unit>()
         val hanging =
             object : WaitService {
-                override suspend fun wait(request: WaitRequest, scopes: Set<Scope>): WaitResult =
+                override suspend fun wait(request: WaitRequest, scopes: Set<Scope>): WaitResult {
+                    waiting.complete(Unit)
                     awaitCancellation()
+                }
             }
         start(services = api.services.copy(waits = hanging))
         apiClient().use { http ->
@@ -279,7 +281,7 @@ class McpSessionTest {
                             """"arguments":{"all":[{"type":"ime","visible":true}]}}}""",
                     )
                 }
-                delay(300)
+                waiting.await()
                 http.delete("/mcp") { headers(alice, id) }
                 call.await()
             }
@@ -316,13 +318,6 @@ class McpSessionTest {
         header(HttpHeaders.Accept, "application/json, text/event-stream")
         header("MCP-Protocol-Version", "2025-06-18")
         if (id != null) header("Mcp-Session-Id", id)
-    }
-
-    private suspend fun settle(done: () -> Boolean) {
-        repeat(50) {
-            if (done()) return
-            delay(20)
-        }
     }
 
     private companion object {
