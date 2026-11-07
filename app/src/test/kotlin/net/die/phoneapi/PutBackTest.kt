@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 
 class PutBackTest {
     @Test
-    fun `goes home only when am start fails`() = runTest {
+    fun `goes home when am start fails`() = runTest {
         var home = 0
         // A component whose name holds "Error" started fine.
         val started = "Starting: Intent { cmp=com.x/.ErrorScreen }"

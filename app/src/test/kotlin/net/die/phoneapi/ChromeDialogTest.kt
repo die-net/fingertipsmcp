@@ -41,7 +41,7 @@ class ChromeDialogTest {
         )
 
     @Test
-    fun `a dark or locked screen is not read`() = runTest {
+    fun `a dark screen is not read`() = runTest {
         val dialog = check(StandardTestDispatcher(testScheduler))
         screen = ScreenState.OFF
         assertNull(dialog.shown("example.com"))

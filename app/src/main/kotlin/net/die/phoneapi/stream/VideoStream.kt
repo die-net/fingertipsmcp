@@ -157,11 +157,15 @@ internal class VideoStream(
     }
 
     /**
-     * Rebuilds for each change the display listener reports. DisplayManagerGlobal refreshes the
-     * display's info before it calls listeners, so [display] already reads the new size.
+     * Rebuilds for each change the display listener reports. As read in AOSP, not measured,
+     * DisplayManagerGlobal drops its cached display info before it calls listeners, so [display]
+     * already reads the new size.
      */
     private suspend fun watchDisplay() {
-        for (change in displayChanges) reconfigureIfNeeded()
+        while (true) {
+            displayChanges.receive()
+            reconfigureIfNeeded()
+        }
     }
 
     private suspend fun reconfigureIfNeeded() {

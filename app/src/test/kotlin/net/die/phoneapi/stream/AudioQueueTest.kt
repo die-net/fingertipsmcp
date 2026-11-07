@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 class AudioQueueTest {
     /** A viewer that stalls before it reads the config would otherwise never decode. */
     @Test
-    fun `a stalled viewer keeps the config`() = runTest {
+    fun `a stalled viewer keeps config`() = runTest {
         val queue = AudioQueue(capacity = 2)
         queue.offer(packFrame(FRAME_CONFIG, 0, byteArrayOf(9)))
         for (pts in 1L..5L) queue.offer(packFrame(FRAME_DELTA, pts, byteArrayOf(pts.toByte())))
@@ -19,7 +19,7 @@ class AudioQueueTest {
     }
 
     @Test
-    fun `a config goes before packets queued ahead of it`() = runTest {
+    fun `config goes before packets`() = runTest {
         val queue = AudioQueue(capacity = 4)
         queue.offer(packFrame(FRAME_DELTA, 1, byteArrayOf(1)))
         queue.offer(packFrame(FRAME_CONFIG, 0, byteArrayOf(9)))

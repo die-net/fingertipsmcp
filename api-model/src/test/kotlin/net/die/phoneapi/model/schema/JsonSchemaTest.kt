@@ -114,7 +114,7 @@ class JsonSchemaTest {
     }
 
     @Test
-    fun `merged classes share one object`() {
+    fun `classes merge into one object`() {
         val schemas = JsonSchemas()
         val schema =
             schemas.merged(listOf(serializer<Named>().descriptor, serializer<Nest>().descriptor))
