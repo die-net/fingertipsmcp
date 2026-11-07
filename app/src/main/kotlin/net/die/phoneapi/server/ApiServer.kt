@@ -15,7 +15,9 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
+import java.io.IOException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.SerializationException
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.mcp.McpSessions
@@ -39,25 +41,35 @@ import net.die.phoneapi.server.routes.waitRoutes
  * [ServerController] owns its lifecycle and runs [start] and [stop] one at a time.
  */
 class ApiServer(
-    private val services: ServerServices,
     private val socketName: String,
+    private val dispatcher: CoroutineDispatcher,
+    /** Sets up the application, which [phoneApiModule] does. */
+    private val module: Application.() -> Unit,
 ) {
     private var server: EmbeddedServer<AbstractHttpEngine, AbstractHttpEngine.Configuration>? = null
 
+    /** Opens the listener, or does nothing when it is open. Throws when it cannot bind. */
     fun start() {
         if (server != null) return
-        val env = applicationEnvironment {}
-        server =
+        val starting =
             embeddedServer(
-                    AbstractHttpEngine,
-                    env,
-                    configure = {
-                        socketName = this@ApiServer.socketName
-                        dispatcher = services.ioDispatcher
-                    },
-                    module = { phoneApiModule(services) },
-                )
-                .also { it.start(wait = false) }
+                AbstractHttpEngine,
+                applicationEnvironment {},
+                configure = {
+                    socketName = this@ApiServer.socketName
+                    dispatcher = this@ApiServer.dispatcher
+                },
+                module = module,
+            )
+        try {
+            starting.start(wait = false)
+        } catch (e: IOException) {
+            // Ktor creates the application before the engine binds, and leaves it running if the
+            // bind fails. Each failed start would add another, with its own session sweep.
+            starting.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+            throw e
+        }
+        server = starting
         Log.i(TAG, "Listening on abstract socket $socketName")
     }
 

@@ -85,6 +85,7 @@ import net.die.phoneapi.server.ServerController
 import net.die.phoneapi.server.ServerServices
 import net.die.phoneapi.server.TokenStore
 import net.die.phoneapi.server.VideoFeed
+import net.die.phoneapi.server.phoneApiModule
 import net.die.phoneapi.stream.AudioStream
 import net.die.phoneapi.stream.StreamLease
 import net.die.phoneapi.stream.VideoStream
@@ -303,7 +304,7 @@ class AppGraph(
                 ),
         )
 
-    val server = ApiServer(services, socketName = context.packageName)
+    val server = ApiServer(context.packageName, ioDispatcher) { phoneApiModule(services) }
     val serverController = ServerController(scope, server::start, server::stop)
 
     private suspend fun asset(name: String): ByteArray =
