@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import java.util.IdentityHashMap
 import java.util.Locale
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -309,7 +310,11 @@ private fun linePaths(
  * page has past them.
  */
 private class DataBlobs(private val list: List<DataBlobText>, private val more: Int) {
-    private val scans = HashMap<String, JsonScan>()
+    /**
+     * Each blob's scan, by the blob itself: two responses, or a page blob and one, can share a
+     * name.
+     */
+    private val scans = IdentityHashMap<DataBlobText, JsonScan>()
 
     /**
      * Whether a read left values out: blobs past those listed, when it read every blob, or values
@@ -318,7 +323,8 @@ private class DataBlobs(private val list: List<DataBlobText>, private val more: 
     var clipped = false
         private set
 
-    private fun scan(name: String, text: String): JsonScan = scans.getOrPut(name) { JsonScan(text) }
+    private fun scan(blob: DataBlobText, text: String): JsonScan =
+        scans.getOrPut(blob) { JsonScan(text) }
 
     private fun everyBlob() {
         if (more > 0) clipped = true
@@ -333,7 +339,7 @@ private class DataBlobs(private val list: List<DataBlobText>, private val more: 
         for (blob in list) {
             if (blob.missing != null) continue
             val text = blob.text ?: throw ApiException.badRequest(notRead(blob))
-            val scan = scan(blob.name, text)
+            val scan = scan(blob, text)
             visit(blob.name, scan, scan.space(0))
         }
     }
@@ -352,7 +358,7 @@ private class DataBlobs(private val list: List<DataBlobText>, private val more: 
                 sink.append(notRead(blob) + "\n")
                 return@forEachIndexed
             }
-            val scan = scan(blob.name, text)
+            val scan = scan(blob, text)
             val root = scan.space(0)
             sink.append("${blob.name}: ${describe(scan, root)}, from ${blob.source}\n")
             outlineKids(scan, root, blob.name, 1, sink)
@@ -426,7 +432,7 @@ private class DataBlobs(private val list: List<DataBlobText>, private val more: 
                 walk.fail(notRead(blob))
                 continue
             }
-            val scan = scan(blob.name, text)
+            val scan = scan(blob, text)
             walk.walk(scan, scan.space(0), blob.name, 1)
         }
         if (walk.clipped) clipped = true

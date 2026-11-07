@@ -32,13 +32,14 @@ function pageData(globals, want, budget) {
 }
 
 // What page-read.js returns on the page with options. article, when given, is what the
-// Readability stub's parse() returns: {content, textContent}, or a function that throws.
+// Readability stub's parse() returns: {content, textContent}, or a function of the document
+// Readability was given that returns one or throws.
 function pageRead(globals, options, article) {
   const ctx = context(Object.assign({ __article: article === undefined ? null : article }, globals));
   const readability =
-    "function Readability(doc, options) {}\n" +
+    "function Readability(doc, options) { this.doc = doc; }\n" +
     "Readability.prototype.parse = function () {\n" +
-    '  if (typeof __article === "function") return __article();\n' +
+    '  if (typeof __article === "function") return __article(this.doc);\n' +
     "  return __article;\n" +
     "};\n";
   const source =

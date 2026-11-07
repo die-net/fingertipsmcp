@@ -92,3 +92,30 @@ test("prose in a part the page names as not its article does not count", () => {
   const read = pageRead(page({}, [], body), { scope: "article" }, fragment());
   assert.equal(read.extracted, "page");
 });
+
+test("Readability reads the page without what the page hides", () => {
+  const body = h(
+    "body",
+    null,
+    h("article", null, h("p", null, PROSE), h("p", { "data-hidden": "" }, "Hidden by a stylesheet")),
+    h("script", { type: "application/ld+json", "data-hidden": "" }, '{"@type":"Article"}'),
+  );
+  let given = null;
+  const read = pageRead(page({}, [], body), { scope: "article" }, (doc) => {
+    given = doc;
+    return { content: doc.body, textContent: doc.body.textContent };
+  });
+  assert.equal(read.extracted, "article");
+  const text = read.blocks.flatMap((b) => b.r.map((r) => r.t)).join("");
+  assert.ok(!text.includes("Hidden by a stylesheet"), text);
+  assert.ok(given.querySelector('script[type="application/ld+json"]'), "JSON-LD left out");
+});
+
+test("a Readability failure is named, and the page is read whole", () => {
+  const body = h("body", null, h("article", null, h("p", null, PROSE), h("p", null, PROSE)));
+  const read = pageRead(page({}, [], body), { scope: "article" }, () => {
+    throw new TypeError("Cannot read properties of null");
+  });
+  assert.equal(read.extracted, "page");
+  assert.equal(read.articleError, "TypeError: Cannot read properties of null");
+});

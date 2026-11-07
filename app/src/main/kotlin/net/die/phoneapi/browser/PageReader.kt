@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import android.util.Log
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.BrowserFindRequest
 import net.die.phoneapi.model.BrowserFindResult
@@ -56,15 +57,17 @@ internal class PageReader(
     /**
      * The tab's page facts and blocks. A tab showing a PDF, in Chrome's viewer or in the page
      * [PdfReader] put in its place, is read from the file, since neither page holds its text.
+     * [PdfReader] knows its own page by its loader id, so nothing a site's page holds can make a
+     * read take the site's tab over.
      */
     private suspend fun page(id: String, scope: ReadScope, selector: String?): PageExtract {
         val source = pageSource ?: pageScript().also { pageSource = it }
-        var viewer: String? = null
+        var file: String? = null
         val (result, reloaded) =
             onPage(id) { cdp ->
                 val frame = mainFrame(cdp)
-                viewer = viewedPdf(frame.url)
-                val url = viewer
+                val url = viewedPdf(frame.url) ?: frame.url?.takeIf { pdf.made(id, frame) }
+                file = url
                 when {
                     url == null ->
                         evaluateInFrame(cdp, frame.id, readScript(source, scope, selector), false)
@@ -73,13 +76,11 @@ internal class PageReader(
                 }
             }
         val extract = decodeExtract(result).copy(reloaded = reloaded)
-        if (viewer != null) return extract
-        val standIn =
-            extract.pdf ?: return extract.copy(data = extract.data + capture?.listed(id).orEmpty())
-        if (selector != null) throw noSelector()
-        val (pdfResult, pdfReloaded) =
-            onPage(id) { cdp -> pdf.read(cdp, id, mainFrame(cdp), standIn) }
-        return decodeExtract(pdfResult).copy(reloaded = reloaded || pdfReloaded)
+        if (file != null) return extract
+        val articleError = extract.articleError
+        if (articleError != null)
+            Log.d(TAG, "Readability failed, so the page was read whole: $articleError")
+        return extract.copy(data = extract.data + capture?.listed(id).orEmpty())
     }
 
     private fun noSelector() = ApiException.badRequest("A PDF has no elements to select")
@@ -111,3 +112,5 @@ internal class PageReader(
         return extract.copy(reloaded = reloaded, blobs = extract.blobs + responses)
     }
 }
+
+private const val TAG = "PhoneApiRead"
