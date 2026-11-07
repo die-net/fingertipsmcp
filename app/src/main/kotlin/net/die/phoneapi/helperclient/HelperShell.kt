@@ -40,6 +40,9 @@ class HelperShell(
         helper.require()
     }
 
+    /** The `503 helper_unavailable` for a call that needs the helper because of [why]. */
+    fun unavailable(why: String): ApiException = helper.unavailable(why)
+
     /** Throws `503 helper_unavailable` when the helper isn't running, or `503 helper_error`. */
     suspend fun exec(
         argv: List<String>,

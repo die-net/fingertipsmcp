@@ -1,5 +1,6 @@
 package net.die.phoneapi.apps
 
+import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
@@ -11,10 +12,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.core.AppsService
-import net.die.phoneapi.core.DeviceStateTracker
-import net.die.phoneapi.core.EventBus
 import net.die.phoneapi.core.IntentStart
-import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.failureMessage
 import net.die.phoneapi.model.ActionResult
@@ -26,8 +24,8 @@ import net.die.phoneapi.model.LaunchRequest
 /**
  * Launching, stopping, clearing and deep-linking apps. Installing is out of scope.
  *
- * Launching goes through the helper when it runs, and through the platform without it; intents,
- * `stop` and `clear` need the helper's shell UID (`apps.manage` in the capability map).
+ * Launching goes through the helper when it runs, and without it only while PhoneAPI is in front;
+ * intents, `stop` and `clear` need the helper's shell UID (`apps.manage` in the capability map).
  */
 class AppsServiceImpl(
     private val context: Context,
@@ -36,10 +34,13 @@ class AppsServiceImpl(
     private val invalidateSnapshots: () -> Unit,
     private val seq: StateFlow<Long>,
     private val shell: HelperShell,
-    private val state: DeviceStateTracker,
-    private val bus: EventBus,
+    /** Whether this package reaches the foreground soon. It needs the helper to see that. */
+    private val awaitForeground: suspend (String) -> Boolean,
+    /** Whether PhoneAPI itself is the app in front, as [ownProcessInFront] says. */
+    private val inFront: () -> Boolean,
 ) : AppsService {
-    private val packages: PackageManager = context.packageManager
+    private val packages: PackageManager
+        get() = context.packageManager
 
     override suspend fun list(launchableOnly: Boolean): List<AppInfo> =
         withContext(io) {
@@ -51,23 +52,35 @@ class AppsServiceImpl(
         }
 
     /**
-     * Android drops this app's background activity starts without an error, so the launch goes
-     * through the helper when it runs, as [intent] does. Without the helper it is this app's own
-     * start, which works only while PhoneAPI was on screen in the last few seconds.
+     * Android drops this app's activity starts from the background without an error, so the launch
+     * goes through the helper when it runs, as [intent] does. Without the helper it can work only
+     * with PhoneAPI in front, and otherwise fails here, before it wakes anything. That start can't
+     * be followed either, since only the helper sees what is in front.
      */
     override suspend fun launch(packageName: String, request: LaunchRequest): ActionResult {
-        val woke = prepare(true)
         val intent = launchIntent(packageName, request)
         val viaShell = shell.isAvailable
+        if (!viaShell && !inFront()) throw shell.unavailable(BACKGROUND_START)
+        val woke = prepare(true)
         if (viaShell) startFromShell(intent) else start(intent)
-        val arrived = !request.wait || awaitForeground(packageName)
-        invalidateSnapshots()
+        val arrived = !viaShell || !request.wait || awaitForeground(packageName)
+        // The snapshots are the helper's, so without it there are none.
+        if (viaShell) invalidateSnapshots()
         return ActionResult(
             ok = arrived,
             backend = if (viaShell) "shell" else "activity",
             woke = woke,
             seq = seq.value,
-            message = if (arrived) null else notForeground(intent, packageName, viaShell),
+            message =
+                when {
+                    !arrived ->
+                        "Started ${describe(intent)}, but $packageName did not come to the " +
+                            "foreground."
+                    !viaShell && request.wait ->
+                        "Started ${describe(intent)}. The shell helper is not running, so " +
+                            "PhoneAPI can't see whether $packageName came to the foreground."
+                    else -> null
+                },
         )
     }
 
@@ -185,11 +198,6 @@ class AppsServiceImpl(
         started.failure?.let { throw intentFailed(describe(intent), it, started.message) }
     }
 
-    private suspend fun awaitForeground(packageName: String): Boolean =
-        awaitDeviceState(state, bus, FOREGROUND_WAIT_MS) {
-            it.foregroundPackage == packageName
-        }
-
     private fun appInfo(packageName: String, launchable: Boolean): AppInfo? {
         val info = packageInfo(packageName) ?: return null
         val app = info.applicationInfo ?: return null
@@ -233,17 +241,6 @@ class AppsServiceImpl(
             null
         }
 
-    private fun notForeground(intent: Intent, packageName: String, viaShell: Boolean): String {
-        val started =
-            "Started ${describe(intent)}, but $packageName did not come to the foreground."
-        return if (viaShell) {
-            started
-        } else {
-            "$started The shell helper is not running, and Android blocks this app from " +
-                "starting activities in the background. Start the helper and try again."
-        }
-    }
-
     private fun describe(intent: Intent): String =
         intent.component?.flattenToShortString() ?: intent.`package` ?: intent.action.orEmpty()
 
@@ -251,8 +248,20 @@ class AppsServiceImpl(
         if (activity.startsWith(".")) packageName + activity else activity
 
     private companion object {
-        const val FOREGROUND_WAIT_MS = 5_000L
+        const val BACKGROUND_START =
+            "Android drops an app's activity starts from the background, and PhoneAPI is not on " +
+                "screen."
         // A start waits for the first frame, and a cold start can take several seconds.
         const val START_WAIT_MS = 20_000L
     }
+}
+
+/**
+ * Whether this process is the top app, which is what lets it start an activity on Android 10 and
+ * later. The foreground service that keeps the listener up ranks below this, so it doesn't count.
+ */
+internal fun ownProcessInFront(): Boolean {
+    val info = ActivityManager.RunningAppProcessInfo()
+    ActivityManager.getMyMemoryState(info)
+    return info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
 }

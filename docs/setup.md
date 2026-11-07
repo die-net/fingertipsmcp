@@ -75,7 +75,7 @@ On Android 10, browser calls use a USB tunnel instead. `phoneapi helper` sets th
 
 To pair Wireless Debugging from the phone (Android 11+), tap the Wireless debugging row in the app while it says "Not set up yet". It opens Developer options and puts a notification in the shade that takes the code inline. It stays there for 5 minutes. When mDNS sees this phone's pairing service, which means the system "Pair device with pairing code" dialog is open, the notification drops down over the dialog. If it doesn't drop down, read the code, pull down the shade, and type the code there. Do Not Disturb can hide the notification completely, so the app warns if it is on. Turn it off while pairing. The dialog has to stay in front: Android closes the pairing port when it is dismissed, including when you switch apps. On Android 10 that row is hidden.
 
-Snapshots, injected input, screenshots, logcat, browser routes, and streams need the helper. App launch and wake still run without it, with limited fallbacks. See [api.md](api.md) for which routes require the helper or the browser scope.
+Snapshots, injected input, screenshots, logcat, browser routes, and streams need the helper. Without it, an app launch works only while PhoneAPI is on screen, and wake has a limited fallback. See [api.md](api.md) for which routes require the helper or the browser scope.
 
 ## Connecting an agent
 
