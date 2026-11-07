@@ -56,7 +56,6 @@ internal class TextTyper(
         val before = tree.seq.value
         val outcome = touch.tap(target)
         points += outcome.points
-        if (!outcome.ok) throw gestureCancelled()
         if ("editable" in node.states) {
             // Typing or clearing now would go to whatever holds focus instead.
             val focused =
@@ -158,7 +157,6 @@ internal class TextTyper(
     private suspend fun tapKey(key: ImeKey, points: MutableList<Point>) {
         val outcome = touch.tap(key.bounds)
         points += outcome.points
-        if (!outcome.ok) throw gestureCancelled()
     }
 
     private fun keys(): List<ImeKey> = tree.keyboard().map { it.asKey() }
@@ -198,9 +196,6 @@ internal class TextTyper(
             throw ApiException.badRequest("Need 0 <= minDelayMs <= maxDelayMs <= $MAX_DELAY_MS")
         }
     }
-
-    private fun gestureCancelled() =
-        ApiException(409, "gesture_cancelled", "The system cancelled the touch")
 
     private fun TreeKey.asKey() = ImeKey(label, id, bounds)
 
