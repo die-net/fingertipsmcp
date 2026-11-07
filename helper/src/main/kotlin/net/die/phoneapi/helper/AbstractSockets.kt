@@ -232,28 +232,38 @@ internal object AbstractSockets {
 }
 
 /**
- * One abstract-namespace socket from `/proc/net/unix`. [inode] is how a caller finds the owning
- * process; the table itself has no pid.
+ * One listening abstract-namespace socket from `/proc/net/unix`. [inode] is how a caller finds the
+ * owning process; the table itself has no pid.
  */
 internal data class AbstractSocket(val name: String, val inode: Long)
 
 private val DEVTOOLS = Regex("""^(chrome_devtools_remote|webview_devtools_remote_.+)$""")
 
-/** Sockets whose names are Chrome or WebView DevTools endpoints. */
+/**
+ * The listening sockets whose names are Chrome or WebView DevTools endpoints. Every connection to a
+ * listener has a row under the same name, so the name alone does not make a row an endpoint.
+ */
 internal fun parseDevtoolsSockets(table: String): List<AbstractSocket> =
     table.lineSequence().mapNotNull { raw -> socketRow(raw.trim()) }.toList()
 
 private fun socketRow(line: String): AbstractSocket? {
     if (line.isEmpty() || line.startsWith("Num")) return null
     val columns = line.split(Regex("\\s+"))
+    val flags = columns.getOrNull(FLAGS_COLUMN)?.toIntOrNull(HEX) ?: return null
+    if (flags and SO_ACCEPTCON == 0) return null
     val inode = columns.getOrNull(INODE_COLUMN)?.toLongOrNull() ?: return null
     val path = columns.getOrNull(PATH_COLUMN) ?: return null
     val name = path.removePrefix("@")
     return if (DEVTOOLS.matches(name)) AbstractSocket(name, inode) else null
 }
 
+private const val FLAGS_COLUMN = 3
 private const val INODE_COLUMN = 6
 private const val PATH_COLUMN = 7
+private const val HEX = 16
+
+/** The kernel's `__SO_ACCEPTCON`, the flag `/proc/net/unix` sets on a socket that is listening. */
+private const val SO_ACCEPTCON = 0x10000
 
 /** Counts work in flight per key, up to [max] at once for each. */
 internal class InFlight(private val max: Int) {
