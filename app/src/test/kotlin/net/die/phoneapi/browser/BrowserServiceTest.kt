@@ -212,16 +212,13 @@ class BrowserServiceTest {
                 serverTextFrame("""{"id":4,"result":{"root":{"nodeId":1}}}""") +
                 serverTextFrame("""{"id":5,"result":{"nodeId":4}}""") +
                 closeFrame()
-        var opens = 0
+        val opened = ArrayList<StallingSocket>()
         var prepared: Boolean? = null
         val service =
             service(
                 byteArrayOf(),
                 sockets = CHROME,
-                open = {
-                    opens++
-                    socket(dropped)
-                },
+                open = { socket(dropped).also(opened::add) },
                 prepare = { autoWake ->
                     prepared = autoWake
                     false
@@ -237,7 +234,7 @@ class BrowserServiceTest {
                 }
             }
         assertEquals("cdp_error", error.error)
-        assertEquals(1, opens)
+        assertRunOnce(opened)
         assertEquals(false, prepared)
     }
 
@@ -250,18 +247,30 @@ class BrowserServiceTest {
                     """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/"}}}}"""
                 ) +
                 closeFrame()
-        var opens = 0
+        val opened = ArrayList<StallingSocket>()
         val service =
             service(
                 byteArrayOf(),
                 sockets = CHROME,
-                open = {
-                    opens++
-                    socket(dropped)
-                },
+                open = { socket(dropped).also(opened::add) },
             )
         assertEquals("cdp_error", virtual { failure { service.snapshot(TAB) } })
-        assertEquals(1, opens)
+        assertRunOnce(opened)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a tab closing mid-call is gone`() {
+        val dropped =
+            switched() +
+                serverTextFrame(
+                    """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/"}}}}"""
+                ) +
+                closeFrame()
+        val sockets = ArrayDeque(listOf(socket(dropped), socket(noTarget())))
+        val service = service(byteArrayOf(), sockets = CHROME, open = { sockets.removeFirst() })
+        assertEquals("not_found", virtual { failure { service.snapshot(TAB) } })
+        assertTrue(sockets.isEmpty())
     }
 
     @Test
@@ -457,6 +466,24 @@ class BrowserServiceTest {
         } catch (e: ApiException) {
             e.error
         }
+
+    /** DevTools' answer to a connection to a tab that has closed. */
+    internal fun noTarget(): ByteArray {
+        val text = "No such target id: abc"
+        return asciiLines(
+            "HTTP/1.1 500 Internal Server Error",
+            "Content-Length: ${text.length}",
+        ) + text.toByteArray()
+    }
+
+    /**
+     * That a dropped session's call was not run again: the one connection after [opened]'s first
+     * only asks whether the tab is there, so it sends nothing.
+     */
+    private fun assertRunOnce(opened: List<StallingSocket>) {
+        assertEquals(2, opened.size)
+        assertEquals(emptyList<String>(), opened[1].methods())
+    }
 
     /** A socket whose peer answers [script] as the service asks, on [clock]. */
     internal fun socket(script: ByteArray, timedOut: Boolean = false) =

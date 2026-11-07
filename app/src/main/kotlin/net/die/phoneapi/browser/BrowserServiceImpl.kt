@@ -166,7 +166,6 @@ internal class BrowserServiceImpl(
                 val (socket, chromeId) = parseBrowserTargetId(id)
                 usePage(socket, chromeId, block)
             },
-            listed = { targets() },
             close = { id -> closeQuietly(id) },
             savedPdf = { url -> reader.savedPdf(url) },
             loadPdf = { id, url -> reader.loadPdf(id, url) },
@@ -662,7 +661,10 @@ internal class BrowserServiceImpl(
                 block(cdp)
             }
         } catch (e: ApiException) {
-            if (!started && tabGone(e)) throw tabClosed(browserTargetId(socket, chromeId))
+            val reconnect: suspend () -> Unit = { useCdp(socket, "/devtools/page/$chromeId") {} }
+            if (if (started) e.dropped && refused(reconnect) else tabGone(e)) {
+                throw tabClosed(browserTargetId(socket, chromeId))
+            }
             if (e.error != "cdp_timeout" || socket != CHROME_SOCKET) throw e
             if (pageDialog()) throw dialogOpen(e)
             // A page that never answered the handshake: Chrome as a whole may not answer.
