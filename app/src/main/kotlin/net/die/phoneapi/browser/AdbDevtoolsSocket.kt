@@ -40,12 +40,23 @@ internal class AdbDevtoolsSocket(
             null
         }
 
+    /**
+     * Closing it closes the whole socket, and never [inputStream] itself. Ktor's read channel
+     * closes its input from another thread to end a blocked read when its job is cancelled. Kadb's
+     * input is okio's `RealBufferedSource`, whose close clears a buffer the reading thread may be
+     * using. Two threads then free the same segment to okio's process-wide pool, which later hands
+     * it to an unrelated buffer with a stale read position. Closing the pipe is what ends a blocked
+     * read in any case, since Kadb's source does nothing on close: the adb stream stops listening,
+     * or the descriptor closes.
+     */
     override val input: InputStream =
         object : FilterInputStream(inputStream) {
             override fun read(): Int = super.read().also { answered() }
 
             override fun read(b: ByteArray, off: Int, len: Int): Int =
                 super.read(b, off, len).also { answered() }
+
+            override fun close() = this@AdbDevtoolsSocket.close()
         }
 
     override val output: OutputStream = outputStream
