@@ -47,9 +47,11 @@ object KeyMatcher {
             '}' to setOf("right brace", "right curly bracket"),
             '~' to setOf("tilde"),
             '`' to setOf("backtick", "grave accent"),
-            '|' to setOf("vertical bar", "pipe"),
-            '^' to setOf("caret"),
+            '|' to setOf("vertical bar", "vertical line", "pipe"),
+            '^' to setOf("caret", "circumflex accent"),
         )
+
+    private val SPOKEN_NAMES: Set<String> = SPOKEN.values.flatten().toSet()
 
     /**
      * The key that types [c]. Gboard lists its suggestions with its keys, and a suggestion can be a
@@ -123,9 +125,13 @@ object KeyMatcher {
     fun redrawn(before: List<ImeKey>, now: List<ImeKey>, modifier: ImeKey, c: Char): Boolean =
         if (modifier == shift(before)) forChar(now, c) != null else now != before
 
-    /** Whether [keys] look like a text keyboard at all (rather than, say, a voice panel). */
+    /**
+     * Whether [keys] look like a text keyboard at all (rather than, say, a voice panel), which is
+     * to say enough of them type a character. A page of symbols counts, with its literal and spoken
+     * labels, since Gboard stays on one after typing from it, and that page has no letters.
+     */
     fun looksLikeKeyboard(keys: List<ImeKey>): Boolean =
-        keys.count { it.label.length == 1 && it.label[0].isLetterOrDigit() } >= MIN_CHAR_KEYS
+        keys.count { it.label.length == 1 || it.label.lowercase() in SPOKEN_NAMES } >= MIN_CHAR_KEYS
 
     private fun byId(keys: List<ImeKey>, suffix: String): ImeKey? = keys.firstOrNull {
         it.id?.endsWith("key_pos_$suffix") == true

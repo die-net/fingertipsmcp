@@ -35,6 +35,40 @@ class KeyMatcherTest {
                 key("Letter keyboard", gboardId + "back_to_prime"),
             ))
 
+    /** Gboard's More symbols page, as the Android 11 test phone labels it. */
+    private val moreSymbols =
+        listOf(
+                "Tilde",
+                "grave accent",
+                "vertical line",
+                "bullet",
+                "square root",
+                "π",
+                "÷",
+                "×",
+                "section sign",
+                "Increment",
+                "Pound sign",
+                "¢",
+                "€",
+                "¥",
+                "circumflex accent",
+                "°",
+                "Equals",
+                "Left curly bracket",
+                "Right curly bracket",
+                "Backslash",
+                "Percent sign",
+                "©",
+            )
+            .map { key(it) } +
+            listOf(
+                key("Symbols", gboardId + "shift"),
+                key("Delete", gboardId + "del"),
+                key("Letter keyboard", gboardId + "back_to_prime"),
+                key("Space", gboardId + "space"),
+            )
+
     @Test
     fun `finds literal and spoken keys`() {
         assertEquals("q", KeyMatcher.forChar(letters, 'q')?.label)
@@ -42,6 +76,8 @@ class KeyMatcherTest {
         assertEquals("Question mark", KeyMatcher.forChar(symbols, '?')?.label)
         assertEquals("underline", KeyMatcher.forChar(symbols, '_')?.label)
         assertNull(KeyMatcher.forChar(letters, '7'))
+        assertEquals("circumflex accent", KeyMatcher.forChar(moreSymbols, '^')?.label)
+        assertEquals("vertical line", KeyMatcher.forChar(moreSymbols, '|')?.label)
     }
 
     @Test
@@ -108,6 +144,8 @@ class KeyMatcherTest {
     @Test
     fun `recognizes a keyboard`() {
         assertTrue(KeyMatcher.looksLikeKeyboard(letters))
+        assertTrue(KeyMatcher.looksLikeKeyboard(symbols))
+        assertTrue(KeyMatcher.looksLikeKeyboard(moreSymbols))
         assertTrue(!KeyMatcher.looksLikeKeyboard(listOf(key("Use voice typing"))))
     }
 }
