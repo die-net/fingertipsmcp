@@ -12,16 +12,13 @@ class TabProbeTest {
     private val harness = BrowserServiceTest()
     private val clock = harness.clock
     private var browserReplies = true
+    private var probeOpens: () -> DevtoolsSocket = {
+        val reply = harness.serverTextFrame("""{"id":1,"result":{}}""")
+        harness.socket(harness.switched() + if (browserReplies) reply else byteArrayOf())
+    }
 
     private fun probe() =
-        TabProbe(
-            clock,
-            open = {
-                val reply = harness.serverTextFrame("""{"id":1,"result":{}}""")
-                harness.socket(harness.switched() + if (browserReplies) reply else byteArrayOf())
-            },
-            websocketKey = { BrowserServiceTest.KEY },
-        )
+        TabProbe(clock, open = { probeOpens() }, websocketKey = { BrowserServiceTest.KEY })
 
     @Test
     fun `live tab is left alone`() {
@@ -74,6 +71,28 @@ class TabProbeTest {
         val error = onPage(page) { failure { probe().revive(it, CHROME_SOCKET, reading = true) } }
         assertEquals("browser_frozen", error)
         assertFalse("Page.reload" in page.methods())
+    }
+
+    @Test
+    fun `a probe that cannot open is not a frozen chrome`() {
+        // The page does not answer, and the probe fails for a reason of its own: that says
+        // nothing about Chrome, so the call goes ahead rather than reporting browser_frozen.
+        probeOpens = { throw ApiException.helperUnavailable() }
+        val page = harness.socket(harness.switched())
+        val reloaded = onPage(page) { probe().revive(it, CHROME_SOCKET, reading = true) }
+        assertFalse(reloaded)
+    }
+
+    @Test
+    fun `a reload that never loads is not a fresh page`() {
+        // The reloaded page stays "loading" for as long as the probe asks.
+        val loading =
+            (0 until 50).fold(byteArrayOf()) { all, n ->
+                all + world(3 + n * 3) + value(5 + n * 3, "\"loading\"")
+            }
+        val page = harness.socket(harness.switched() + crashed() + loading)
+        val error = onPage(page) { failure { probe().revive(it, CHROME_SOCKET, reading = true) } }
+        assertEquals("tab_reloaded", error)
     }
 
     @Test

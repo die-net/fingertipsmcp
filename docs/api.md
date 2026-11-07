@@ -134,7 +134,7 @@ Authenticated errors are JSON:
 | 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so PhoneAPI could not check which tab Chrome shows; a new tab from `browser_open` is closed |
 | 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, so nothing was typed |
 | 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it |
-| 409 | `tab_reloaded` | Chrome had unloaded the hidden tab, so PhoneAPI reloaded it instead of sending input or script to a page the caller has not seen |
+| 409 | `tab_reloaded` | Chrome had unloaded the hidden tab, so PhoneAPI reloaded it instead of sending input or script to a page the caller has not seen. Also a read whose reloaded page had not loaded within 10 s |
 | 409 | `tab_frozen` | `cdp` or `cdp-mouse` input into a tab Chrome has paused, or whose timers it has stopped, as it does to tabs hidden in the background. Also a wait on such a tab. Bring it forward with `touch` or `show`, or reload it |
 | 409 | `session_conflict` | A screen call while the session that started the caller with `session_start`, or one the caller started, holds the screen |
 | 409 | `clipboard_unreadable` | The helper could not read the clipboard's image from the app that copied it |
