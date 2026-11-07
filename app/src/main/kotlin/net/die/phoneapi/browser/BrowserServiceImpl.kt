@@ -330,7 +330,11 @@ internal class BrowserServiceImpl(
     }
 
     override suspend fun capture(id: String, on: Boolean): BrowserCaptureResult =
-        recorder?.toggle(id, on) ?: super.capture(id, on)
+        recorder?.toggle(id, on)
+            ?: throw ApiException.unavailable(
+                "browser_unavailable",
+                "Recording responses is not available",
+            )
 
     private suspend fun closeQuietly(id: String) {
         try {

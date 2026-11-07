@@ -531,6 +531,16 @@ internal open class FakeBrowser : BrowserService {
     override suspend fun navigate(id: String, url: String) =
         BrowserTarget(id = id, type = "page", url = url, socket = "s")
 
+    // Its one tab is a normal one, whose timers run.
+    override suspend fun incognitoTabs() = emptySet<String>()
+
+    override suspend fun timersStalled(id: String) = false
+
+    override suspend fun watchTimers(id: String) = Unit
+
+    // Its tab has its page as soon as it opens.
+    override fun awaitingPage(id: String) = false
+
     override suspend fun capture(id: String, on: Boolean) =
         BrowserCaptureResult(capturing = on, responses = if (on) 2 else 0)
 

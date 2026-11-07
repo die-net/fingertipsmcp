@@ -44,8 +44,13 @@ internal class SessionBrowser(
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 
+    override fun awaitingPage(id: String): Boolean = base.awaitingPage(id)
+
     override suspend fun navigate(id: String, url: String): BrowserTarget =
         acting(id) { base.navigate(id, url) }
+
+    // Only Tabs asks, of the browser under this view. A session must not see others' tabs.
+    override suspend fun incognitoTabs(): Set<String> = emptySet()
 
     override suspend fun closeTab(id: String): ActionResult =
         mine(id) { base.closeTab(id) }.also { tabs.closed(id) }
@@ -127,8 +132,13 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 
+    override fun awaitingPage(id: String): Boolean = base.awaitingPage(id)
+
     override suspend fun navigate(id: String, url: String): BrowserTarget =
         free(id) { base.navigate(id, url) }
+
+    // Only Tabs asks, of the browser under this view.
+    override suspend fun incognitoTabs(): Set<String> = emptySet()
 
     override suspend fun closeTab(id: String): ActionResult = free(id) { base.closeTab(id) }
 
