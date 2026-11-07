@@ -149,11 +149,27 @@ Holding Chrome's Custom Tabs binding was checked on the Android 16 emulator, wit
 
 On the phone on 2026-10-22, PhoneAPI held the binding (`chromeKept`).
 
+A frozen process still takes connections. On the Android 17 emulator (kernel 6.12, WebView 145) on 2026-11-07, with the Google app's `googleapp` process frozen by `am freeze --sticky`, its `webview_devtools_remote_*` socket connected and never answered. Each connection stayed queued on the listener after the client hung up, as a row in `/proc/net/unix` under the listener's name, with flags `00000000`, state 02, and inode 0. Nothing limited the queue up to 938 rows. A thaw drained them at tens of rows a second. A connection Chrome has accepted has a row under the listener's name too, with state 03. Only the listener itself has flags `00010000` (`__SO_ACCEPTCON`) and state 01.
+
+PhoneAPI used to take every row with a DevTools name for a socket. Each listing then connected once per row and added as many rows again, so a frozen WebView's rows doubled at each listing. Measured on that build:
+
+- At 90 rows, one listing blocked 63 of the 64 IO threads, and a blocking read of an API connection took the last. `GET /v1/device` stalled until the 5 s limit closed the streams. Past that, reads queue for a thread, so more rows stall the API for longer.
+- 12 clients at once, or a few hundred rows, ran the app out of heap and it restarted, since each Kadb stream allocates a 1 MiB send buffer.
+- The helper searched `/proc` for each row's owner and found none, which took up to 0.3 s a row.
+- With three idle connections to Chrome, one listing returned each of the 2 tabs 4 times.
+
+The threads were not leaked. Closing an `AdbStream` ended every read on it: 62 of them were in `MessageQueue.take`'s `await`, which `stopListening` wakes, and one was in the socket read, which needs the next message on the connection. No thread was left in either place 25 s after the listing, and the closing timer ran with the pool full.
+
+With only listeners counted, on the same emulator, a listing with 90 rows queued added one row, used one thread, and took 5.1 s, and `GET /v1/device` answered in 12 ms. 12 clients making 2 listings each all got 200 within 5.4 s, adding 24 rows and using 12 threads. After a thaw, a listing took 0.14 s. `GET /v1/browser/targets` made one listing. Opening a tab, a snapshot, navigating, evaluating, and a tap made none, and nothing listed while idle.
+
+On the Android 10 emulator (kernel 4.14) the same day, the listeners had the same flags and state, and a listing through the USB path found Chrome's tab.
+
 ### Still to check
 
 - That binding Chrome's Custom Tabs service works on a real Android 12 or later phone, and does not change anything visible on the Android 11 test phone.
 - Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
 - A frozen Chrome's handshake on the Android 10 USB path.
+- That a WebView Android itself froze behaves as one frozen by `am freeze`. Whether a listener's queue has a limit, and what adbd does to a connect once it is reached.
 
 ## Starting activities
 
