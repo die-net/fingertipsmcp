@@ -178,6 +178,37 @@ class BrowserShownTest {
         assertEquals(true, result.shown)
     }
 
+    @Test
+    fun `a tab that does not answer may be showing`() {
+        // A busy page, or one a dialog holds, answers nothing: that is not "not showing".
+        val service = harness.service(harness.switched(), sockets = BrowserServiceTest.CHROME)
+        assertNull(harness.virtual { service.showing(TAB) })
+    }
+
+    @Test
+    fun `a closed tab is not showing`() {
+        val refused = "No such target id: abc"
+        val service =
+            harness.service(
+                asciiLines(
+                    "HTTP/1.1 500 Internal Server Error",
+                    "Content-Length: ${refused.length}",
+                ) + refused.toByteArray(),
+                sockets = BrowserServiceTest.CHROME,
+            )
+        assertEquals(false, harness.virtual { service.showing(TAB) })
+    }
+
+    @Test
+    fun `a selected tab is showing`() {
+        val service =
+            harness.service(
+                harness.switched() + harness.showing("visible"),
+                sockets = BrowserServiceTest.CHROME,
+            )
+        assertEquals(true, harness.virtual { service.showing(TAB) })
+    }
+
     /** Replies to page-read.js: frame, world, then the extract. */
     private fun readFrames(visibility: String, pending: String = "[]"): ByteArray =
         harness.switched() +

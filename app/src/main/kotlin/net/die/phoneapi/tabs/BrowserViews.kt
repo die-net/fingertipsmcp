@@ -48,7 +48,7 @@ internal class SessionBrowser(
 
     override suspend fun activate(id: String) = mine(id) { base.activate(id) }
 
-    override suspend fun showing(id: String): Boolean = mine(id) { base.showing(id) }
+    override suspend fun showing(id: String): Boolean? = mine(id) { base.showing(id) }
 
     override suspend fun timersStalled(id: String): Boolean = mine(id) { base.timersStalled(id) }
 
@@ -131,7 +131,7 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
 
     override suspend fun activate(id: String) = free(id) { base.activate(id) }
 
-    override suspend fun showing(id: String): Boolean = free(id) { base.showing(id) }
+    override suspend fun showing(id: String): Boolean? = free(id) { base.showing(id) }
 
     override suspend fun timersStalled(id: String): Boolean = free(id) { base.timersStalled(id) }
 
