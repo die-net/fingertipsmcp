@@ -49,6 +49,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     private val session: UiAutomationSession
     private val tracker: UiChangeTracker
     private val nodeCache: NodeCacheAge
+    private val content: ContentFrame
     private val snapshots: SnapshotEngine
     private val targeting = NodeTargeting { Rect(screen) }
 
@@ -72,6 +73,10 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
             )
         created = tracker
         nodeCache = NodeCacheAge(session::clearNodeCache, SystemClock::uptimeMillis)
+        content =
+            ContentFrame(nodeCache) { pkg ->
+                withWindows { ContentFrame.applicationRoots(it, pkg) }
+            }
         snapshots =
             SnapshotEngine(
                 windows = { session.windows() },
@@ -80,6 +85,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
                 imePackage = { imePackage },
                 nodes = nodes,
                 nodeCache = nodeCache,
+                content = content,
                 screenRect = { Rect(screen) },
             )
     }
@@ -134,11 +140,7 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
             }
             "contentBounds" -> {
                 val call = json.decodeFromString(serializer<TreePackageCall>(), body)
-                // Through the cache's age limit, or a tab just brought forward reads as the page
-                // that was there before, which is no page at all.
-                json.encodeToString(
-                    nodeCache.read { withWindows { ContentFrame.find(it, call.packageName) } }
-                )
+                json.encodeToString(content.find(call.packageName))
             }
             "windowTitle" -> {
                 val call = json.decodeFromString(serializer<TreeTitleCall>(), body)
@@ -242,7 +244,8 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     private fun setText(call: TreeSetTextCall): ActionResult {
         val node =
             focusedField()?.takeIf { it.isEditable }
-                ?: throw ApiException(409, "no_editor", "No text field is focused")
+                ?: throw if (content.nodesOff()) ContentFrame.pageNodesOff()
+                else ApiException(409, "no_editor", "No text field is focused")
         try {
             val current =
                 if (call.clear || node.isShowingHintText) "" else node.text?.toString().orEmpty()
@@ -307,22 +310,9 @@ internal class TreeHost(private val client: () -> ITreeClient?) {
     }
 
     private fun selectFocused(): TreeFocusedText {
-        // A focused node that takes no text says nothing about a field. Chrome's page with its
-        // nodes off is one, and reading it as an empty field made clear report success.
-        val node = focusedField()?.takeIf { it.isEditable } ?: return TreeFocusedText()
-        try {
-            val length = if (node.isShowingHintText) 0 else node.text?.length ?: 0
-            if (length == 0) return TreeFocusedText(0)
-            val args =
-                Bundle().apply {
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, length)
-                }
-            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
-            return TreeFocusedText(length)
-        } finally {
-            NodeCompat.recycle(node)
-        }
+        val selected = selectAll(focusedField())
+        if (selected.length == null && content.nodesOff()) throw ContentFrame.pageNodesOff()
+        return selected
     }
 
     private fun imeEnter(): ActionResult {

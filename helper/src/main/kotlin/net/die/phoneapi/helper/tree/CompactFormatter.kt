@@ -120,28 +120,30 @@ object CompactFormatter {
             "window_control" to "control",
         )
 
-    fun header(seq: Long, state: DeviceStateSummary): String = buildString {
-        append("# seq=").append(seq)
-        append(" screen=").append(state.screen.name.lowercase())
-        append(" keyguard=")
-        append(
-            when {
-                !state.keyguard.locked -> "unlocked"
-                state.keyguard.secure -> "locked(secure)"
-                else -> "locked"
+    fun header(seq: Long, state: DeviceStateSummary, nodesOff: Boolean = false): String =
+        buildString {
+            append("# seq=").append(seq)
+            append(" screen=").append(state.screen.name.lowercase())
+            append(" keyguard=")
+            append(
+                when {
+                    !state.keyguard.locked -> "unlocked"
+                    state.keyguard.secure -> "locked(secure)"
+                    else -> "locked"
+                }
+            )
+            val ime = state.ime
+            append(" ime=")
+            if (ime.visible) {
+                append("shown")
+                ime.bounds?.let { append(rectText(it)) }
+                ime.packageName?.let { append(' ').append(it) }
+            } else {
+                append("hidden")
             }
-        )
-        val ime = state.ime
-        append(" ime=")
-        if (ime.visible) {
-            append("shown")
-            ime.bounds?.let { append(rectText(it)) }
-            ime.packageName?.let { append(' ').append(it) }
-        } else {
-            append("hidden")
+            state.foregroundPackage?.let { append(" fg=").append(it) }
+            if (nodesOff) append(" page_nodes_off")
         }
-        state.foregroundPackage?.let { append(" fg=").append(it) }
-    }
 
     /**
      * The outline under [header], cut to [limits]. When anything is left out, either here or by

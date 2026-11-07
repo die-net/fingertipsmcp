@@ -189,32 +189,6 @@ class BrowserTouchTest {
     }
 
     @Test
-    fun `clear brings nodes back first`() {
-        // Clearing reads the field's node, so with the nodes off it would see no field at all.
-        val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))
-        val order = mutableListOf<String>()
-        val service =
-            harness.service(
-                byteArrayOf(),
-                sockets = BrowserServiceTest.CHROME,
-                open = { page },
-                content = {
-                    if ("launch" !in order) throw nodesOff()
-                    Rect(0, 283, 1080, 2339)
-                },
-                showPackage = { order += "launch" },
-                type = {
-                    order += "type"
-                    ActionResult(ok = true, backend = "inject")
-                },
-            )
-        harness.virtual {
-            service.text(TAB, BrowserTextRequest(text = "hi", clear = true, input = TOUCH))
-        }
-        assertEquals(listOf("launch", "type"), order)
-    }
-
-    @Test
     fun `plain typing needs no nodes`() {
         // Keyboard keys are in the keyboard's window, so nothing is restarted for them.
         val page = harness.socket(harness.switched() + empty(1) + harness.visibility(2, "visible"))

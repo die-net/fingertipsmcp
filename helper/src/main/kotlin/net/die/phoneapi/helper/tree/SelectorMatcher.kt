@@ -20,7 +20,7 @@ class SelectorMatcher(private val selector: NodeSelector) {
         with(selector) {
             listOf(text, textContains, textRegex, desc, descContains, id, role, packageName).all {
                 it == null
-            } && clickable == null && editable == null
+            } && clickable == null && editable == null && focused == null
         }
 
     fun matches(node: UiNode, packageName: String?): Boolean =
@@ -34,7 +34,8 @@ class SelectorMatcher(private val selector: NodeSelector) {
                 equalsText(role, node.role) &&
                 (this.packageName == null || this.packageName == packageName) &&
                 flag(clickable, UiStates.CLICKABLE in node.states) &&
-                flag(editable, UiStates.EDITABLE in node.states)
+                flag(editable, UiStates.EDITABLE in node.states) &&
+                flag(focused, UiStates.FOCUSED in node.states)
         }
 
     private fun matchesRegex(node: UiNode): Boolean {

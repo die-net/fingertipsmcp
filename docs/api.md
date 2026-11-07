@@ -125,7 +125,7 @@ Authenticated errors are JSON:
 | 409 | `offscreen` | The node or element has no box on screen, or a touch swipe or gesture point is off the page |
 | 409 | `obscured` | Something, such as the keyboard, covers the node. `force` taps the part that shows |
 | 409 | `content_unavailable` | A `touch` tap on a page that is not on screen, or that a dialog, menu, or the tab switcher of the browser covers. Also a call to a page that timed out while Chrome shows a page's dialog, such as an alert, which holds the page until someone dismisses it |
-| 409 | `page_nodes_off` | A `touch` call on a page Chrome has turned off its accessibility nodes for, which PhoneAPI's own restart of Chrome did not undo. The page is fine, and reads and `cdp` input work |
+| 409 | `page_nodes_off` | A call that needs what is in a page Chrome has turned off its accessibility nodes for. `ui/find` with no match says this, since it can't see the page. Calls that act start Chrome once to bring the nodes back, so from them it means that did not work. The page is fine, and browser reads and `cdp` input work |
 | 409 | `not_visible` | `cdp` touch input into a tab that is not on screen, since Chrome holds it until the tab shows, or `touch` input into a tab Chrome would not bring forward, or whose app did not come on screen |
 | 409 | `intent_refused` | Android refused the intent, for example an activity that is not exported |
 | 409 | `intent_failed` | Android could not start the intent for another reason, or did not finish in time; the message says which |
@@ -180,8 +180,8 @@ Authenticated errors are JSON:
 
 | Method | Path | Scope | Summary |
 | --- | --- | --- | --- |
-| `GET` | `/v1/ui/snapshot` | observe | Accessibility / UiAutomation tree → `UiSnapshot` |
-| `POST` | `/v1/ui/find` | observe | Match `NodeSelector` → `FindResult`. `redact` masks secrets as for the snapshot and counts them in `redacted` |
+| `GET` | `/v1/ui/snapshot` | observe | Accessibility / UiAutomation tree → `UiSnapshot`. `pageNodesOff` is true, and the compact header ends in `page_nodes_off`, when Chrome has turned a page's nodes off, so the snapshot shows none of the page. A read never starts Chrome to bring them back |
+| `POST` | `/v1/ui/find` | observe | Match `NodeSelector` → `FindResult`. `redact` masks secrets as for the snapshot and counts them in `redacted`. No match on a page with its nodes off is 409 `page_nodes_off`, not an empty list |
 | `POST` | `/v1/ui/nodes/{ref}/action` | control | `NodeActionRequest` (`mode` `real` or `semantic`) |
 | `GET` | `/v1/screenshot` | observe | PNG; `?scale=` 0.1–1 |
 

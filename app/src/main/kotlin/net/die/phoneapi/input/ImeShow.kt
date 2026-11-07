@@ -30,6 +30,13 @@ internal class ImeShow(
                 ?: throw ApiException.notFound(
                     "No field has input focus. Pass a selector for the field to type into."
                 )
+        return tapUp(node)
+    }
+
+    /** Taps the focused field to bring the keyboard up, or gives null when no field has focus. */
+    suspend fun showForFocused(): ActionResult? = focusedField()?.let { tapUp(it) }
+
+    private suspend fun tapUp(node: UiNode): ActionResult {
         val outcome = touch.tap(tree.touchTarget(node.ref, force = false))
         if (!outcome.ok) {
             throw ApiException(409, "gesture_cancelled", "The system cancelled the touch")
@@ -52,12 +59,11 @@ internal class ImeShow(
     /** The editable field that has focus, which a tap brings the keyboard up for. */
     private fun focusedField(): UiNode? =
         tree
-            .find(FindRequest(NodeSelector(editable = true), limit = MAX_FIELDS))
+            .find(FindRequest(NodeSelector(editable = true, focused = true), limit = 1))
             .matches
-            .firstOrNull { "focused" in it.states }
+            .firstOrNull()
 
     private companion object {
         const val SHOW_WAIT_MS = 2_000L
-        const val MAX_FIELDS = 50
     }
 }

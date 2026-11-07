@@ -51,6 +51,8 @@ import net.die.phoneapi.model.Point
 import net.die.phoneapi.model.Rect
 import net.die.phoneapi.model.TextRequest
 import net.die.phoneapi.model.TimedPoint
+import net.die.phoneapi.tree.PageNodes
+import net.die.phoneapi.tree.hasContent
 
 /**
  * Talks to Chrome and WebView over an adb DevTools stream. One service call keeps a single
@@ -171,6 +173,7 @@ internal class BrowserServiceImpl(
             loadPdf = { id, url -> reader.loadPdf(id, url) },
         )
     @Volatile private var stateSource: String? = null
+    private val pageNodes = PageNodes(showPackage) { pkg -> contentBounds(pkg) }
     private val pageInput: PageInput by lazy {
         PageInput(
             touchAt = touchAt,
@@ -699,22 +702,9 @@ internal class BrowserServiceImpl(
         throw ApiException(409, "not_visible", "$pkg did not come on screen for touch input.")
     }
 
-    /**
-     * Where [pkg]'s page is drawn. Chrome can turn off a page's accessibility nodes while it stays
-     * on screen, which only something like Chrome being started again undoes, as
-     * docs/device-notes.md records. So that one failure starts it, as tapping its icon would, and
-     * waits for the nodes. The page stays selected, and when the nodes do not come the failure says
-     * so. Chrome's timer is out of PhoneAPI's reach, since UiAutomation is no service it lists.
-     */
+    /** Where [pkg]'s page is drawn, with its nodes brought back if Chrome turned them off. */
     private suspend fun pageBounds(pkg: String?): Rect =
-        try {
-            contentBounds(pkg)
-        } catch (e: ApiException) {
-            if (e.error != "page_nodes_off" || pkg == null) throw e
-            showPackage(pkg)
-            settled(APPEAR_MS) { hasContent { contentBounds(pkg) } }
-            contentBounds(pkg)
-        }
+        pageNodes.restoring(pkg) { contentBounds(pkg) }
 
     /**
      * Chrome holds a touch for a hidden tab and plays it once Chrome shows, so a cdp touch is
@@ -893,13 +883,3 @@ internal data class FrameInfo(
     val parentId: String? = null,
     val loaderId: String? = null,
 )
-
-/** Whether [bounds] finds the app's content, which is missing until its window is up. */
-private suspend fun hasContent(bounds: suspend () -> Rect): Boolean =
-    try {
-        bounds()
-        true
-    } catch (e: ApiException) {
-        if (e.error != "content_unavailable" && e.error != "page_nodes_off") throw e
-        false
-    }

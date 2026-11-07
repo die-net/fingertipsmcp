@@ -54,7 +54,12 @@ public data class UiSnapshot(
     val compact: String? = null,
     /** How many secrets were masked when `redact` was set. */
     val redacted: Int = 0,
+    /** True when Chrome turned off a page's nodes, so the snapshot shows none of what is in it. */
+    val pageNodesOff: Boolean = false,
 )
+
+/** The `error` of a call that needs a page's nodes while Chrome has them turned off. */
+public const val PAGE_NODES_OFF: String = "page_nodes_off"
 
 @Serializable
 public enum class SnapshotFormat {
@@ -102,6 +107,7 @@ public data class NodeSelector(
     @Doc("Window package name.") @SerialName("package") val packageName: String? = null,
     @Doc("Require a clickable or non-clickable node.") val clickable: Boolean? = null,
     @Doc("Require an editable or non-editable node.") val editable: Boolean? = null,
+    @Doc("Require a node that has or lacks input focus.") val focused: Boolean? = null,
     @Doc("Zero-based index when several nodes match.") val index: Int? = null,
 )
 

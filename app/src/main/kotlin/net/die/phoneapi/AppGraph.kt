@@ -92,6 +92,7 @@ import net.die.phoneapi.stream.VideoStream
 import net.die.phoneapi.tabs.FileTabStore
 import net.die.phoneapi.tabs.Tabs
 import net.die.phoneapi.tree.HelperUiService
+import net.die.phoneapi.tree.PageNodes
 import net.die.phoneapi.tree.TreeSession
 import net.die.phoneapi.wait.WaitServiceImpl
 
@@ -211,6 +212,11 @@ class AppGraph(
             keys = keys,
             state = state,
             display = { deviceInfo.display() },
+            pageNodes =
+                PageNodes(
+                    start = { pkg -> launchPackage(pkg) },
+                    bounds = { pkg -> tree.contentBounds(pkg) },
+                ),
         )
     val clipboard: ClipboardService = ClipboardServiceImpl(context, helper, input, ioDispatcher)
     val apps: AppsService =
