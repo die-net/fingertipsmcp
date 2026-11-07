@@ -16,6 +16,8 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.TestScope
 import net.die.phoneapi.model.BrowserTarget
 import net.die.phoneapi.model.Scope
@@ -27,7 +29,7 @@ import org.junit.jupiter.api.Test
 /** REST sessions: starting, holding the screen across calls, ending, and sharing ids with MCP. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionRouteTest {
-    private val api = FakeApi(leaseWaitMs = 200)
+    private val api = FakeApi()
     private val token = api.tokens.issue("all", Scope.entries.toSet())
 
     @Test
@@ -51,8 +53,12 @@ class SessionRouteTest {
             val second = startSession(http, token)
             assertEquals(HttpStatusCode.OK, tap(http, first).status)
             // The first keeps the screen between its calls.
-            assertEquals(HttpStatusCode.Conflict, tap(http, second).status)
-            assertEquals(HttpStatusCode.OK, tap(http, first).status)
+            val busy = coroutineScope {
+                val waiting = async { tap(http, second) }
+                api.outwaitLease { assertEquals(HttpStatusCode.OK, tap(http, first).status) }
+                waiting.await()
+            }
+            assertEquals(HttpStatusCode.Conflict, busy.status)
 
             val released =
                 http.post("/v1/screen/release") {

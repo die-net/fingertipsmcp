@@ -140,11 +140,12 @@ internal class RecordingWaits : WaitService {
 /** Fakes of the service interfaces, so [phoneApiModule] can run under `testApplication`. */
 @Suppress("InjectDispatcher") // The test server has no injected graph dispatcher.
 internal class FakeApi(
-    leaseWaitMs: Long = ScreenLease.WAIT_MS,
     val browser: FakeBrowser = FakeBrowser(),
     /** Where tabs Chrome opens after an intent are looked for, for a test that runs its clock. */
     tabScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
 ) {
+    /** The lease's clock, which moves only when a test moves it. */
+    val clock = ManualClock()
     val tokens = MemoryTokens()
     val waits = RecordingWaits()
     var capabilities = allCapabilities()
@@ -182,14 +183,27 @@ internal class FakeApi(
     val tabStore = MemoryTabStore()
     val lease: ScreenLease =
         ScreenLease(
-            CoroutineScope(Dispatchers.Default),
+            CoroutineScope(clock),
             cleanup = {
                 cleanups++
                 emptyList()
             },
             lockedNow = { true },
-            waitMs = leaseWaitMs,
+            now = { clock.now },
         )
+
+    /**
+     * Runs out the wait of a call that has just asked for the screen, at its real length, calling
+     * [keepBusy] often enough for the holder to stay inside its grace and keep the screen.
+     */
+    suspend fun outwaitLease(keepBusy: suspend () -> Unit) {
+        clock.awaitTimer(ScreenLease.WAIT_MS)
+        val step = ScreenLease.GRACE_MS / 2
+        repeat((ScreenLease.WAIT_MS / step).toInt()) {
+            clock.advance(step)
+            keepBusy()
+        }
+    }
 
     /** The app Android sends intents to. */
     @Volatile var intentApp: String? = "com.android.chrome"
