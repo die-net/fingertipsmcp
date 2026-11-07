@@ -261,7 +261,7 @@ class PageReadTest {
     }
 
     @Test
-    fun `lists each URL once, as the page wrote it`() {
+    fun `lists each URL once as written`() {
         val shop =
             ApiJson.decodeFromString(
                 PageExtract.serializer(),
@@ -308,7 +308,7 @@ class PageReadTest {
     }
 
     @Test
-    fun `finds the origin of a URL as Chrome writes it`() {
+    fun `finds a link's origin`() {
         assertEquals("https://a.example:443", origin("https://a.example/x?q=1|2"))
         assertEquals("http://a.example:8080", origin("http://user@a.example:8080/"))
         assertEquals("http://[::1]:80", origin("http://[::1]/x"))
@@ -347,7 +347,7 @@ class PageReadTest {
     }
 
     @Test
-    fun `a bad selector is the caller's mistake, by the script's word`() {
+    fun `a bad selector is bad_request`() {
         val bad = EvalResult(value = ApiJson.parseToJsonElement("""{"badSelector":true}"""))
         val error = assertThrows(ApiException::class.java) { decodeExtract(bad) }
         assertEquals("bad_request", error.error)

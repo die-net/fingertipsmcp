@@ -102,7 +102,10 @@ internal class PdfReader(private val script: suspend () -> String) {
                     PARSED -> ours
                     // A read cut short while the file loaded, such as by a DevTools timeout, waits
                     // on that load rather than starting it again.
-                    LOADING -> ours.also { failure(it.awaitLoad(), url)?.let { e -> throw e } }
+                    LOADING -> {
+                        failure(ours.awaitLoad(), url)?.let { throw it }
+                        ours
+                    }
                     else -> {
                         val made = standIn(cdp, target, frame.id, url)
                         failure(made.loaded, url)?.let { throw it }
@@ -139,9 +142,11 @@ internal class PdfReader(private val script: suspend () -> String) {
         val (navigated, answered) =
             try {
                 navigateAnswered(cdp, frameId, url)
-            } finally {
+            } catch (e: ApiException) {
                 disableFetch(cdp)
+                throw e
             }
+        disableFetch(cdp)
         navigated?.errorText?.let {
             throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not open the PDF's page: $it")
         }

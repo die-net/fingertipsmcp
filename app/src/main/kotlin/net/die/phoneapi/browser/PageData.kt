@@ -238,7 +238,7 @@ private inline fun <T> onJson(block: () -> T): T =
         throw ApiException(
             BAD_GATEWAY,
             "page_error",
-            "The page's data could not be read: ${e.message}",
+            "The page's data could not be read: ${e.message ?: "it is not JSON"}",
             cause = e,
         )
     }

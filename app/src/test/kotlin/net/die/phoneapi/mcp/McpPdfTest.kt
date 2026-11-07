@@ -36,7 +36,7 @@ class McpPdfTest {
     private val token = api.tokens.issue("all", Scope.entries.toSet())
 
     @Test
-    fun `reads a PDF Chrome saved and closed the tab for`() = testApplication {
+    fun `reads a saved PDF in a new tab`() = testApplication {
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
             val read = call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
@@ -44,21 +44,6 @@ class McpPdfTest {
             assertTrue(read.contains("saves this PDF to Downloads"), read)
             assertTrue(read.contains("pdf text"), read)
             assertFalse(read.contains("isError\":true"), read)
-            assertEquals(listOf("$FIRST $PDF"), chrome.navigations)
-        }
-    }
-
-    @Test
-    fun `reads a PDF Chrome saved and left the tab blank for`() = testApplication {
-        chrome.closesTab = false
-        application { phoneApiModule(api.services) }
-        apiClient().use { http ->
-            val read = call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
-            assertTrue(read.contains("# opened target=$FIRST"), read)
-            assertTrue(read.contains("saves this PDF to Downloads"), read)
-            assertTrue(read.contains("pdf text"), read)
-            assertEquals(listOf(BLANK), chrome.opens)
-            assertEquals(listOf("$FIRST $PDF"), chrome.loads)
         }
     }
 
@@ -70,7 +55,7 @@ class McpPdfTest {
             repeat(3) { _ ->
                 call(http, session, "browser_read", """{"url":"$PDF","close":true}""")
             }
-            assertEquals(1, chrome.navigations.size)
+            assertEquals(1, chrome.opens.count { it == PDF })
             assertEquals(3, chrome.loads.size)
         }
     }
@@ -86,7 +71,7 @@ class McpPdfTest {
     }
 
     @Test
-    fun `keeps the error for a download that is not a PDF`() = testApplication {
+    fun `keeps a non-PDF error`() = testApplication {
         chrome.pdf = false
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
@@ -97,28 +82,17 @@ class McpPdfTest {
     }
 
     @Test
-    fun `names the blank tab a download that is not a PDF left`() = testApplication {
-        chrome.pdf = false
-        chrome.closesTab = false
-        application { phoneApiModule(api.services) }
-        apiClient().use { http ->
-            val read = call(http, initialize(http), "browser_read", """{"url":"$PDF"}""")
-            assertTrue(read.contains("net::ERR_ABORTED"), read)
-            assertTrue(read.contains("still open as target=$FIRST"), read)
-        }
-    }
-
-    @Test
-    fun `waits for the navigation's own page to load`() = testApplication {
-        // A tab opened on the URL sits on about:blank, already loaded, until the server answers.
-        // So the tab opens blank, and the load waited for is that of the navigation this starts.
+    fun `waits through the commit`() = testApplication {
+        // A new tab shows about:blank, already loaded, until its navigation commits, and the commit
+        // replaces the document the first wait was on. The wait starts again on the page.
+        chrome.commits = 1
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
             val read = call(http, initialize(http), "browser_read", """{"url":"$PAGE"}""")
             assertTrue(read.contains("page text"), read)
             assertFalse(read.contains("not loaded"), read)
             assertEquals(
-                listOf("open $BLANK", "navigate $FIRST $PAGE", "load $FIRST", "read $FIRST"),
+                listOf("open $PAGE", "load $FIRST", "load $FIRST", "read $FIRST"),
                 chrome.calls,
             )
             assertEquals(emptyList<String>(), chrome.loads)
@@ -126,18 +100,7 @@ class McpPdfTest {
     }
 
     @Test
-    fun `waits again on a document that replaced the one it waited on`() = testApplication {
-        chrome.redirects = 1
-        application { phoneApiModule(api.services) }
-        apiClient().use { http ->
-            val read = call(http, initialize(http), "browser_read", """{"url":"$PAGE"}""")
-            assertFalse(read.contains("not loaded"), read)
-            assertEquals(2, chrome.calls.count { it == "load $FIRST" })
-        }
-    }
-
-    @Test
-    fun `a failing read with close reads no PDF`() = testApplication {
+    fun `failed close read reads no PDF`() = testApplication {
         // The read fails and close shuts the tab, which is not Chrome saving a download.
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
@@ -151,7 +114,7 @@ class McpPdfTest {
     }
 
     @Test
-    fun `closes the tab when a read fails unexpectedly`() = testApplication {
+    fun `closes the tab on any failure`() = testApplication {
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
             val args = """{"url":"$PAGE","selector":"#broken","close":true}"""
@@ -189,19 +152,14 @@ class McpPdfTest {
         if (id != null) header("Mcp-Session-Id", id)
     }
 
-    /**
-     * A Chrome that makes a navigation to [PDF] a download: it saves the file and closes the tab,
-     * or with [closesTab] false leaves it blank. Other pages open as usual.
-     */
+    /** A Chrome that closes a new tab on [PDF] at once, as it does when it saves the file. */
     private class SavingBrowser : FakeBrowser() {
         var pdf = true
-        var closesTab = true
 
-        /** How many load waits find their document replaced, as by a script redirect. */
-        var redirects = 0
+        /** How many load waits find their document replaced, as a navigation's commit does. */
+        var commits = 0
         val calls = ArrayList<String>()
         val opens = ArrayList<String>()
-        val navigations = ArrayList<String>()
         val loads = ArrayList<String>()
         val closed = ArrayList<String>()
         private val open = LinkedHashMap<String, String>()
@@ -217,23 +175,8 @@ class McpPdfTest {
             val id = if (opens.isEmpty()) FIRST else SECOND
             opens += url
             calls += "open $url"
-            open[id] = url
+            if (url != PDF) open[id] = url
             return target(id, url)
-        }
-
-        override suspend fun navigate(id: String, url: String): BrowserTarget {
-            calls += "navigate $id $url"
-            if (id !in open) throw ApiException.notFound("No such target")
-            if (url != PDF) {
-                open[id] = url
-                return target(id, url)
-            }
-            navigations += "$id $url"
-            if (closesTab) {
-                open -= id
-                throw closed()
-            }
-            throw ApiException.badRequest("net::ERR_ABORTED")
         }
 
         override suspend fun closeTab(id: String) =
@@ -253,8 +196,8 @@ class McpPdfTest {
         override suspend fun evaluate(id: String, request: EvalRequest): EvalResult {
             if (id !in open) throw closed()
             calls += "load $id"
-            if (redirects > 0) {
-                redirects--
+            if (commits > 0) {
+                commits--
                 throw ApiException(502, "cdp_error", "Execution context was destroyed.")
             }
             return EvalResult(value = JsonPrimitive(true))
@@ -288,7 +231,6 @@ class McpPdfTest {
     private companion object {
         const val PDF = "https://example.com/report"
         const val PAGE = "https://example.com/"
-        const val BLANK = "about:blank"
         const val FIRST = "chrome_devtools_remote~first"
         const val SECOND = "chrome_devtools_remote~second"
         const val INITIALIZE =

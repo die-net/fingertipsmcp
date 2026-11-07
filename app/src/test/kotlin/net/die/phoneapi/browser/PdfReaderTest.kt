@@ -115,7 +115,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `answers the navigation whatever URL Chrome gives it`() {
+    fun `answers a URL Chrome rewrote`() {
         // Chrome writes the URL its own way, so the pause is known by its frame, not its URL.
         val replies = Replies()
         replies.takeOver(loader = "L1", pausedUrl = "https://example.com/a/../report.pdf")
@@ -129,7 +129,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `fails when the navigation never pauses`() {
+    fun `fails when nothing pauses`() {
         // A service worker answers the navigation, so it never reaches the network, and
         // Page.navigate
         // returns with no pause to answer. The read fails at once rather than waiting for one.
@@ -202,7 +202,8 @@ class PdfReaderTest {
         again.value(EXTRACT)
         val page = again.socket()
         val result = onPage(page, 7) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
-        assertEquals("pdf", result.value?.jsonObject?.get("extracted")?.jsonPrimitive?.content)
+        val extracted = result.value?.jsonObject?.get("extracted")
+        assertEquals("pdf", extracted?.jsonPrimitive?.content)
         assertEquals(HANDLE + List(4) { CALL }, page.awaitMethods(7))
     }
 
@@ -221,7 +222,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `retakes its page when another document replaced it`() {
+    fun `retakes a replaced page`() {
         // The tab had PhoneAPI's page when the read began, but another document by the time it
         // took a handle, so the handle is not used.
         val reader = PdfReader { "" }
@@ -276,7 +277,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `names an HTTP error, which a retry would only repeat`() {
+    fun `names an HTTP error`() {
         val error = loadFails("""{"error":"http","detail":"403"}""")
         assertEquals(PDF_FAILED, error.error)
         assertEquals("The PDF's site answered HTTP 403", error.message)
@@ -377,7 +378,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `reads its own page by its loader, and a site's page as a page`() = runBlocking {
+    fun `knows its page by its loader`() = runBlocking {
         // The first read takes the viewer's tab over. The second finds PhoneAPI's page by its
         // loader and reads the PDF without page-read.js. The third finds a page at the PDF's URL
         // with another loader, as a site's page that copies PhoneAPI's would have, and reads it as
@@ -572,7 +573,7 @@ class PdfReaderTest {
      * A page that plays each of [steps], in order, once the client has sent as many commands as the
      * step names, then reads nothing until closed.
      */
-    private class CausalSocket(private val steps: List<Pair<Int, ByteArray>>) : DevtoolsSocket {
+    private class CausalSocket(steps: List<Pair<Int, ByteArray>>) : DevtoolsSocket {
         private val sink = StallingSocket(ByteArray(0))
         private val lock = ReentrantLock()
         private val written = lock.newCondition()

@@ -338,7 +338,7 @@ class PageDataTest {
     }
 
     @Test
-    fun `says when blobs past those listed are left out`() {
+    fun `clips past the listed blobs`() {
         val more = extract.copy(more = 30)
         val outline = readData(more, BrowserReadRequest(scope = ReadScope.DATA))
         assertTrue(outline.clipped)
@@ -352,7 +352,7 @@ class PageDataTest {
     }
 
     @Test
-    fun `says when a star read stops at its most values`() {
+    fun `clips a star read at its cap`() {
         val many = "[" + "0,".repeat(100_000) + "0]"
         val page =
             DataExtract(blobs = listOf(DataBlobText("many", "window.many", many.length, many)))
@@ -367,7 +367,7 @@ class PageDataTest {
     }
 
     @Test
-    fun `outlines two blobs that share a name each from its own text`() {
+    fun `outlines blobs sharing a name`() {
         // A page blob and a recorded response can share a name, such as response-1.
         val page =
             DataExtract(
@@ -382,7 +382,7 @@ class PageDataTest {
     }
 
     @Test
-    fun `data it cannot walk is the page's error`() {
+    fun `unwalkable data is page_error`() {
         // A JSON script tag nested deeper than the printer goes, which JSON.parse in the page took.
         val deep = "[".repeat(300) + "]".repeat(300)
         val page =

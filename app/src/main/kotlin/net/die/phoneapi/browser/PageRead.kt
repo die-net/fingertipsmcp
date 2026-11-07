@@ -584,23 +584,30 @@ internal fun origin(url: String): String? {
     if (schemeEnd <= 0) return null
     val scheme = url.substring(0, schemeEnd).lowercase()
     val start = schemeEnd + SCHEME_SEPARATOR
-    val end = url.indexOfAny(AUTHORITY_END, start).let { if (it < 0) url.length else it }
+    val end = url.indexOfAny(AUTHORITY_END, start).takeIf { it >= 0 } ?: url.length
     val authority = url.substring(start, end).substringAfterLast('@')
-    val portAt =
-        if (authority.startsWith('[')) authority.indexOf("]:").let { if (it < 0) -1 else it + 1 }
-        else authority.lastIndexOf(':')
+    val portAt = portStart(authority)
     val host = (if (portAt < 0) authority else authority.substring(0, portAt)).lowercase()
     if (host.isEmpty()) return null
     val port =
-        if (portAt >= 0) authority.substring(portAt + 1).toIntOrNull() ?: return null
-        else
-            when (scheme) {
-                "https" -> HTTPS_PORT
-                "http" -> HTTP_PORT
-                else -> -1
-            }
+        if (portAt < 0) defaultPort(scheme)
+        else authority.substring(portAt + 1).toIntOrNull() ?: return null
     return "$scheme://$host:$port"
 }
+
+/** Where the `:` before the port is in [authority], or -1. An IPv6 host is in brackets. */
+private fun portStart(authority: String): Int {
+    if (!authority.startsWith('[')) return authority.lastIndexOf(':')
+    val close = authority.indexOf("]:")
+    return if (close < 0) -1 else close + 1
+}
+
+private fun defaultPort(scheme: String): Int =
+    when (scheme) {
+        "https" -> HTTPS_PORT
+        "http" -> HTTP_PORT
+        else -> -1
+    }
 
 private val AUTHORITY_END = charArrayOf('/', '?', '#')
 private const val SCHEME_SEPARATOR = 3
