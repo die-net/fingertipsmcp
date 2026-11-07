@@ -74,16 +74,18 @@ internal fun Application.installPhoneMcp(services: ServerServices, sessions: Mcp
                 call.respond(HttpStatusCode.MethodNotAllowed)
             }
             delete {
-                val transport =
-                    call.request
-                        .header(SESSION_HEADER)
-                        ?.let(sessions::get)
-                        ?.takeIf { it.tokenId == call.token.id }
-                        ?.transport
-                if (transport == null) {
+                val session =
+                    call.request.header(SESSION_HEADER)?.let(sessions::get)?.takeIf {
+                        it.tokenId == call.token.id && it.transport != null
+                    }
+                if (session == null) {
                     call.respond(HttpStatusCode.NotFound, noSession())
                 } else {
-                    transport.handleRequest(null, call)
+                    // Ends it here, transport and all, before answering, so a client that
+                    // deleted a session sees it gone, its screen let go, and its tabs closed. The
+                    // transport's own DELETE would end it from a callback after answering.
+                    sessions.end(session.id, "the client deleted it")
+                    call.respond(HttpStatusCode.OK)
                 }
             }
         }
