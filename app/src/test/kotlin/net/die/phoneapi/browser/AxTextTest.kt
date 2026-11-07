@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 
 class AxTextTest {
     @Test
-    fun `keeps a node it cannot read in its place`() {
+    fun `keeps an unread node in place`() {
         // Node 2's role is not the object Chrome sends, so it does not decode. Its child stays
         // under the root, where it was, rather than becoming a root of its own after it.
         val tree =

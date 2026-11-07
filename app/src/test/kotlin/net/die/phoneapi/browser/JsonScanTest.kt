@@ -70,7 +70,7 @@ class JsonScanTest {
     }
 
     @Test
-    fun `refuses a scalar JSON does not write`() {
+    fun `refuses a scalar JSON lacks`() {
         for (text in
             listOf("tru", "1.2.3", "nulll", "+1", "-", "01", "1.", ".5", "1e", "truefalse")) {
             assertThrows(IllegalArgumentException::class.java, { print("[$text]") }, text)

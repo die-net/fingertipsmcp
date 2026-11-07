@@ -168,11 +168,11 @@ private suspend fun onOpened(
 
 /**
  * Opens [url] in a new tab, which records its responses first when [capture] is set, and waits for
- * it to load and settle. The tab opens blank and this navigates it, so the wait is for that
- * navigation's own document: a tab opened on [url] sits on a blank page that is already loaded
- * until the server answers, and its navigation's result, which says when Chrome made it a download,
- * goes to no one. That leaves the tab's history two entries long, as typing an address into a new
- * tab does.
+ * that navigation's page to load and settle. Chrome closes a new tab when it saves the PDF the tab
+ * opened rather than showing it, so a tab that goes while it loads holds a PDF to read in a tab
+ * PhoneAPI takes over. The tab opens on [url] rather than blank and then navigated, since Chrome
+ * was seen to bring Google Drive's PDF viewer forward when it saved a PDF an existing tab navigated
+ * to, and not for a new tab.
  */
 private suspend fun open(
     services: ServerServices,
@@ -181,62 +181,28 @@ private suspend fun open(
     closing: Boolean,
     capture: Boolean,
 ): Opened {
-    val tab = services.browser.openTab(BLANK)
-    val navigation =
-        cleaningUp(services, tab.id, closing) { navigate(services, tab.id, url, capture) }
-    return when (navigation) {
-        Navigation.Loaded ->
-            cleaningUp(services, tab.id, closing) {
-                settled(services, scopes, tab, closing, capture, loaded = true)
-            }
-        Navigation.Slow ->
-            cleaningUp(services, tab.id, closing) {
-                settled(services, scopes, tab, closing, capture, loaded = false)
-            }
-        is Navigation.Refused ->
-            refused(services, scopes, tab, url, closing, capture, navigation.error)
+    val tab = services.browser.openTab(url, capture)
+    val loaded =
+        try {
+            withTimeoutOrNull(OPEN_LOAD_MS) {
+                awaitLoad(services, tab.id)
+                true
+            } ?: false
+        } catch (e: ApiException) {
+            if (!tabGone(services, tab.id, e)) cleaningUp(services, tab.id, closing) { throw e }
+            return pdfTab(services, url, closing) ?: throw e
+        }
+    return cleaningUp(services, tab.id, closing) {
+        settled(services, scopes, tab, closing, capture, loaded)
     }
 }
 
-/** How a new tab's navigation went. */
-private sealed interface Navigation {
-    /** Its document loaded. */
-    data object Loaded : Navigation
-
-    /** It did not load within [OPEN_LOAD_MS]. */
-    data object Slow : Navigation
-
-    /** `Page.navigate` failed with [error], as it does when Chrome makes the page a download. */
-    data class Refused(val error: ApiException) : Navigation
-}
-
 /**
- * Navigates the tab [id] to [url] and waits up to [OPEN_LOAD_MS] for that navigation's document to
- * load. The navigation returns once the server has answered, so the document waited for is the one
- * from [url].
- */
-private suspend fun navigate(
-    services: ServerServices,
-    id: String,
-    url: String,
-    capture: Boolean,
-): Navigation {
-    if (capture) services.browser.capture(id, on = true)
-    return withTimeoutOrNull(OPEN_LOAD_MS) {
-        try {
-            services.browser.navigate(id, url)
-        } catch (e: ApiException) {
-            return@withTimeoutOrNull Navigation.Refused(e)
-        }
-        awaitLoad(services, id)
-        Navigation.Loaded
-    } ?: Navigation.Slow
-}
-
-/**
- * Waits for the tab's document to finish loading, on the page's own load event rather than by
- * polling it. A document replaced while it loads, as a script redirect replaces it, takes the
- * wait's isolated world with it, so the wait starts again, after a short pause, on the next one.
+ * Waits for the tab's navigation to load, on the page's own load event rather than by polling it. A
+ * new tab shows an empty `about:blank` until its navigation commits, and the commit replaces the
+ * document and the wait's isolated world with it, so the wait starts again, after a short pause, on
+ * the next document; so it does when a script redirect replaces a page while it loads. A tab that
+ * went fails the wait.
  */
 private suspend fun awaitLoad(services: ServerServices, id: String) {
     while (true) {
@@ -244,7 +210,7 @@ private suspend fun awaitLoad(services: ServerServices, id: String) {
             try {
                 services.browser.evaluate(id, EvalRequest(LOAD_WAIT, awaitPromise = true))
             } catch (e: ApiException) {
-                if (e.error != "cdp_error") throw e
+                if (e.error != "cdp_error" || tabGone(services, id, e)) throw e
                 null
             }
         if (result != null && result.exception == null) return
@@ -252,36 +218,14 @@ private suspend fun awaitLoad(services: ServerServices, id: String) {
     }
 }
 
-/**
- * What to read after Chrome refused the navigation of the new [tab] to [url] with [error]. When
- * Chrome saves a PDF rather than showing it, it makes the navigation a download, and then closes a
- * new tab or leaves it blank; either way the PDF is put in a tab PhoneAPI takes over. A tab on any
- * other page, such as Chrome's error page or its PDF viewer, is read as it is.
- */
-@Suppress("LongParameterList") // The open's own arguments, and the error that ended it.
-private suspend fun refused(
-    services: ServerServices,
-    scopes: Set<Scope>,
-    tab: BrowserTarget,
-    url: String,
-    closing: Boolean,
-    capture: Boolean,
-    error: ApiException,
-): Opened {
-    val now =
-        try {
-            services.browser.targets().firstOrNull { it.id == tab.id }
-        } catch (listing: ApiException) {
-            Log.d(TAG, "Listing tabs failed: ${listing.error}")
-            cleaningUp(services, tab.id, closing) { throw error }
-        }
-    if (now == null) return pdfTab(services, url, closing) ?: throw error
-    return cleaningUp(services, tab.id, closing) {
-        when {
-            now.url != BLANK -> settled(services, scopes, tab, closing, capture, loaded = true)
-            services.browser.loadPdf(tab.id, url) -> Opened(tab.id, savedPdfLine(tab.id, closing))
-            else -> throw error
-        }
+/** Whether [e] came from the tab [id] closing, rather than from anything it was asked. */
+private suspend fun tabGone(services: ServerServices, id: String, e: ApiException): Boolean {
+    if (e.error != "cdp_error" && e.error != "not_found") return false
+    return try {
+        services.browser.targets().none { it.id == id }
+    } catch (listing: ApiException) {
+        Log.d(TAG, "Listing tabs failed: ${listing.error}")
+        false
     }
 }
 
@@ -730,11 +674,13 @@ private const val TAG = "PhoneApiMcp"
 private const val BLANK = "about:blank"
 
 /**
- * Resolves once the page's document has loaded. It runs in an isolated world, so its listener is
- * not the page's to see.
+ * Resolves once the page's document has loaded, and never on a new tab's empty first document,
+ * which its navigation replaces. It runs in an isolated world, so its listener is not the page's to
+ * see.
  */
 private const val LOAD_WAIT =
     """new Promise((resolve) => {
+  if (location.href === "$BLANK") return;
   if (document.readyState === "complete") resolve(true);
   else addEventListener("load", () => resolve(true), { once: true });
 })"""
