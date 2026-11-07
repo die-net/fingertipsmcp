@@ -63,7 +63,7 @@ internal class WaitServiceImpl(
         // underneath a long wait.
         prepare(false)
         val browserWatch =
-            BrowserWatch(browser, io, openDevtools, dialogFrom).takeIf {
+            BrowserWatch(browser, io, openDevtools, dialogFrom = dialogFrom).takeIf {
                 (request.all + request.any).any(::isBrowserCondition)
             }
         val watchers =

@@ -366,6 +366,21 @@ On the Android 10 emulator (Chrome 91) on 2026-11-06, with a wait's events read 
 - `browser.element` in a wait that spans a navigation failed with `cdp_error` "Could not find node with given id", in six runs of six, on both builds.
 - With a hidden tab's renderer killed, a call got `tab_reloaded` and the next one worked, through a listener held for `Inspector.enable`.
 
+On the Android 16 emulator (Chrome 133) on 2026-11-06, with a wait's set-up and looks ending at its limit, and the host under heavy load (load average about 30):
+
+| Page | Condition | Limit | Result |
+| --- | --- | --- | --- |
+| No dialog | `browser.dialog` | 1500 ms | Timed out at 1518 ms |
+| No dialog | `browser.dialog` | 300 ms | Timed out at 1066 ms, since set-up alone took about that long |
+| Held by an alert | `browser.dialog` | 4000 ms | Matched at 2601 ms |
+| Held by an alert | `browser.url` | 4000 ms | Timed out at 4102 ms |
+| Held by an alert | `browser.element` | 4000 ms | Timed out at 4088 ms |
+| Held by an alert, screen off | `browser.dialog` | 4000 ms | Timed out at 4002 ms |
+| Chrome under `am freeze` | `browser.dialog` | 3000 ms | Timed out at 3078 ms |
+| Chrome under `am freeze` | `browser.url` | 3000 ms | Timed out at 3018 ms |
+
+Before this, a `browser.dialog` wait on a page that did not answer failed `cdp_timeout` at about 15 s, as [Screen hand-offs](#screen-hand-offs) says. The other rows were not run on the build before. After the alert was dismissed, and after `am unfreeze`, a wait on the same tab matched in under 1 s. With `timeoutMs` 0, `browser.url`, `browser.element`, and `browser.settled` on a page that had loaded all matched, in 170 to 990 ms, so a look fits the 1 s a short limit gets.
+
 ## Still to check on the phone
 
 - That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.

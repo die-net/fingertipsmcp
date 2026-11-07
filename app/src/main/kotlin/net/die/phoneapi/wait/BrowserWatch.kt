@@ -5,14 +5,18 @@ import java.io.Closeable
 import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -36,11 +40,15 @@ import net.die.phoneapi.model.WaitCondition
  * CDP sessions held for one `POST /v1/wait`. Every event updates [PageModel] or [TargetModel] and
  * wakes the wait loop, on the session's reader, so a wait busy with a check skips none. Closing the
  * sockets unblocks the readers.
+ *
+ * The watch owns the wait's limit. Set-up and every look at a page end there, and a page they did
+ * not reach in time matches nothing, so a page that stops answering reads as a wait that timed out.
  */
 internal class BrowserWatch(
     private val browser: BrowserService,
     private val io: CoroutineDispatcher,
     private val openDevtools: suspend (String, Long) -> DevtoolsSocket,
+    private val now: () -> Long = SystemClock::uptimeMillis,
     /** Whether Chrome shows a dialog from a page at this host, such as `example.com:8080`. */
     private val dialogFrom: suspend (String) -> Boolean = { false },
 ) {
@@ -50,18 +58,32 @@ internal class BrowserWatch(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val changes: Flow<Unit> = signals
-    private val pages = HashMap<String, PageSession>()
+    /**
+     * Where set-up runs, apart from the wait. A handshake and a target list are blocking reads that
+     * cancelling can't end, so a wait that joined them would outlast its limit. Closing the watch
+     * closes their sockets, which ends them.
+     */
+    private val setup = CoroutineScope(SupervisorJob() + io)
+    private val pages = ConcurrentHashMap<String, PageSession>()
     private val targets = TargetModel()
-    private val sockets = ArrayList<DevtoolsSocket>()
-    private val sessions = ArrayList<CdpSession>()
-    private val listening = ArrayList<Closeable>()
-    private val jobs = ArrayList<Job>()
-    private var defaultId: String? = null
+    /** Sockets, sessions, and listeners, in the order they opened. Guarded by itself. */
+    private val held = ArrayList<Closeable>()
+    private var closed = false
+    @Volatile private var defaultId: String? = null
+    /** When the wait ends, in [now]'s time. */
+    @Volatile private var limit = 0L
 
+    /**
+     * Connects to the pages [conditions] are on, for up to [timeoutMs]. Time running out is no
+     * failure: the pages not reached by then match nothing. A limit under [MIN_LOOK_MS] gets that
+     * long, since Chrome could not answer sooner, and a wait of 0 asks for one look.
+     */
     suspend fun open(conditions: List<WaitCondition>, timeoutMs: Long) {
         if (conditions.none(::isBrowserCondition)) return
+        limit = now() + maxOf(timeoutMs, MIN_LOOK_MS)
+        val connected = setup.async { connect(conditions) }
         try {
-            connect(conditions, timeoutMs)
+            withTimeoutOrNull(left()) { connected.await() }
         } catch (e: ApiException) {
             close()
             throw e
@@ -77,46 +99,45 @@ internal class BrowserWatch(
     }
 
     suspend fun check(condition: WaitCondition): Check =
-        when (condition) {
+        if (condition is WaitCondition.BrowserNewTarget) {
+            Check(targets.matches(condition.urlContains))
+        } else {
+            session(condition)?.let { look(it, condition) } ?: Check(satisfied = false)
+        }
+
+    private suspend fun look(page: PageSession, condition: WaitCondition): Check {
+        val model = page.model
+        return when (condition) {
             is WaitCondition.BrowserUrl ->
                 Check(
-                    session(condition)
-                        .model
-                        .urlMatches(
-                            condition.equals,
-                            condition.contains,
-                            condition.regex?.let(::compileRegex),
-                        )
-                )
-            is WaitCondition.BrowserLifecycle ->
-                Check(session(condition).model.sawLifecycle(condition.name))
-            is WaitCondition.BrowserNetworkIdle ->
-                session(condition)
-                    .model
-                    .networkIdle(
-                        condition.maxInflight,
-                        condition.quietMs,
-                        SystemClock.uptimeMillis(),
+                    model.urlMatches(
+                        condition.equals,
+                        condition.contains,
+                        condition.regex?.let(::compileRegex),
                     )
-            is WaitCondition.BrowserElement -> element(session(condition), condition)
+                )
+            is WaitCondition.BrowserLifecycle -> Check(model.sawLifecycle(condition.name))
+            is WaitCondition.BrowserNetworkIdle ->
+                model.networkIdle(condition.maxInflight, condition.quietMs, now())
+            // The one check that asks the page. No answer by the limit says nothing about the
+            // element, which would make `absent` match, so it is no match.
+            is WaitCondition.BrowserElement ->
+                withTimeoutOrNull(left()) { element(page, condition) } ?: Check(satisfied = false)
             is WaitCondition.BrowserRequest ->
                 Check(
-                    session(condition)
-                        .model
-                        .requestMatched(
-                            condition.urlContains,
-                            condition.urlRegex?.let(::compileRegex),
-                            condition.method,
-                            condition.status,
-                        )
+                    model.requestMatched(
+                        condition.urlContains,
+                        condition.urlRegex?.let(::compileRegex),
+                        condition.method,
+                        condition.status,
+                    )
                 )
-            is WaitCondition.BrowserDialog -> Check(session(condition).model.dialogOpen())
-            is WaitCondition.BrowserNewTarget -> Check(targets.matches(condition.urlContains))
+            is WaitCondition.BrowserDialog -> Check(model.dialogOpen())
             is WaitCondition.BrowserLog ->
-                Check(session(condition).model.logMatched(condition.level, condition.textContains))
-            is WaitCondition.BrowserLoaded -> Check(session(condition).model.hasLoaded())
-            is WaitCondition.BrowserSettled ->
-                session(condition).model.settled(condition.quietMs, SystemClock.uptimeMillis())
+                Check(model.logMatched(condition.level, condition.textContains))
+            is WaitCondition.BrowserLoaded -> Check(model.hasLoaded())
+            is WaitCondition.BrowserSettled -> model.settled(condition.quietMs, now())
+            is WaitCondition.BrowserNewTarget,
             is WaitCondition.Node,
             is WaitCondition.Window,
             is WaitCondition.Ime,
@@ -124,21 +145,34 @@ internal class BrowserWatch(
             is WaitCondition.Screen,
             is WaitCondition.Keyguard -> Check(satisfied = false)
         }
-
-    fun close() {
-        jobs.forEach { it.cancel() }
-        jobs.clear()
-        listening.forEach { it.close() }
-        listening.clear()
-        val live = sessions.toList()
-        sessions.clear()
-        live.forEach { it.close() }
-        val open = sockets.toList()
-        sockets.clear()
-        open.forEach { it.close() }
     }
 
-    private suspend fun connect(conditions: List<WaitCondition>, timeoutMs: Long) {
+    fun close() {
+        setup.cancel()
+        val open =
+            synchronized(held) {
+                closed = true
+                held.toList().also { held.clear() }
+            }
+        open.asReversed().forEach { it.close() }
+    }
+
+    /** The time the wait has left. */
+    private fun left(): Long = (limit - now()).coerceAtLeast(0)
+
+    /** Closes [item] with the watch. On a watch already closed, closes it now and ends set-up. */
+    private fun <T : Closeable> hold(item: T): T {
+        val kept =
+            synchronized(held) {
+                if (!closed) held += item
+                !closed
+            }
+        if (kept) return item
+        item.close()
+        throw CancellationException("The wait has ended")
+    }
+
+    private suspend fun connect(conditions: List<WaitCondition>) {
         val explicit = LinkedHashSet<String>()
         var needsDefault = false
         var needsBrowser = false
@@ -151,8 +185,8 @@ internal class BrowserWatch(
             }
         }
         if (needsDefault) defaultId = resolveDefault()
-        (explicit + listOfNotNull(defaultId)).forEach { id -> openPage(id, conditions, timeoutMs) }
-        if (needsBrowser) openBrowser(timeoutMs)
+        (explicit + listOfNotNull(defaultId)).forEach { id -> openPage(id, conditions) }
+        if (needsBrowser) openBrowser()
     }
 
     private suspend fun resolveDefault(): String {
@@ -170,19 +204,20 @@ internal class BrowserWatch(
     }
 
     @Suppress("MissingUseCall") // The watch closes every socket it opened.
-    private suspend fun openPage(id: String, conditions: List<WaitCondition>, timeoutMs: Long) {
+    private suspend fun openPage(id: String, conditions: List<WaitCondition>) {
         val (socketName, chromeId) = parseBrowserTargetId(id)
-        val devtools = openSocket(socketName, timeoutMs)
-        val session = CdpSession(devtools.input, devtools.output, io)
-        sessions += session
-        val model = PageModel(SystemClock.uptimeMillis())
+        val devtools = openSocket(socketName)
+        val session = hold(CdpSession(devtools.input, devtools.output, io))
+        val model = PageModel(now())
         val page = PageSession(model, session)
         // Before the reader starts, since a listener hears only what comes after it.
-        listening += session.listen { event ->
-            model.apply(event.method, event.params, SystemClock.uptimeMillis())
-            if (event.method == "DOM.documentUpdated") page.forgetDocument()
-            signals.tryEmit(Unit)
-        }
+        hold(
+            session.listen { event ->
+                model.apply(event.method, event.params, now())
+                if (event.method == "DOM.documentUpdated") page.forgetDocument()
+                signals.tryEmit(Unit)
+            }
+        )
         session.open("/devtools/page/$chromeId")
         val onThisPage = conditions.filter { onPage(it, id) }
         val domains = domainsFor(onThisPage)
@@ -193,16 +228,15 @@ internal class BrowserWatch(
             // goes, and Chrome reports no dialog that opened before Page was enabled. So the
             // dialog counts from the screen, and the page is set up once it answers.
             model.dialogShown()
-            jobs +=
-                CoroutineScope(currentCoroutineContext()).launch {
-                    try {
-                        enable(session, domains, lifecycle)
-                        seed(session, model, load)
-                    } catch (_: ApiException) {
-                        // The page went away; the dialog already counts, and other conditions
-                        // on this page have no events to match.
-                    }
+            setup.launch {
+                try {
+                    enable(session, domains, lifecycle)
+                    seed(session, model, load)
+                } catch (_: ApiException) {
+                    // The page went away; the dialog already counts, and other conditions on this
+                    // page have no events to match.
                 }
+            }
         } else {
             enable(session, domains, lifecycle)
             seed(session, model, load)
@@ -224,32 +258,30 @@ internal class BrowserWatch(
     }
 
     @Suppress("MissingUseCall") // The watch closes every socket it opened.
-    private suspend fun openBrowser(timeoutMs: Long) {
-        val devtools = openSocket(CHROME_SOCKET, timeoutMs)
-        val session = CdpSession(devtools.input, devtools.output, io)
-        sessions += session
-        listening += session.listen { event ->
-            targets.apply(event.method, event.params)
-            signals.tryEmit(Unit)
-        }
+    private suspend fun openBrowser() {
+        val devtools = openSocket(CHROME_SOCKET)
+        val session = hold(CdpSession(devtools.input, devtools.output, io))
+        hold(
+            session.listen { event ->
+                targets.apply(event.method, event.params)
+                signals.tryEmit(Unit)
+            }
+        )
         session.open("/devtools/browser")
         session.call("Target.setDiscoverTargets", buildJsonObject { put("discover", true) })
     }
 
+    /**
+     * The watch closes the socket when the wait ends, which ends a handshake. The socket's own
+     * timeout comes after that, for a socket that opens too late to reach the watch.
+     */
     @Suppress("MissingUseCall") // Closed with the rest of the watch.
-    private suspend fun openSocket(name: String, timeoutMs: Long): DevtoolsSocket {
-        val socket = openDevtools(name, timeoutMs + SOCKET_SLACK_MS)
-        sockets += socket
-        return socket
-    }
+    private suspend fun openSocket(name: String): DevtoolsSocket =
+        hold(openDevtools(name, left() + SOCKET_SLACK_MS))
 
-    private fun session(condition: WaitCondition): PageSession {
-        val id =
-            browserTarget(condition)
-                ?: defaultId
-                ?: throw ApiException.badRequest("Pass target when more than one page is open")
-        return pages[id] ?: throw ApiException.badRequest("Unknown browser target")
-    }
+    /** The page [condition] is on, or null when the wait ran out of time before reaching it. */
+    private fun session(condition: WaitCondition): PageSession? =
+        (browserTarget(condition) ?: defaultId)?.let(pages::get)
 
     private fun onPage(condition: WaitCondition, id: String): Boolean {
         if (!isBrowserCondition(condition) || condition is WaitCondition.BrowserNewTarget)
@@ -403,6 +435,8 @@ internal class BrowserWatch(
 
     private companion object {
         const val SOCKET_SLACK_MS = 20_000L
+        /** The least a wait gets to reach a page and look at it. */
+        const val MIN_LOOK_MS = 1_000L
         const val BLANK = "about:blank"
         const val READY_STATE = "document.readyState"
     }
