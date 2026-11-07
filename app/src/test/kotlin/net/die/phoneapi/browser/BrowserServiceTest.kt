@@ -517,9 +517,19 @@ class BrowserServiceTest {
     internal fun created(id: String = "abc"): ByteArray =
         switched() + serverTextFrame("""{"id":1,"result":{"targetId":"$id"}}""")
 
-    /** A new tab's page socket, on a page already committed when the service attaches. */
+    /** A new tab's page socket, through a navigation that commits at once. */
     internal fun committedPage(): ByteArray =
-        switched() + serverTextFrame("""{"id":1,"result":{}}""") + frameTree(2)
+        switched() +
+            serverTextFrame("""{"id":1,"result":{}}""") +
+            serverTextFrame(
+                """{"id":2,"result":{"frameTree":{"frame":{"id":"F","url":"about:blank",""" +
+                    """"loaderId":"L0"}}}}"""
+            ) +
+            serverTextFrame("""{"id":3,"result":{"frameId":"F","loaderId":"L1"}}""") +
+            serverTextFrame(
+                """{"method":"Page.frameNavigated","params":{"frame":{"id":"F",""" +
+                    """"url":"https://example.com/","loaderId":"L1"}}}"""
+            )
 
     /** Replies to a snapshot whose tree has link 9. */
     internal fun snapshotFrames(): ByteArray =

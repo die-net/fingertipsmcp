@@ -271,20 +271,20 @@ internal class BrowserServiceImpl(
             )
         val remembered = if (incognito) null else opener.remembered(tab, created)
         if (remembered != null) return remembered
-        // Recording has to start before the page loads, so the tab opens blank and loads after.
-        // The blank page stays in the tab's history, so the page sees history.length 2, not 1.
+        // The tab opens blank and loads after, so what Chrome does with the URL comes to a session
+        // already listening, and recording can start before the load. A tab opened on its URL can
+        // save it before anyone is. The blank page stays in the tab's history, so the page sees
+        // history.length 2, as it does after a person types a URL into a new tab.
         val recording = capture && pageUrl != BLANK
         val chromeId =
             if (incognito) {
                 privateTabs.open(chrome, browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE)
             } else {
-                createTab(chrome.name, if (recording) BLANK else pageUrl)
+                createTab(chrome.name, BLANK)
             }
         val id = browserTargetId(chrome.name, chromeId)
         return opener.follow(
             tab.copy(id = id),
-            // An incognito tab opens on Chrome's new tab page, so it loads the page after too.
-            navigate = recording || incognito,
             incognito,
             created = {
                 created(it)
