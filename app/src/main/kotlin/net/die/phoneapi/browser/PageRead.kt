@@ -83,8 +83,8 @@ internal data class PageBlock(
     val t: Int = 0,
     /** Every cell in this row is a header cell. */
     val th: Boolean = false,
-    /** Table cells. */
-    val c: List<String> = emptyList(),
+    /** Table cells, each its text runs, so a link in a cell is a link like any other. */
+    val c: List<List<PageRun>> = emptyList(),
     /** Preformatted text. */
     val x: String = "",
     /** Text runs. */
@@ -132,7 +132,12 @@ private class PageRenderer(private val markdown: Boolean) {
     }
 
     private fun block(block: PageBlock) {
-        val inline = if (block.r.isEmpty()) null else inline(block.r)
+        val inline =
+            when {
+                block.k == "tr" -> row(block)
+                block.r.isEmpty() -> null
+                else -> inline(block.r)
+            }
         val text = body(block, inline)
         if (text.isNullOrBlank()) return
         val prefix = prefix(block)
@@ -148,7 +153,7 @@ private class PageRenderer(private val markdown: Boolean) {
     private fun body(block: PageBlock, inline: Inline?): String? =
         when (block.k) {
             "pre" -> if (markdown) "```\n${block.x}\n```" else block.x
-            "tr" -> if (block.c.all { it.isBlank() }) null else row(block)
+            "tr" -> inline?.text
             "hr" -> if (markdown) "---" else null
             else -> inline?.text
         }
@@ -172,13 +177,30 @@ private class PageRenderer(private val markdown: Boolean) {
         out.append(if (tight) "\n" else "\n\n")
     }
 
-    private fun row(block: PageBlock): String {
-        if (!markdown) return block.c.joinToString(" | ")
-        val cells = block.c.map { it.replace("|", "\\|") }
-        val line = cells.joinToString(" | ", prefix = "| ", postfix = " |")
+    /**
+     * A table row's cells, with the links in them, as one line: in markdown, between bars with each
+     * `|` in a cell escaped, and over a rule when it starts its table. Null when every cell is
+     * blank.
+     */
+    private fun row(block: PageBlock): Inline? {
+        val cells =
+            block.c.map { runs ->
+                inline(if (markdown) runs.map { it.copy(t = it.t.replace("|", "\\|")) } else runs)
+            }
+        if (cells.all { it.text.isBlank() }) return null
+        val text = StringBuilder()
+        val found = ArrayList<RenderedLink>()
+        if (markdown) text.append("| ")
+        cells.forEachIndexed { n, cell ->
+            if (n > 0) text.append(" | ")
+            cell.links.forEach { found += it.copy(offset = text.length + it.offset) }
+            text.append(cell.text)
+        }
+        if (!markdown) return Inline(text.toString(), found)
+        text.append(" |")
         val first = previous?.let { it.k != "tr" || it.t != block.t } != false
-        if (!first) return line
-        return line + "\n" + cells.joinToString(" | ", prefix = "| ", postfix = " |") { "---" }
+        if (first) text.append("\n").append(cells.joinToString(" | ", "| ", " |") { "---" })
+        return Inline(text.toString(), found)
     }
 
     /** Where the last link run ended in the inline text, and where its own text ended. */

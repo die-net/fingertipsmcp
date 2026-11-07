@@ -73,7 +73,8 @@ class Element {
   }
   get rows() {
     if (this.tagName !== "TABLE") return undefined;
-    return this.descendants().filter((el) => el.tagName === "TR");
+    const sections = this.children.filter((el) => ["THEAD", "TBODY", "TFOOT"].includes(el.tagName));
+    return [this, ...sections].flatMap((el) => el.children.filter((row) => row.tagName === "TR"));
   }
   get cells() {
     if (this.tagName !== "TR") return undefined;

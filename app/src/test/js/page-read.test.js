@@ -51,6 +51,33 @@ test("an article is read through Readability", () => {
   assert.deepEqual(read.blocks, [{ k: "p", r: [{ t: "The article" }] }]);
 });
 
+test("a table cell keeps its links and styles", () => {
+  const table = h(
+    "table",
+    null,
+    h("tbody", null,
+      h("tr", null, h("th", null, "Part"), h("th", null, "Sheet")),
+      h("tr", null,
+        h("td", null, h("p", null, "RP2350"), h("p", null, h("b", null, "new"))),
+        h("td", null, h("a", { href: "/rp2350.pdf" }, "datasheet"), h("span", { "data-hidden": "" }, "x")),
+      ),
+    ),
+  );
+  const read = pageRead(page({}, [], h("body", null, table)), { scope: "page" });
+  assert.deepEqual(read.blocks, [
+    { k: "tr", t: 0, c: [[{ t: "Part" }], [{ t: "Sheet" }]], th: true },
+    {
+      k: "tr",
+      t: 0,
+      c: [
+        [{ t: " RP2350  " }, { t: "new", s: "b" }, { t: " " }],
+        [{ t: "datasheet", h: "https://example.com/rp2350.pdf" }],
+      ],
+      th: false,
+    },
+  ]);
+});
+
 test("a selector that is not CSS says so", () => {
   assert.deepEqual(pageRead(listing(), { scope: "page", selector: "a[[" }), { badSelector: true });
   assert.deepEqual(pageRead(listing(), { scope: "page", selector: "table" }), { missing: true });

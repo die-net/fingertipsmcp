@@ -25,9 +25,9 @@ class PageReadTest {
             """{"k":"h","l":2,"r":[{"t":"Steps"}]}""",
             """{"k":"li","d":1,"o":1,"r":[{"t":"First"}]}""",
             """{"k":"li","d":2,"r":[{"t":"Nested"}]}""",
-            """{"k":"tr","t":0,"c":["Name","Value"],"th":true}""",
-            """{"k":"tr","t":0,"c":["a|b","1"]}""",
-            """{"k":"tr","t":0,"c":[""," "]}""",
+            """{"k":"tr","t":0,"c":[[{"t":"Name"}],[{"t":"Value"}]],"th":true}""",
+            """{"k":"tr","t":0,"c":[[{"t":"a|b"}],[{"t":"1"}]]}""",
+            """{"k":"tr","t":0,"c":[[],[{"t":" "}]]}""",
             """{"k":"p","q":1,"r":[{"t":"Quoted"}]}""",
             """{"k":"pre","x":"code()"}""",
             """{"k":"p","r":[{"t":"   "}]}""",
@@ -72,6 +72,21 @@ class PageReadTest {
         val link = page.links.first()
         assertEquals("a link", link.text)
         assertEquals("a link", page.text.substring(link.offset, link.offset + link.text.length))
+    }
+
+    @Test
+    fun `finds a link in a table cell`() {
+        val row =
+            """{"k":"tr","t":0,"c":[[{"t":"Spec "},{"t":"sheet","h":"https://example.com/s"}],""" +
+                """[{"t":"a|b"}]]}"""
+        val table = ApiJson.decodeFromString<List<PageBlock>>("[$row]")
+        for (format in ReadFormat.entries) {
+            val page = renderPage(table, format)
+            val link = page.links.single()
+            assertEquals("sheet", page.text.substring(link.offset, link.offset + 5), "$format")
+        }
+        val markdown = renderPage(table, ReadFormat.MARKDOWN).text
+        assertEquals("| Spec sheet | a\\|b |\n| --- | --- |", markdown)
     }
 
     @Test
