@@ -246,6 +246,11 @@ internal class HelperSupervisor(
  * the next host, since the pairing server may listen on one address and not another. Anything else,
  * such as a wrong code, would fail the same way at every address, and sending a code twice only
  * spends the dialog's attempts, so it is thrown at once.
+ *
+ * Kadb 2.1.4's `Kadb.pair` opens its socket with `java.net.Socket(host, port)` in
+ * `PairingConnectionCtx.setupTlsConnection`, with no handler between it and the caller, so a
+ * refused connection reaches here as a bare [ConnectException] (checked in its bytecode). A wrong
+ * code is `AdbPairAuthException`, and a failed TLS or message exchange is a plain `IOException`.
  */
 internal suspend fun pairAtFirstListening(hosts: List<String>, pair: suspend (String) -> Unit) {
     var refused: ConnectException? = null
