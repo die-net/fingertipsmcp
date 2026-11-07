@@ -32,7 +32,6 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import net.die.phoneapi.helperclient.HelperConnection
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DisplayInfo
@@ -157,11 +156,12 @@ internal class VideoStream(
         beginEncoder(spec, width, height, screen)
     }
 
+    /**
+     * Rebuilds for each change the display listener reports. DisplayManagerGlobal refreshes the
+     * display's info before it calls listeners, so [display] already reads the new size.
+     */
     private suspend fun watchDisplay() {
-        while (listening) {
-            withTimeoutOrNull(DISPLAY_POLL_MS) { displayChanges.receive() }
-            reconfigureIfNeeded()
-        }
+        for (change in displayChanges) reconfigureIfNeeded()
     }
 
     private suspend fun reconfigureIfNeeded() {
@@ -569,7 +569,6 @@ internal class VideoStream(
          * frame ask for one, so a still screen does not send a full picture every second.
          */
         const val KEY_FRAME_INTERVAL_S = 10
-        const val DISPLAY_POLL_MS = 400L
         const val ENCODER_STOPPED = "The video encoder stopped"
         const val HELPER_STOPPED = "The shell helper stopped"
     }
