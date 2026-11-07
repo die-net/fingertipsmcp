@@ -39,7 +39,7 @@ class InputServiceImpl(
     private val display: () -> DisplayInfo,
 ) : InputService {
     private val typer = TextTyper(tree, touch, state, keys)
-    private val imeShow = ImeShow(tree, state)
+    private val imeShow = ImeShow(tree, touch, state)
 
     override suspend fun tap(request: TapRequest): ActionResult =
         action(request.autoWake) {
