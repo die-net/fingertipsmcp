@@ -479,7 +479,7 @@ On the Android 11 test phone on 2026-11-07, with Chrome 156 and a dev build at 4
 | Call, with the nodes off | Result | Time |
 | --- | --- | --- |
 | Browser `touch` tap, keyboard hidden | Clicked, 3 of 3 | 0.4 to 0.5 s |
-| Browser `touch` tap, keyboard up | 200, and the tap missed, 9 of 9 | 0.5 to 0.8 s |
+| Browser `touch` tap, keyboard up | 200, and the tap missed, 9 of 9, before the fix below | 0.5 to 0.8 s |
 | `POST /v1/input/tap` by text, keyboard hidden | Clicked, 2 of 2 | 0.3 s |
 | `POST /v1/input/tap` by text, keyboard up | 404 `not_found`, with the button under the keyboard, 1 of 1 | 0.3 s |
 | `POST /v1/input/text`, `clear`, `keyboard` | Replaced, 9 of 9 | 7.5 to 7.9 s |
@@ -488,7 +488,7 @@ On the Android 11 test phone on 2026-11-07, with Chrome 156 and a dev build at 4
 | Browser text, `clear` | Replaced, 2 of 2 | 7.8 to 7.9 s |
 | `POST /v1/input/text`, `keyboard`, no `clear` | Typed, 1 of 1, with no start, and the nodes stayed off | 1.5 s |
 
-The missed taps went to the field, a paragraph, or the body. The page saw `blur`, `focus`, and two `resize` events before the touch, which landed at y 1053 to 1191, where the button sits with the keyboard up. With the nodes on and the keyboard up, the same tap clicked 9 of 9 times, at y 1048 to 1131. So it looks like the start moves the page after the point is taken.
+The missed taps went to the field, a paragraph, or the body. The page saw `blur`, `focus`, and two `resize` events before the touch, which landed at y 1053 to 1191, where the button sits with the keyboard up. With the nodes on and the keyboard up, the same tap clicked 9 of 9 times, at y 1048 to 1131. The start moved the page after the point was taken. With the page's bounds read first, and a wait for the layout to read the same twice, the same tap clicked 9 of 9 times in 0.76 to 0.90 s, on the button at y 1601 to 1717, where it sits with the keyboard gone. The two `resize` events came 293 to 395 ms into the call, and the touch 362 to 426 ms after the last one. A keyboard-hidden tap with the nodes off clicked 3 of 3, in 0.69 to 0.81 s. A tap with the nodes on and the keyboard up clicked 3 of 3, in 0.32 to 0.34 s.
 
 Chrome 145 on the Android 17 emulator did not turn the nodes off that day, on nine tabs, each watched for 15 s after a read. Chrome 109 on the Android 13 emulator, with tabs opened on their URL, passed an open, its listed id, a touch tap, `clear` with and without a selector, `setText`, `ui/find`, and `keyboard_show`, on one tab.
 

@@ -19,15 +19,21 @@ class PageNodes(
     /**
      * Runs [block], and once more after a start of [pkg] when it failed for want of the nodes. A
      * start changes the screen, so only calls that act on it come here, and [block] has to be safe
-     * to run again from that failure. When the nodes stay off, the second run says so.
+     * to run again from that failure. When the nodes stay off, the second run says so. A start
+     * hides the keyboard, which moves the page, so [moved] waits that out before the second run.
      */
-    suspend fun <T> restoring(pkg: String?, block: suspend () -> T): T =
+    suspend fun <T> restoring(
+        pkg: String?,
+        moved: suspend () -> Unit = {},
+        block: suspend () -> T,
+    ): T =
         try {
             block()
         } catch (e: ApiException) {
             if (e.error != PAGE_NODES_OFF || pkg == null) throw e
             start(pkg)
             settled(RETURN_MS) { hasContent { bounds(pkg) } }
+            moved()
             block()
         }
 

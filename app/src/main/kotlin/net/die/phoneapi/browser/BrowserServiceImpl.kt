@@ -21,6 +21,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.core.BrowserService
+import net.die.phoneapi.core.holdsStill
 import net.die.phoneapi.core.settled
 import net.die.phoneapi.helper.TouchscreenInfo
 import net.die.phoneapi.input.SwipeSpec
@@ -181,7 +182,7 @@ internal class BrowserServiceImpl(
             gestureAt = gestureAt,
             pressKey = pressKey,
             typeText = typeText,
-            contentBounds = ::pageBounds,
+            pageBounds = ::pageBounds,
             appUp = { pkg -> appUp(pkg) },
             quads = locator::quads,
             focusNode = locator::focus,
@@ -702,9 +703,19 @@ internal class BrowserServiceImpl(
         throw ApiException(409, "not_visible", "$pkg did not come on screen for touch input.")
     }
 
-    /** Where [pkg]'s page is drawn, with its nodes brought back if Chrome turned them off. */
-    private suspend fun pageBounds(pkg: String?): Rect =
-        pageNodes.restoring(pkg) { contentBounds(pkg) }
+    /**
+     * Where [pkg]'s page is drawn, with its nodes brought back if Chrome turned them off. Bringing
+     * them back moves the page, so anything read from the page comes after this.
+     */
+    private suspend fun pageBounds(cdp: CdpSession, pkg: String?): Rect =
+        pageNodes.restoring(
+            pkg,
+            moved = {
+                holdsStill(LAYOUT_STILL_MS, LAYOUT_GAP_MS) { cdp.call("Page.getLayoutMetrics") }
+            },
+        ) {
+            contentBounds(pkg)
+        }
 
     /**
      * Chrome holds a touch for a hidden tab and plays it once Chrome shows, so a cdp touch is
@@ -756,6 +767,8 @@ internal class BrowserServiceImpl(
         const val MAX_SNAPSHOT_NODES = 5_000
         const val TARGET_LIST_MS = MAX_CONSOLE_MS
         const val APPEAR_MS = 5_000L
+        const val LAYOUT_STILL_MS = 2_000L
+        const val LAYOUT_GAP_MS = 200L
         const val SHOWING_MS = 2_000L
         const val SHOW_ATTEMPTS = 3
         const val ERROR_SNIPPET = 80

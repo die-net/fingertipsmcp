@@ -21,6 +21,26 @@ class SettledTest {
     }
 
     @Test
+    fun `still at once takes one gap`() = runTest {
+        holdsStill(TIMEOUT_MS, GAP_MS) { "same" }
+        assertEquals(GAP_MS, currentTime)
+    }
+
+    @Test
+    fun `waits out what moves`() = runTest {
+        val reads = listOf(1, 2, 3, 3).iterator()
+        holdsStill(TIMEOUT_MS, GAP_MS) { reads.next() }
+        assertEquals(3 * GAP_MS, currentTime)
+    }
+
+    @Test
+    fun `gives up on what never stops`() = runTest {
+        var reads = 0
+        holdsStill(TIMEOUT_MS, GAP_MS) { ++reads }
+        assertEquals(TIMEOUT_MS, currentTime)
+    }
+
+    @Test
     fun `waits for a late result`() = runTest {
         var checks = 0
         assertTrue(settled(TIMEOUT_MS) { ++checks == 3 })
@@ -65,5 +85,6 @@ class SettledTest {
 
     private companion object {
         const val TIMEOUT_MS = 1_000L
+        const val GAP_MS = 200L
     }
 }

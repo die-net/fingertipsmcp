@@ -35,7 +35,8 @@ internal class PageInput(
     private val pressKey: suspend (KeyRequest) -> ActionResult,
     private val typeText: suspend (TextRequest) -> ActionResult,
     /** Where the app's page is drawn on screen; fails with `content_unavailable` when it is not. */
-    private val contentBounds: suspend (String?) -> Rect,
+    /** Where the page is drawn. Call it before reading a box, since it can move the page. */
+    private val pageBounds: suspend (CdpSession, String?) -> Rect,
     /** Brings the app up when it is not in front, and fails when it does not come. */
     private val appUp: suspend (String?) -> Unit,
     private val quads: suspend (CdpSession, String, TapTarget) -> JsonArray,
@@ -97,9 +98,9 @@ internal class PageInput(
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
                 showTab(cdp, pkg)
+                val content = pageBounds(cdp, pkg)
                 val ends = swipeEnds(cdp, id, request)
                 val metrics = cdp.call("Page.getLayoutMetrics")
-                val content = contentBounds(pkg)
                 swipeAt(
                     screenPoint(ends.first.x, ends.first.y, metrics, content),
                     screenPoint(ends.second.x, ends.second.y, metrics, content),
@@ -148,8 +149,8 @@ internal class PageInput(
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
                 showTab(cdp, pkg)
+                val content = pageBounds(cdp, pkg)
                 val metrics = cdp.call("Page.getLayoutMetrics")
-                val content = contentBounds(pkg)
                 val mapped =
                     request.pointers.map { path ->
                         path.map { point ->
@@ -253,9 +254,9 @@ internal class PageInput(
         humanize: Boolean,
     ): ActionResult {
         showTab(cdp, pkg)
+        val content = pageBounds(cdp, pkg)
         val boxes = quads(cdp, id, wanted)
-        val hit = screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
-        return touchAt(hit, humanize)
+        return touchAt(screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), content), humanize)
     }
 
     private suspend fun cdpTap(
@@ -358,9 +359,9 @@ internal class PageInput(
         when (input) {
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> {
+                val content = pageBounds(cdp, pkg)
                 val boxes = quads(cdp, id, focus)
-                val rect =
-                    screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), contentBounds(pkg))
+                val rect = screenTarget(boxes, cdp.call("Page.getLayoutMetrics"), content)
                 // Humanized like any other touch: the request has no switch for it.
                 touchAt(rect, true)
             }

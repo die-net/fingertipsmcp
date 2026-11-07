@@ -145,25 +145,73 @@ class BrowserTouchTest {
         assertEquals(emptyList<String>(), launched)
     }
 
-    /** A tap's page socket, up to its element's box. */
-    private fun tapPage() =
-        harness.socket(
+    /**
+     * A tap's page socket when its nodes were off: the layout is read until it holds still after
+     * the start, with [moving] reads of it still moving, and only then the element's box.
+     */
+    private fun restoredPage(moving: Int = 0): StallingSocket {
+        val layout =
+            (5 until 5 + moving).map { harness.metrics(it).replace("\"pageY\":0", "\"pageY\":40") }
+        val still = 5 + moving
+        val firstId = still + 2
+        return harness.socket(
             harness.switched() +
                 empty(1) +
                 harness.visibility(2, "visible") +
-                harness.serverTextFrame("""{"id":5,"result":{"root":{"nodeId":1}}}""") +
-                harness.serverTextFrame("""{"id":6,"result":{"nodeId":4}}""") +
-                empty(7) +
-                harness.serverTextFrame(harness.quad(8)) +
-                harness.serverTextFrame(harness.metrics(9))
+                layout.fold(byteArrayOf()) { all, frame -> all + harness.serverTextFrame(frame) } +
+                harness.serverTextFrame(harness.metrics(still)) +
+                harness.serverTextFrame(harness.metrics(still + 1)) +
+                harness.serverTextFrame("""{"id":$firstId,"result":{"root":{"nodeId":1}}}""") +
+                harness.serverTextFrame("""{"id":${firstId + 1},"result":{"nodeId":4}}""") +
+                empty(firstId + 2) +
+                harness.serverTextFrame(harness.quad(firstId + 3)) +
+                harness.serverTextFrame(harness.metrics(firstId + 4))
         )
+    }
 
     private fun nodesOff() = ApiException(409, "page_nodes_off", "Chrome turned the nodes off")
 
     @Test
+    fun `a start moves the page first`() {
+        // A start hides the keyboard, so a box read before it is where the page used to be. The
+        // tap missed its button 9 of 9 times on the phone.
+        val page = restoredPage(moving = 1)
+        val launched = mutableListOf<String>()
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = BrowserServiceTest.CHROME,
+                open = { page },
+                content = {
+                    if (launched.isEmpty()) throw nodesOff()
+                    Rect(0, 283, 1080, 2339)
+                },
+                showPackage = { launched += it },
+                touch = { _, _ -> ActionResult(ok = true, backend = "inject") },
+            )
+        harness.virtual {
+            service.tap(TAB, BrowserTapRequest(selector = "a", humanize = false, waitMs = 0))
+        }
+        val read = page.methods().dropWhile { it != "Page.getLayoutMetrics" }
+        assertEquals(
+            listOf(
+                "Page.getLayoutMetrics",
+                "Page.getLayoutMetrics",
+                "Page.getLayoutMetrics",
+                "DOM.getDocument",
+                "DOM.querySelector",
+                "DOM.scrollIntoViewIfNeeded",
+                "DOM.getContentQuads",
+                "Page.getLayoutMetrics",
+            ),
+            read,
+        )
+    }
+
+    @Test
     fun `nodes off come back`() {
         // Chrome turned the page's nodes off, with nothing over the page. Starting it undoes that.
-        val page = tapPage()
+        val page = restoredPage()
         val launched = mutableListOf<String>()
         val touched = mutableListOf<Rect>()
         val service =
@@ -208,7 +256,7 @@ class BrowserTouchTest {
 
     @Test
     fun `nodes that stay off fail once`() {
-        val page = tapPage()
+        val page = restoredPage()
         val launched = mutableListOf<String>()
         val service =
             harness.service(
