@@ -18,7 +18,7 @@ ADB is the trust boundary. Anyone with a debugging session can mint tokens and d
 - The API listens only on the abstract `LocalServerSocket` named after the package. No TCP or LAN listener.
 - A missing or unknown token gets an empty 404, with no body or banner. A token without the scope gets 403 `forbidden`.
 - Every REST route and MCP tool is gated by a scope, and by `capabilities` when it needs the helper or Chrome. A new one takes the narrowest scope that covers it.
-- `/mcp` takes only the `Authorization` header. `?access_token=` works only for `GET /viewer` and WebSocket upgrades. The `phoneapi` cookie works only for those and `GET /v1/device`, which the viewer page reads (`acceptsViewerCookie`). Every upgrade checks `Origin` through `Auth.kt`.
+- `/mcp` takes only the `Authorization` header. `?access_token=` works only for `GET /viewer` and WebSocket upgrades. The `phoneapi` cookie works only for those (`acceptsViewerCookie`); the viewer page learns the screen's size from the video header, not from `GET /v1/device`. Every upgrade checks `Origin` through `Auth.kt`.
 - A session id is not a credential. It appears in logs and admin output only as `McpSessions.hashOf(id)`.
 - `logcat_tail` lets any `observe` token read the log. Logs carry ids, hashes, and errors, never a token, session id, PIN, typed text, UI text, or page content.
 - The helper runs as the shell user, so a command it runs is a shell on the phone. Commands run as an argument list (`shell.exec(listOf(...))`, `ProcessBuilder(argv)`). `sh -c` is only for a fixed string that needs the shell, such as the `setsid` detach, never one that holds a value from a request.
