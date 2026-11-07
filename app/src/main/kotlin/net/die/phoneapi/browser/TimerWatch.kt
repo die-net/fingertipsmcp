@@ -21,10 +21,8 @@ internal class TimerWatch(
     private val scope: CoroutineScope,
     /** Runs a block on the tab's DevTools connection. */
     private val onPage: suspend (String, suspend (CdpSession) -> Unit) -> Unit,
+    /** The time in ms, on the clock [scope]'s waits run on. */
     private val now: () -> Long = System::currentTimeMillis,
-    private val stallMs: Long = STALL_MS,
-    private val watchMs: Long = WATCH_MS,
-    private val setupMs: Long = SETUP_MS,
 ) {
     // Starting and Waiting compare by identity, so each check records only over its own state.
     private sealed interface State {
@@ -34,7 +32,7 @@ internal class TimerWatch(
         /** A check set its timer at [atMs] and is waiting for it. */
         class Waiting(val atMs: Long) : State
 
-        /** A check's timer did not fire within [watchMs]. */
+        /** A check's timer did not fire within [WATCH_MS]. */
         data object Stalled : State
     }
 
@@ -47,7 +45,7 @@ internal class TimerWatch(
         scope.launch {
             var mine: State = starting
             val fired =
-                check(id, watchMs) { waiting ->
+                check(id, WATCH_MS) { waiting ->
                     if (states.replace(id, starting, waiting)) mine = waiting
                 }
             // Only the latest check records a result; a newer one has replaced this one's state.
@@ -66,7 +64,7 @@ internal class TimerWatch(
     /** Whether [id]'s last check shows its timers stopped: overdue, or never fired. */
     fun stalled(id: String): Boolean =
         when (val state = states[id]) {
-            is State.Waiting -> now() - state.atMs > stallMs
+            is State.Waiting -> now() - state.atMs > STALL_MS
             State.Stalled -> true
             else -> false
         }
@@ -81,7 +79,7 @@ internal class TimerWatch(
      * refused. True when its timers are still stopped.
      */
     suspend fun confirm(id: String): Boolean {
-        val fired = check(id, stallMs) {}
+        val fired = check(id, STALL_MS) {}
         if (fired == false) states[id] = State.Stalled else states.remove(id)
         return fired == false
     }
@@ -98,7 +96,7 @@ internal class TimerWatch(
         var fired: Boolean? = null
         try {
             onPage(id) { cdp ->
-                val world = withTimeoutOrNull(setupMs) { isolatedWorld(cdp) } ?: return@onPage
+                val world = withTimeoutOrNull(SETUP_MS) { isolatedWorld(cdp) } ?: return@onPage
                 onSet(State.Waiting(now()))
                 fired =
                     withTimeoutOrNull(limitMs) { evaluateInWorld(cdp, world, TIMER, true) } != null
@@ -115,9 +113,11 @@ internal class TimerWatch(
         /** Longer than the once-a-second batching Chrome gives a hidden tab that still runs. */
         const val STALL_MS = 1_100L
 
-        /** How long a background check waits, within DevTools' read timeout. */
-        private const val WATCH_MS = 10_000L
-        private const val SETUP_MS = 2_000L
+        /** How long a background check waits, within each DevTools call's 15 s. */
+        const val WATCH_MS = 10_000L
+
+        /** How long a check waits for its isolated world, past which the page is busy. */
+        const val SETUP_MS = 2_000L
         // Not 0: Chrome runs a zero-delay timer at once, on a queue it never throttles or stops.
         private const val TIMER = "new Promise((done) => setTimeout(() => done(true), 1))"
     }

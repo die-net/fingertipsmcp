@@ -1,112 +1,106 @@
 package net.die.phoneapi.browser
 
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** The background check of whether a tab's timers run. */
-// Scripted sockets are read on a real dispatcher, and each check closes its own socket.
-@Suppress("InjectDispatcher", "MissingUseCall")
+/** The background check of whether a tab's timers run, in virtual time at its real lengths. */
+@Suppress("MissingUseCall") // Each check closes its own socket.
 class TimerWatchTest {
     private val harness = BrowserServiceTest()
+    private val clock = harness.clock
     private var timerFires = true
+    private val started = AtomicInteger()
+    private val ended = AtomicInteger()
 
-    private fun watch() =
+    /** A watch whose checks get [replies] after the handshake, or the default timer replies. */
+    private fun watch(
+        replies: () -> ByteArray = { world() + if (timerFires) fired() else byteArrayOf() }
+    ) =
         TimerWatch(
-            CoroutineScope(Dispatchers.IO),
+            CoroutineScope(clock),
             onPage = { _, block ->
-                val replies =
-                    harness.switched() + world() + if (timerFires) fired() else byteArrayOf()
-                val page = StallingSocket(replies)
+                started.incrementAndGet()
+                val page = harness.socket(harness.switched() + replies())
                 try {
-                    CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
+                    CdpSession(page.input, page.output, clock) { BrowserServiceTest.KEY }
                         .use { cdp ->
                             cdp.open("/devtools/page/t")
                             block(cdp)
                         }
                 } finally {
                     page.close()
+                    ended.incrementAndGet()
                 }
             },
-            stallMs = STALL_MS,
-            watchMs = WATCH_MS,
-            setupMs = SETUP_MS,
+            now = { clock.now },
         )
 
     @Test
-    fun `running timers are fine`() = runBlocking {
+    fun `running timers are fine`() = clock.run {
         val watch = watch()
         watch.arm("t")
-        delay(STALL_MS * 3)
+        delay(TimerWatch.STALL_MS * 3)
+        assertEquals(1, ended.get(), "the check ran to the end")
         assertFalse(watch.stalled("t"))
     }
 
     @Test
-    fun `stopped timers show`() = runBlocking {
+    fun `stopped timers show`() = clock.run {
         timerFires = false
         val watch = watch()
         watch.arm("t")
-        // Overdue while the check still waits, and stalled once it gives up.
-        withTimeout(WATCH_MS * 2) { while (!watch.stalled("t")) delay(10) }
-        delay(WATCH_MS)
+        delay(1)
+        assertFalse(watch.stalled("t"), "a check that has just set its timer is not late")
+        delay(TimerWatch.STALL_MS)
+        // Overdue while the check still waits.
+        assertTrue(watch.stalled("t"))
+        assertEquals(0, ended.get())
+        delay(TimerWatch.WATCH_MS)
+        // And stalled once it gives up.
+        assertEquals(1, ended.get())
         assertTrue(watch.stalled("t"))
         assertTrue(watch.confirm("t"))
     }
 
     @Test
-    fun `waits keep a found stop`() = runBlocking {
+    fun `waits keep a found stop`() = clock.run {
         timerFires = false
         val watch = watch()
         val tab = "$CHROME_SOCKET~t"
         watch.watch(tab)
-        withTimeout(WATCH_MS * 2) { while (!watch.stalled(tab)) delay(10) }
+        delay(TimerWatch.WATCH_MS + 1)
+        assertEquals(1, ended.get())
+        assertTrue(watch.stalled(tab))
         // A wait that starts its own check must not reset one that found the timers stopped.
         watch.watch(tab)
         assertTrue(watch.stalled(tab))
+        assertEquals(1, started.get())
     }
 
     @Test
-    fun `revived tabs clear`() = runBlocking {
+    fun `revived tabs clear`() = clock.run {
         timerFires = false
         val watch = watch()
         watch.arm("t")
-        withTimeout(WATCH_MS * 2) { while (!watch.stalled("t")) delay(10) }
+        delay(TimerWatch.WATCH_MS + 1)
+        assertTrue(watch.stalled("t"))
         timerFires = true
         assertFalse(watch.confirm("t"))
         assertFalse(watch.stalled("t"))
     }
 
     @Test
-    fun `busy pages are unknown`() = runBlocking {
+    fun `busy pages are unknown`() = clock.run {
         // No answer even to setting up the isolated world, as while script runs: not a stall.
-        val watch =
-            TimerWatch(
-                CoroutineScope(Dispatchers.IO),
-                onPage = { _, block ->
-                    val page = StallingSocket(harness.switched())
-                    try {
-                        CdpSession(page.input, page.output, Dispatchers.IO) {
-                                BrowserServiceTest.KEY
-                            }
-                            .use { cdp ->
-                                cdp.open("/devtools/page/t")
-                                block(cdp)
-                            }
-                    } finally {
-                        page.close()
-                    }
-                },
-                stallMs = STALL_MS,
-                watchMs = WATCH_MS,
-                setupMs = SETUP_MS,
-            )
+        val watch = watch { byteArrayOf() }
         watch.arm("t")
-        delay(SETUP_MS * 3)
+        delay(TimerWatch.SETUP_MS + 1)
+        assertEquals(1, ended.get())
         assertFalse(watch.stalled("t"))
     }
 
@@ -116,10 +110,4 @@ class TimerWatchTest {
 
     private fun fired() =
         harness.serverTextFrame("""{"id":3,"result":{"result":{"type":"boolean","value":true}}}""")
-
-    private companion object {
-        const val STALL_MS = 100L
-        const val WATCH_MS = 300L
-        const val SETUP_MS = 150L
-    }
 }
