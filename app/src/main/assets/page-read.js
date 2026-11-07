@@ -14,6 +14,20 @@ const BLOCK = new Set([
   "MENU", "NAV", "P", "SECTION", "SUMMARY", "TBODY", "TD", "TFOOT", "TH", "THEAD", "TR", "BR",
 ]);
 const STYLE = { STRONG: "b", B: "b", EM: "i", I: "i", CODE: "code", KBD: "code", SAMP: "code" };
+// Elements that, inside a table cell, set their text apart from what is around it.
+const CELL_BREAK = new Set([
+  "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "PRE", "BLOCKQUOTE", "TABLE", "HR",
+]);
+
+// The context for el's children: a link's target, or a style, on top of ctx.
+function inner(el, tag, ctx) {
+  if (tag === "A") {
+    const href = /^(https?|mailto):/i.test(el.href || "") ? el.href : undefined;
+    return Object.assign({}, ctx, { h: href || ctx.h });
+  }
+  if (STYLE[tag]) return Object.assign({}, ctx, { s: ctx.s || STYLE[tag] });
+  return ctx;
+}
 
 // Walks roots in order, as one piece of content.
 function walk(roots, live) {
@@ -47,8 +61,32 @@ function walk(roots, live) {
     return el.getAttribute("aria-hidden") === "true" || el.hidden;
   }
 
-  function cellText(cell) {
-    return (live ? cell.innerText : cell.textContent).replace(/\s+/g, " ").trim();
+  // A cell's text runs, with its links and styles. Blocks inside a cell, such as paragraphs or a
+  // nested table, run together with a space between, since a row is one line.
+  function cellRuns(cell, ctx) {
+    const saved = runs;
+    runs = [];
+    inline(cell, ctx);
+    const out = runs;
+    runs = saved;
+    return out;
+  }
+
+  function inline(node, ctx) {
+    for (const child of node.childNodes) {
+      if (chars > MAX_CHARS) return;
+      if (child.nodeType === 3) {
+        push(child.data.replace(/\s+/g, " "), ctx.h, ctx.s);
+        continue;
+      }
+      if (child.nodeType !== 1) continue;
+      const tag = child.tagName.toUpperCase();
+      if (SKIP.has(tag) || hidden(child)) continue;
+      const apart = BLOCK.has(tag) || CELL_BREAK.has(tag);
+      if (apart) push(" ", ctx.h, ctx.s);
+      inline(child, inner(child, tag, ctx));
+      if (apart) push(" ", ctx.h, ctx.s);
+    }
   }
 
   function table(el, ctx) {
@@ -59,8 +97,9 @@ function walk(roots, live) {
     for (const row of rows) {
       const cells = Array.from(row.cells);
       const th = cells.length > 0 && cells.every((c) => c.tagName === "TH");
-      blocks.push({ k: "tr", t: id, c: cells.map(cellText), th: th, q: ctx.q || undefined });
-      chars += cells.reduce((n, c) => n + c.textContent.length, 0);
+      const c = cells.map((cell) => cellRuns(cell, ctx));
+      blocks.push({ k: "tr", t: id, c: c, th: th, q: ctx.q || undefined });
+      if (chars > MAX_CHARS) break;
     }
     return true;
   }
@@ -112,13 +151,9 @@ function walk(roots, live) {
       blocks.push({ k: "hr" });
     } else if (tag === "TABLE") {
       if (!table(node, ctx)) within(quoted({ k: "p" }), children);
-    } else if (tag === "A") {
-      const href = /^(https?|mailto):/i.test(node.href || "") ? node.href : undefined;
-      const inner = Object.assign({}, ctx, { h: href || ctx.h });
-      node.childNodes.forEach((child) => visit(child, inner));
-    } else if (STYLE[tag]) {
-      const inner = Object.assign({}, ctx, { s: ctx.s || STYLE[tag] });
-      node.childNodes.forEach((child) => visit(child, inner));
+    } else if (tag === "A" || STYLE[tag]) {
+      const within = inner(node, tag, ctx);
+      node.childNodes.forEach((child) => visit(child, within));
     } else if (BLOCK.has(tag)) {
       flush();
       children();
