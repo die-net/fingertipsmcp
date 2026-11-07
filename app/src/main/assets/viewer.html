@@ -15,9 +15,11 @@
     #keys svg { width: 1.25rem; height: 1.25rem; fill: currentColor; }
     p { margin: 0.4rem 0.5rem 0.6rem; max-width: 40rem; text-align: center; }
     [hidden] { display: none !important; }
-    /* Holds its space while idle, so the video doesn't move when the screen changes hands. */
-    #lease { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.4rem 0.5rem 0; width: min(40rem, calc(100% - 1rem)); min-height: 3.7rem; color: #f0c674; text-align: center; }
-    #lease.idle { visibility: hidden; }
+    /* Every message sits in the same grid cell, hidden ones included, so the bar is as tall as its
+       longest message at any width, and the video doesn't move when the screen changes hands. */
+    #lease { display: grid; margin: 0.4rem 0.5rem 0; width: min(40rem, calc(100% - 1rem)); color: #f0c674; text-align: center; }
+    #lease > div { grid-area: 1 / 1; display: flex; align-items: center; justify-content: center; gap: 0.5rem; visibility: hidden; }
+    #lease > div.shown { visibility: visible; }
     #lease button { flex: none; padding: 0.3rem 0.8rem; background: #3a2f12; color: #f0c674; border: 1px solid #806a2a; border-radius: 4px; font: inherit; }
   </style>
 </head>
@@ -36,7 +38,11 @@
   <button type="button" data-key="QUICK_SETTINGS" title="Quick settings" aria-label="Quick settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17v2h6v-2zm0-12v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z"/></svg></button>
   <button type="button" id="orientation" title="Orientation" aria-label="Orientation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05c.5 6.16 5.66 11 11.95 11l.66-.03-3.81-3.81z"/></svg></button>
 </nav>
-<div id="lease" class="idle"><span id="lease-text"></span><button type="button" id="take">Take over</button><button type="button" id="done">Done</button></div>
+<div id="lease">
+  <div id="lease-other"><span></span><button type="button" id="take">Take over</button></div>
+  <div id="lease-took"><span></span><button type="button" class="done">Done</button></div>
+  <div id="lease-mine"><span></span><button type="button" class="done">Done</button></div>
+</div>
 <p id="status">Connecting</p>
 <script>
 const status = document.getElementById("status");
@@ -444,11 +450,24 @@ function screenPoint(event) {
 }
 
 // Who holds the screen, from the input socket. While someone else does, input is dropped.
-const leaseBox = document.getElementById("lease");
-const leaseText = document.getElementById("lease-text");
+const leaseOther = document.getElementById("lease-other");
+const leaseTook = document.getElementById("lease-took");
+const leaseMine = document.getElementById("lease-mine");
 const takeButton = document.getElementById("take");
-const doneButton = document.getElementById("done");
 const HOLDERS = { agent: "an agent", person: "another viewer", script: "a script" };
+
+function otherText(holder, minutes) {
+  const held = minutes >= 1 ? " for " + minutes + " min" : "";
+  return "In use by " + holder + held + ". Input is ignored until you take over.";
+}
+
+function tookText(holder) {
+  return "You took over from " + holder +
+    ". Press Done to give it back, or it gets the screen back 30 s after your last input.";
+}
+
+leaseMine.firstElementChild.textContent =
+  "You have the screen. Press Done when you are finished, or others can use it 30 s after your last input.";
 let lease = { holder: "none", since: 0, takenFrom: null };
 let leaseTimer = null;
 
@@ -475,19 +494,14 @@ function onSocketMessage(data) {
 function showLease() {
   const other = HOLDERS[lease.holder];
   const mine = lease.holder === "you";
-  leaseBox.classList.toggle("idle", !other && !mine);
-  takeButton.hidden = !other;
-  doneButton.hidden = !mine;
-  if (other) {
-    const minutes = Math.floor((performance.now() - lease.since) / 60000);
-    const held = minutes >= 1 ? " for " + minutes + " min" : "";
-    leaseText.textContent = "In use by " + other + held + ". Input is ignored until you take over.";
-  } else if (mine && HOLDERS[lease.takenFrom]) {
-    leaseText.textContent = "You took over from " + HOLDERS[lease.takenFrom] +
-      ". Press Done to give it back, or it gets the screen back 30 s after your last input.";
-  } else if (mine) {
-    leaseText.textContent = "You have the screen. Press Done when you are finished, or others can use it 30 s after your last input.";
-  }
+  const took = mine && HOLDERS[lease.takenFrom];
+  const minutes = Math.floor((performance.now() - lease.since) / 60000);
+  // A hidden message keeps its longest form, so it holds the bar's height for when it shows.
+  leaseOther.firstElementChild.textContent = otherText(other || HOLDERS.person, other ? minutes : 59);
+  leaseTook.firstElementChild.textContent = tookText(took || HOLDERS.agent);
+  leaseOther.classList.toggle("shown", Boolean(other));
+  leaseTook.classList.toggle("shown", Boolean(took));
+  leaseMine.classList.toggle("shown", mine && !took);
   if (other && leaseTimer === null) leaseTimer = setInterval(showLease, 15000);
   if (!other && leaseTimer !== null) {
     clearInterval(leaseTimer);
@@ -496,7 +510,10 @@ function showLease() {
 }
 
 takeButton.addEventListener("click", () => sendPointer({ op: "take" }));
-doneButton.addEventListener("click", () => sendPointer({ op: "release" }));
+for (const done of document.querySelectorAll("#lease .done")) {
+  done.addEventListener("click", () => sendPointer({ op: "release" }));
+}
+showLease();
 
 // The button cycles from what it last set, starting from auto-rotate.
 const ORIENTATIONS = ["auto", "0", "90", "180", "270"];
