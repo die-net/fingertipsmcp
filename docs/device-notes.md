@@ -164,6 +164,8 @@ Checked through MCP on the Android 16 emulator with Chrome 133 on 2026-11-06:
 - A `url` read of a page that first answered 3 s or 8 s in returned the page, with no error at the commit. One that took 40 s said `not loaded after 12 s`.
 - Through Readability, an article kept its byline, published time, paywall flag, and JSON-LD, and text under `display:none` stayed out. A list of 40 links read as a page. `browser_find` found links inside a table.
 
+On the Android 10 emulator with Chrome 91 on 2026-11-06, the takeover of an arXiv PDF answered its pause and loaded the stand-in page, and the script then failed with `SyntaxError: Unexpected token '{'`. So Chrome 91 can't run the PDF scripts, which is taken to be syntax newer than it, though the token's place was not looked up.
+
 ## Starting Chrome
 
 Chrome opens `chrome_devtools_remote` only while it runs. A tab open with Chrome stopped starts it from its launcher entry, as tapping its icon would, and waits for the socket, as [sharing.md](sharing.md) describes.

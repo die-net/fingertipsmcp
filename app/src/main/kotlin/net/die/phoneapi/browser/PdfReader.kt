@@ -6,7 +6,8 @@ import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -126,26 +127,37 @@ internal class PdfReader(private val script: suspend () -> String) {
      * [PAGE] before it reaches the network, returning the new page once it is ready for script.
      */
     private suspend fun takeOver(cdp: CdpSession, frameId: String, url: String): Taken {
-        cdp.call(
-            "Fetch.enable",
-            buildJsonObject {
-                putJsonArray("patterns") {
-                    addJsonObject {
-                        put("urlPattern", "*")
-                        put("resourceType", "Document")
-                        put("requestStage", "Request")
+        val pauses = Channel<Paused>(Channel.UNLIMITED)
+        // Listening from before Fetch.enable, so every pause is answered. A listener may not wait,
+        // so answering, which does, happens in navigateAnswered.
+        val (navigated, answered) =
+            cdp.listen { event ->
+                    if (event.method == "Fetch.requestPaused") {
+                        event.params.decodeCdp<Paused>()?.let(pauses::trySend)
                     }
                 }
-            },
-        )
-        // Interception ends with the DevTools session, so a cancelled takeover needs no cleanup.
-        val (navigated, answered) =
-            try {
-                navigateAnswered(cdp, frameId, url)
-            } catch (e: ApiException) {
-                disableFetch(cdp)
-                throw e
-            }
+                .use {
+                    cdp.call(
+                        "Fetch.enable",
+                        buildJsonObject {
+                            putJsonArray("patterns") {
+                                addJsonObject {
+                                    put("urlPattern", "*")
+                                    put("resourceType", "Document")
+                                    put("requestStage", "Request")
+                                }
+                            }
+                        },
+                    )
+                    // Interception ends with the DevTools session, so a cancelled takeover needs
+                    // no cleanup.
+                    try {
+                        navigateAnswered(cdp, frameId, url, pauses)
+                    } catch (e: ApiException) {
+                        disableFetch(cdp)
+                        throw e
+                    }
+                }
         disableFetch(cdp)
         navigated?.errorText?.let {
             throw ApiException(BAD_GATEWAY, "page_error", "Chrome did not open the PDF's page: $it")
@@ -177,7 +189,7 @@ internal class PdfReader(private val script: suspend () -> String) {
     }
 
     /**
-     * Navigates to [url] and answers every navigation of the main frame [frameId] that pauses
+     * Navigates to [url] and answers every navigation of the main frame [frameId] among [pauses]
      * before `Page.navigate` returns with [PAGE], letting any other paused document request, such
      * as a frame's, go on. Chrome answers `Page.navigate` only once the navigation has its
      * response, so once it returns, no pause of this navigation is still to come. A navigation that
@@ -189,26 +201,23 @@ internal class PdfReader(private val script: suspend () -> String) {
         cdp: CdpSession,
         frameId: String,
         url: String,
+        pauses: ReceiveChannel<Paused>,
     ): Pair<Navigated?, Boolean> = coroutineScope {
         val answered = AtomicBoolean(false)
-        // Started undispatched, so it is collecting before Page.navigate is sent.
-        val answering =
-            launch(start = CoroutineStart.UNDISPATCHED) {
-                cdp.events.collect { event ->
-                    if (event.method != "Fetch.requestPaused") return@collect
-                    val paused = event.params.decodeCdp<Paused>() ?: return@collect
-                    if (paused.frameId == frameId && paused.resourceType == "Document") {
-                        answered.set(true)
-                        answerQuietly(cdp, "Fetch.fulfillRequest", fulfillment(paused.requestId))
-                    } else {
-                        answerQuietly(
-                            cdp,
-                            "Fetch.continueRequest",
-                            buildJsonObject { put("requestId", paused.requestId) },
-                        )
-                    }
+        val answering = launch {
+            for (paused in pauses) {
+                if (paused.frameId == frameId && paused.resourceType == "Document") {
+                    answered.set(true)
+                    answerQuietly(cdp, "Fetch.fulfillRequest", fulfillment(paused.requestId))
+                } else {
+                    answerQuietly(
+                        cdp,
+                        "Fetch.continueRequest",
+                        buildJsonObject { put("requestId", paused.requestId) },
+                    )
                 }
             }
+        }
         try {
             val result =
                 cdp.call("Page.navigate", buildJsonObject { put("url", url) })
