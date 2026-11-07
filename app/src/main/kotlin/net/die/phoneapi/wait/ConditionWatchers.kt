@@ -4,11 +4,11 @@ import android.os.SystemClock
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.core.DeviceStateTracker
+import net.die.phoneapi.core.STATE_POLL_MS
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.DeviceStateSummary
 import net.die.phoneapi.model.FindRequest
 import net.die.phoneapi.model.ScreenState
-import net.die.phoneapi.model.UiNode
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.tree.TreeSession
 
@@ -59,17 +59,17 @@ internal class ConditionWatchers(
                 limit = 1,
                 includeInvisible = NodeConditions.includeInvisible(condition.state),
             )
-        return ConditionWatcher { Check(test(find(request))) }
-    }
-
-    /** The best match for [request], or null; a ref that has expired counts as "not there". */
-    private fun find(request: FindRequest): UiNode? =
-        try {
-            tree.find(request).matches.firstOrNull()
-        } catch (e: ApiException) {
-            if (e.error != "stale_ref") throw e
-            null
+        return ConditionWatcher {
+            try {
+                Check(test(tree.find(request).matches.firstOrNull()))
+            } catch (e: ApiException) {
+                if (e.error != "stale_ref") throw e
+                // A read just after the page changed can match the old page from the cache. That
+                // says nothing about the node, which would make `absent` match, so look again.
+                pollAgain()
+            }
         }
+    }
 
     private fun window(condition: WaitCondition.Window): ConditionWatcher {
         val packageName = condition.packageName
@@ -96,7 +96,8 @@ internal class ConditionWatchers(
         }
         return ConditionWatcher {
             val personOk = person == null || personHolds() == person
-            Check(personOk && (on == null || (state.refresh().screen == ScreenState.ON) == on))
+            val held = personOk && (on == null || (state.refresh().screen == ScreenState.ON) == on)
+            if (held || on == null) Check(held) else pollAgain()
         }
     }
 
@@ -115,10 +116,16 @@ internal class ConditionWatchers(
         Check(predicate(state.current))
     }
 
-    /** Screen and keyguard are not broadcast for every change, so the check polls. */
+    /**
+     * Screen and keyguard are not broadcast for every change, so the check re-reads them and, until
+     * it holds, asks to be checked again in [STATE_POLL_MS] even if nothing happens.
+     */
     private fun polledState(predicate: (DeviceStateSummary) -> Boolean) = ConditionWatcher {
-        Check(predicate(state.refresh()))
+        if (predicate(state.refresh())) Check(satisfied = true) else pollAgain()
     }
+
+    private fun pollAgain() =
+        Check(satisfied = false, recheckAtMs = SystemClock.uptimeMillis() + STATE_POLL_MS)
 
     private fun browser(condition: WaitCondition): ConditionWatcher {
         validateBrowser(condition)
