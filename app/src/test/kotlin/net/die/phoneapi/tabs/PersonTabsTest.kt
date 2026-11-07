@@ -2,7 +2,12 @@ package net.die.phoneapi.tabs
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runTest
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.lease.ScreenLease
 import net.die.phoneapi.model.ApiException
@@ -18,6 +23,7 @@ import org.junit.jupiter.api.Test
 
 /** What a call without the screen may do while a person in the viewer has it. */
 @Suppress("InjectDispatcher") // Tests that need no clock run the lease and claims unconfined.
+@OptIn(ExperimentalCoroutinesApi::class)
 class PersonTabsTest {
     private var front = "com.app"
     private val browser = RecordingBrowser { front == CHROME }
@@ -31,13 +37,13 @@ class PersonTabsTest {
     private val b = Holder.Session("b")
     private val person = Holder.Viewer(1)
 
-    private fun tabs() =
+    private fun TestScope.tabs() =
         Tabs(
                 browser,
                 lease,
                 inFront = { it == front },
                 store = MemoryStore(),
-                scope = CoroutineScope(Dispatchers.Unconfined),
+                scope = backgroundScope,
             )
             .also { tabs -> tabs.sessionsFrom { true } }
 
@@ -60,7 +66,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `input spares a person's page`() = runBlocking {
+    fun `input spares a person's page`() = runTest {
         val tabs = tabs()
         takenTab(tabs)
         val hidden = browser.add("hidden")
@@ -74,7 +80,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `reads spare a person's page`() = runBlocking {
+    fun `reads spare a person's page`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         tabs.browserFor(a).read(tab, BrowserReadRequest())
@@ -85,7 +91,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a person's page takes no input`() = runBlocking {
+    fun `a person's page takes no input`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         val view = tabs.browserFor(a)
@@ -99,7 +105,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `unknown tabs may be a person's`() = runBlocking {
+    fun `unknown tabs may be a person's`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         browser.silent = setOf(tab)
@@ -108,7 +114,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a hidden Chrome takes input`() = runBlocking {
+    fun `a hidden Chrome takes input`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         front = "com.app"
@@ -117,7 +123,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `another's tab stays not found`() = runBlocking {
+    fun `another's tab stays not found`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         val key = BrowserKeyRequest(key = "a", input = BrowserInput.CDP)
@@ -125,7 +131,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a person's Chrome opens no tab`() = runBlocking {
+    fun `a person's Chrome opens no tab`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         val before = browser.open.size
@@ -136,7 +142,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `opening works behind a person`() = runBlocking {
+    fun `opening works behind a person`() = runTest {
         val tabs = tabs()
         takenTab(tabs)
         front = "com.app"
@@ -145,7 +151,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a take mid-open closes the tab`() = runBlocking {
+    fun `a take mid-open closes the tab`() = runTest {
         val tabs = tabs()
         lease.withScreen(a) {}
         tabs.browserFor(a).openTab("https://example.com/")
@@ -157,7 +163,56 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a popup leaves a person's page`() = runBlocking {
+    fun `a take while switching closes`() = runTest {
+        val tabs = tabs()
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://example.com/")
+        front = CHROME
+        // Chrome takes a while to say what it shows, and the person takes the screen meanwhile.
+        browser.whenShowing = { lease.takeOver(person) }
+        assertEquals("took_screen", error { tabs.browserFor(b).openTab("https://example.com/") })
+        assertEquals(emptyList<String>(), browser.activated)
+        assertEquals(1, browser.closed.size)
+    }
+
+    @Test
+    fun `a take stops the watch`() = runTest {
+        val tabs = tabs()
+        lease.withScreen(a) {}
+        val mine = tabs.browserFor(a).openTab("https://example.com/").id
+        front = CHROME
+        browser.shown = mine
+        tabs.browserFor(b).openTab("https://example.com/")
+        lease.takeOver(person)
+        // Chrome goes back to the new tab, and what a person has on screen is theirs.
+        val seen = browser.activated.size
+        browser.shown = browser.open.last().id
+        advanceTimeBy(Tabs.SECOND_SELECT_MS + 1)
+        assertEquals(seen, browser.activated.size)
+    }
+
+    @Test
+    fun `second selects spare a person`() = runTest {
+        val tabs = tabs()
+        val tab = takenTab(tabs)
+        val hidden = browser.add("hidden")
+        tabs.access(a, hidden)
+        browser.onPageCall = {
+            val popup = browser.add("popup", opener = hidden)
+            browser.shown = popup
+            backgroundScope.launch {
+                delay(SWITCHING_MS)
+                browser.shown = popup
+            }
+        }
+        val key = BrowserKeyRequest(key = "a", input = BrowserInput.CDP)
+        assertEquals("took_screen", error { tabs.browserFor(a).key(hidden, key) })
+        advanceTimeBy(Tabs.SECOND_SELECT_MS + 1)
+        assertEquals(tab, browser.shown)
+    }
+
+    @Test
+    fun `a popup leaves a person's page`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         val hidden = browser.add("hidden")
@@ -174,7 +229,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `a person's tab change stands`() = runBlocking {
+    fun `a person's tab change stands`() = runTest {
         val tabs = tabs()
         takenTab(tabs)
         val hidden = browser.add("hidden")
@@ -187,7 +242,7 @@ class PersonTabsTest {
     }
 
     @Test
-    fun `no placeholder for a person`() = runBlocking {
+    fun `no placeholder for a person`() = runTest {
         val tabs = tabs()
         val tab = takenTab(tabs)
         val hidden = browser.add("hidden")
@@ -203,5 +258,7 @@ class PersonTabsTest {
 
     private companion object {
         const val CHROME = "com.android.chrome"
+        /** A moment into putting a tab back, before Chrome is done. */
+        const val SWITCHING_MS = 200L
     }
 }

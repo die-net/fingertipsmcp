@@ -1,6 +1,7 @@
 package net.die.phoneapi.server
 
 import io.ktor.client.HttpClient
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -9,7 +10,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CompletableDeferred
 import net.die.phoneapi.lease.Holder
+import net.die.phoneapi.model.BrowserTarget
 import net.die.phoneapi.model.Scope
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -28,6 +31,66 @@ class BrowserRouteTest {
             assertEquals(RawReply(404, ""), raw.upgrade(path, auth))
             assertEquals(RawReply(404, ""), raw.get(path, auth))
             assertEquals(101, raw.upgrade("/v1/events", auth).status)
+        }
+    }
+
+    @Test
+    fun `an open beside cleanup is fine`() = testApplication {
+        val home = CompletableDeferred<Unit>()
+        lateinit var api: FakeApi
+        api =
+            FakeApi(
+                browser =
+                    object : FakeBrowser() {
+                        override suspend fun openTab(
+                            url: String,
+                            capture: Boolean,
+                            incognito: Boolean,
+                            created: suspend (String) -> Unit,
+                        ): BrowserTarget {
+                            // Cleanup reaches HOME and finishes while the open runs.
+                            home.complete(Unit)
+                            api.awaitCleanups(1)
+                            return super.openTab(url, capture, incognito, created)
+                        }
+                    }
+            )
+        api.duringCleanup = {
+            home.await()
+            api.top = "com.launcher"
+        }
+        val token = api.tokens.issue("browser", setOf(Scope.BROWSER, Scope.CONTROL))
+        application { phoneApiModule(api.services) }
+        apiClient().use { client ->
+            val leaving = startSession(client, token)
+            val tap =
+                client.post("/v1/input/tap") {
+                    bearer(token)
+                    session(leaving)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"x":1,"y":2}""")
+                }
+            assertEquals(HttpStatusCode.OK, tap.status)
+            api.top = "com.android.chrome"
+            val opening = startSession(client, token)
+            // DELETE returns with cleanup still running, and Chrome still in front.
+            val ended =
+                client.delete("/v1/sessions/current") {
+                    bearer(token)
+                    session(leaving)
+                }
+            assertEquals(HttpStatusCode.NoContent, ended.status)
+            val open =
+                client.post("/v1/browser/tabs") {
+                    bearer(token)
+                    session(opening)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"url":"https://example.com/"}""")
+                }
+            assertEquals(HttpStatusCode.OK, open.status, open.bodyAsText())
+            assertEquals("com.launcher", api.top)
+            assertEquals(emptyList<String>(), api.tookScreen)
+            assertNull(api.lease.state.value.holder)
         }
     }
 

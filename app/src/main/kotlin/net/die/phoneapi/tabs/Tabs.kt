@@ -275,17 +275,35 @@ class Tabs(
 
     /**
      * Leaves the new tab [id] where [holder] may have it. Chrome switches to a new tab while it is
-     * in front, which must not show this session's page to whoever holds the screen. While it is in
-     * the background there is nothing to fix. A failure means Chrome may be showing the tab, so
-     * [BrowserService.openTab] closes it. A person who took the screen during the open gets that
-     * too: what they had on screen is not known, and closing the tab takes it off their screen.
+     * in front, which must not show this session's page to whoever holds the screen, and may do so
+     * again after this, as [watchSelection] says. While it is in the background there is nothing to
+     * fix. A failure means Chrome may be showing the tab, so [BrowserService.openTab] closes it. A
+     * person who took the screen during the open gets that too: what they had on screen is not
+     * known, and closing the tab takes it off their screen.
      */
     private suspend fun place(holder: Holder.Session, id: String) {
         if (lease.holds(holder)) {
             fronts[holder] = id
             return
         }
-        if (!chromeInFront() || (!personHolds() && putBack())) return
+        if (!chromeInFront()) return
+        val switched = !personHolds() && putBack()
+        // A person can take the screen while that runs.
+        if (switched && !personHolds()) {
+            watchSelection(
+                still = { owners.containsKey(id) },
+                failed = {
+                    closeQuietly(id)
+                    closed(id)
+                    lease.addNote(
+                        holder,
+                        "took_screen: Chrome showed a tab this session opened again and would " +
+                            "not switch back, so PhoneAPI closed it: $id.",
+                    )
+                },
+            )
+            return
+        }
         throw ApiException(
             409,
             "took_screen",
@@ -346,7 +364,7 @@ class Tabs(
      */
     internal suspend fun afterInput(holder: Holder.Session) {
         if (lease.holds(holder) || !chromeInFront()) return
-        adoptPopups(base.targets())
+        val popup = adoptPopups(base.targets())
         if (!putBack()) {
             throw ApiException(
                 409,
@@ -355,6 +373,16 @@ class Tabs(
                     "Close the popup.",
             )
         }
+        if (!popup) return
+        watchSelection(
+            failed = {
+                lease.addNote(
+                    holder,
+                    "took_screen: Chrome showed a tab this session's page opened again and would " +
+                        "not switch back. Close the popup.",
+                )
+            }
+        )
     }
 
     /** Whether a person in the viewer has the screen, so what Chrome shows is theirs to choose. */
@@ -392,19 +420,14 @@ class Tabs(
         val known = before.map { it.id }.toSet()
         val popup = after.firstOrNull { it.id !in known && owners[it.id]?.holder == holder }
         if (popup == null || base.showing(popup.id) == false) return value
-        val back =
-            shown != null &&
-                personHolds() &&
-                run {
-                    base.activate(shown)
-                    settled(FRONT_MS) { base.showing(shown) == true }
-                }
+        val switched = shown != null && personHolds() && selected(shown, ::personHolds)
+        if (switched) watchSelection(back = { selected(shown, ::personHolds) })
         throw ApiException(
             409,
             "took_screen",
             "Chrome showed a tab this session's page opened, over what a person in the viewer " +
                 "was using. " +
-                if (back) {
+                if (switched) {
                     "PhoneAPI switched back."
                 } else {
                     "PhoneAPI could not switch back, so close the popup."
@@ -528,31 +551,90 @@ class Tabs(
             ?: throw ApiException(
                 409,
                 "tab_stuck",
-                "Chrome is in front, and the screen holder's calls kept running for " +
+                "Chrome is in front, and the screen holder's calls or a cleanup kept running for " +
                     "${ScreenLease.BETWEEN_WAIT_MS / MS_PER_S} s, so PhoneAPI could not check " +
                     "which tab Chrome shows. Try again.",
             )
 
     /**
      * With Chrome in front, selects [holder]'s tab, or the placeholder, if Chrome shows another
-     * session's. With no [holder], the tab left on screen for a person stands in for theirs.
-     * Selecting a tab can bring Chrome forward, so this does nothing while it is hidden. True when
-     * Chrome shows nothing it should not. A person in the viewer may look at any tab, so nothing is
-     * selected for them: Chrome shows what they chose, not a tab that is another's.
+     * session's. True when Chrome shows nothing it should not.
      */
     private suspend fun showFor(holder: Holder?): Boolean {
-        if (holder is Holder.Viewer || !inFront(CHROME_PACKAGE)) return true
+        val view = tabToSelect(holder) ?: return true
+        return selected(view) { !personHolds() && inFront(CHROME_PACKAGE) }
+    }
+
+    /**
+     * The tab Chrome should select for [holder], or null when it shows nothing it should not. With
+     * no [holder], the tab left on screen for a person stands in for theirs. Selecting a tab can
+     * bring Chrome forward, so it is null while Chrome is hidden. A person in the viewer may look
+     * at any tab, so it is null for them too: Chrome shows what they chose, not a tab that is
+     * another's.
+     */
+    private suspend fun tabToSelect(holder: Holder?): String? {
+        if (holder is Holder.Viewer || personHolds() || !inFront(CHROME_PACKAGE)) return null
         val front = if (holder is Holder.Session) fronts[holder] else leftShowing
-        if (front != null && base.showing(front) == true) return true
+        if (front != null && base.showing(front) == true) return null
         // A popup a page opened on its own, since the last listing, is its opener's too.
         adoptPopups(base.targets())
         val others = owners.filterValues { it.holder != holder }.keys
         // A tab that does not answer may be the one on screen.
-        if (others.all { base.showing(it) == false }) return true
-        val view = front ?: placeholderTab()
-        base.activate(view)
-        return settled(FRONT_MS) { base.showing(view) == true }
+        if (others.all { base.showing(it) == false }) return null
+        // A person may have taken the screen while those were read.
+        return if (personHolds()) null else front ?: placeholderTab()
     }
+
+    /**
+     * Selects [view] until it reads back as showing, for as long as [wanted] holds, and false if it
+     * still does not after [FRONT_MS]. Only [view] is asked: a tab Chrome is still opening may not
+     * answer, which says nothing about what is on screen. A selection sent just before Chrome's own
+     * is lost, as [watchSelection] says, and that is the failure this sends it again for.
+     */
+    private suspend fun selected(view: String, wanted: suspend () -> Boolean): Boolean =
+        settled(FRONT_MS) {
+            val done = !wanted() || base.showing(view) == true
+            if (!done) base.activate(view)
+            done
+        }
+
+    /**
+     * After Chrome was made to leave a tab it just made: runs [back], in the background, for as
+     * long as Chrome may go back to the tab, [failed] if [back] says it would not switch.
+     *
+     * Chrome selects a new tab twice: as it makes the tab, and again some 0.4 s later, whatever was
+     * selected in between. Nothing announces the second, and its timing has nothing to do with the
+     * page, so what Chrome shows now does not say what it will show. The call that made the tab
+     * does not wait for this, since nothing it returns depends on it. [still] ends the watch early.
+     * A pass that is selecting gets its [FRONT_MS] even as the watch runs out, and one held up by
+     * the holder's calls does not stretch the watch past that. docs/device-notes.md has the
+     * measurements.
+     */
+    private fun watchSelection(
+        still: () -> Boolean = { true },
+        failed: suspend () -> Unit = {},
+        back: suspend () -> Boolean = ::putBack,
+    ) {
+        scope.launch {
+            var stuck = false
+            withTimeoutOrNull(SECOND_SELECT_MS + FRONT_MS) {
+                repeat((SECOND_SELECT_MS / SELECT_POLL_MS).toInt()) {
+                    if (stuck || !still() || !chromeInFront()) return@withTimeoutOrNull
+                    delay(SELECT_POLL_MS)
+                    stuck = !backOrUnknown(back)
+                }
+            }
+            if (stuck) failed()
+        }
+    }
+
+    /** Whether [back] worked. Chrome not answering is not known, so the next pass tries again. */
+    private suspend fun backOrUnknown(back: suspend () -> Boolean): Boolean =
+        try {
+            back()
+        } catch (_: ApiException) {
+            true
+        }
 
     /** The placeholder, opened again if it was closed. */
     private suspend fun placeholderTab(): String = placeholderMutex.withLock {
@@ -640,17 +722,21 @@ class Tabs(
         return out
     }
 
-    /** Gives each unowned popup in [all] to the owner of the tab that opened it. */
-    private suspend fun adoptPopups(all: List<BrowserTarget>) {
-        mutex.withLock {
-            for (tab in all) {
-                val opener = tab.openerId?.let(owners::get)
-                if (owners[tab.id] == null && opener != null) {
-                    owners[tab.id] = Owner(opener.holder, opened = true)
-                }
+    /**
+     * Gives each unowned popup in [all] to the owner of the tab that opened it. True when there was
+     * one.
+     */
+    private suspend fun adoptPopups(all: List<BrowserTarget>): Boolean = mutex.withLock {
+        var adopted = false
+        for (tab in all) {
+            val opener = tab.openerId?.let(owners::get)
+            if (owners[tab.id] == null && opener != null) {
+                owners[tab.id] = Owner(opener.holder, opened = true)
+                adopted = true
             }
-            saveOpened()
         }
+        saveOpened()
+        adopted
     }
 
     internal fun ownedByOthers(holder: Holder.Session, id: String): Boolean =
@@ -707,6 +793,11 @@ class Tabs(
             "Another session has incognito tabs open, and Chrome has one incognito profile, so " +
                 "this tab shares their cookies and site data until they close. A site can tie " +
                 "the two sessions' visits together."
+
+        /** How long Chrome may go on to select a new tab after making it, on a busy phone. */
+        const val SECOND_SELECT_MS = 3_000L
+        /** How often Chrome's selection is checked while it may still change. */
+        private const val SELECT_POLL_MS = 100L
 
         /** How long after an intent the tab Chrome opens for it is looked for. */
         const val CLAIM_WAIT_MS = 2_000L

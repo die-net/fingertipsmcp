@@ -1,7 +1,6 @@
 package net.die.phoneapi.lease
 
 import android.util.Log
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -93,8 +92,20 @@ class ScreenLease(
         val calls: MutableSet<Job> = LinkedHashSet(),
     )
 
-    /** How many screen calls are registered, and whether [betweenCalls] holds new ones off. */
-    private data class Activity(val calls: Int = 0, val paused: Boolean = false)
+    /**
+     * What is using the screen: how many screen calls are registered and whether a cleanup runs, as
+     * [turns] counts, and how many [betweenCalls] blocks hold new calls off.
+     */
+    private data class Activity(
+        val calls: Int = 0,
+        val cleaning: Boolean = false,
+        val pauses: Int = 0,
+        /** How many times a screen call or a cleanup has started or ended. */
+        val turns: Long = 0,
+    ) {
+        val busy: Boolean
+            get() = calls > 0 || cleaning
+    }
 
     private val mutex = Mutex()
     /** Held while [ready] runs, so a holder's other screen calls wait for it. */
@@ -104,8 +115,6 @@ class ScreenLease(
     private val running = HashMap<Holder, MutableSet<Job>>()
     private val activity = MutableStateFlow(Activity())
     private val taken = HashSet<Job>()
-    private val started = AtomicLong()
-    private var cleaning = false
     /** The cleanup running now, which a take over cancels. */
     private var cleanJob: Job? = null
     /**
@@ -179,45 +188,50 @@ class ScreenLease(
     }
 
     /**
-     * Runs [block] between screen calls: once none is running, and with none starting until it
-     * returns. For putting Chrome back on the holder's tab without cutting into a gesture. Calls
-     * start as usual while this waits. Null, without running [block], when calls kept running for
-     * [BETWEEN_WAIT_MS].
+     * Runs [block] between screen calls: once none is running and no cleanup is, and with none
+     * starting until it returns. For putting Chrome back on the holder's tab without cutting into a
+     * gesture, or selecting a tab after cleanup sent Chrome home, which can bring it forward again.
+     * Calls start as usual while this waits, and one that started holds off new blocks, so blocks
+     * that overlap cannot keep it waiting. Blocks run together, since each only needs the screen
+     * left alone. Null, without running [block], when calls kept running for [BETWEEN_WAIT_MS].
      */
     suspend fun <T : Any> betweenCalls(block: suspend () -> T): T? {
         val deadline = now() + BETWEEN_WAIT_MS
         while (!mutex.withLock { pauseIfIdle() }) {
             val left = deadline - now()
             if (left <= 0) return null
-            withTimeoutOrNull(left) { activity.first { it.calls == 0 && !it.paused } }
-                ?: return null
+            withTimeoutOrNull(left) { activity.first { !it.busy } } ?: return null
         }
         try {
             return block()
         } finally {
-            activity.update { it.copy(paused = false) }
+            activity.update { it.copy(pauses = it.pauses - 1) }
         }
     }
 
-    /** With [mutex] held: holds off new screen calls if none is running. True when it did. */
+    /** With [mutex] held: holds off new screen calls if nothing runs. True when it did. */
     private fun pauseIfIdle(): Boolean {
         val now = activity.value
-        if (now.calls != 0 || now.paused) return false
-        return activity.compareAndSet(now, now.copy(paused = true))
+        if (now.busy) return false
+        return activity.compareAndSet(now, now.copy(pauses = now.pauses + 1))
     }
 
-    /** Whether a screen call is running now. */
-    fun callRunning(): Boolean = activity.value.calls > 0
+    /** Whether a screen call or a cleanup is running now, either of which can change the screen. */
+    fun screenBusy(): Boolean = activity.value.busy
 
-    /** How many screen calls have started, to tell whether any ran in a stretch of time. */
-    val screenCalls: Long
-        get() = started.get()
+    /**
+     * How many times a screen call or a cleanup has started or ended. The same count at both ends
+     * of a stretch of time, with [screenBusy] false, means none of them ran during it, even one
+     * that started before it and ended within it.
+     */
+    val screenTurns: Long
+        get() = activity.value.turns
 
     /** Gives [holder] the screen if no one has it or waits for it. True when it got it. */
     suspend fun claim(holder: Holder): Boolean = mutex.withLock {
         val current = _state.value.holder
         if (current == holder) return@withLock true
-        if (current != null || cleaning || queue.isNotEmpty()) return@withLock false
+        if (current != null || cleaning() || queue.isNotEmpty()) return@withLock false
         grant(holder)
         true
     }
@@ -238,7 +252,7 @@ class ScreenLease(
         val current = _state.value.holder
         when {
             current == viewer -> true
-            current == null && !cleaning && queue.isEmpty() -> {
+            current == null && !cleaning() && queue.isEmpty() -> {
                 grant(viewer)
                 true
             }
@@ -265,10 +279,10 @@ class ScreenLease(
                     job.cancel(TakenOver())
                 }
             }
-            if (cleaning) {
+            if (cleaning()) {
                 cleanJob?.cancel()
                 cleanJob = null
-                cleaning = false
+                setCleaning(false)
             }
             _state.value = LeaseState(viewer, now(), from)
         }
@@ -312,7 +326,7 @@ class ScreenLease(
             grantNext()
             return
         }
-        cleaning = true
+        setCleaning(true)
         // A phone that is already locked is locked again, which only turns its screen off.
         locking = queue.isEmpty() && (owesLock || lockedNow())
         cleanJob = scope.launch { cleanUp() }
@@ -415,6 +429,9 @@ class ScreenLease(
      * for a waiter that has since gone, and a lock is owed, it runs again to lock.
      */
     private suspend fun cleanUp() {
+        // A betweenCalls block that started before the release finishes first, so nothing selects
+        // a tab once this has sent Chrome home.
+        activity.first { it.pauses == 0 }
         var again = true
         while (again) {
             val lock = mutex.withLock { locking }
@@ -443,7 +460,7 @@ class ScreenLease(
             if (locked && lockedNow()) owesLock = false
             // Only a take over gives out the screen during cleanup, and it stops the cleanup, so
             // this is a cleanup that ended just as it was stopped.
-            if (!cleaning || _state.value.holder != null) return@withLock false
+            if (!cleaning() || _state.value.holder != null) return@withLock false
             // The next holder hears about cleanup either way, so a home screen and a locked
             // phone are no surprise.
             forNext =
@@ -462,10 +479,17 @@ class ScreenLease(
                 locking = true
                 return@withLock true
             }
-            cleaning = false
+            setCleaning(false)
             cleanJob = null
             false
         }
+
+    private fun cleaning(): Boolean = activity.value.cleaning
+
+    /** With [mutex] held: records that a cleanup started or ended. */
+    private fun setCleaning(on: Boolean) {
+        activity.update { it.copy(cleaning = on, turns = it.turns + 1) }
+    }
 
     /**
      * Forgets [holder], as when its session ends or its socket closes. Its calls waiting for the
@@ -519,7 +543,7 @@ class ScreenLease(
      * in [holder]'s place in the queue and returns that place.
      */
     private fun queueFor(holder: Holder, work: Job): Waiter? {
-        if (_state.value.holder == null && !cleaning && queue.isEmpty()) {
+        if (_state.value.holder == null && !cleaning() && queue.isEmpty()) {
             grant(holder)
             track(holder, work)
             return null
@@ -575,8 +599,7 @@ class ScreenLease(
     /** Runs [work], which [takeOver] can cancel, turning that into `screen_taken`. */
     private suspend fun <T> runTracked(work: Deferred<T>): T {
         // A betweenCalls block that started before this call got the screen finishes first.
-        activity.first { !it.paused }
-        started.incrementAndGet()
+        activity.first { it.pauses == 0 }
         work.start()
         // join throws only when this caller is canceled, not when take over cancels the child.
         work.join()
@@ -587,7 +610,7 @@ class ScreenLease(
     /** With [mutex] held: records [work] as [holder]'s screen call. */
     private fun track(holder: Holder, work: Job) {
         if (running.getOrPut(holder) { HashSet() }.add(work)) {
-            activity.update { it.copy(calls = it.calls + 1) }
+            activity.update { it.copy(calls = it.calls + 1, turns = it.turns + 1) }
         }
         lastCallMs = now()
     }
@@ -596,7 +619,7 @@ class ScreenLease(
     private fun untrack(holder: Holder, work: Job) {
         val calls = running[holder]
         if (calls != null && calls.remove(work)) {
-            activity.update { it.copy(calls = it.calls - 1) }
+            activity.update { it.copy(calls = it.calls - 1, turns = it.turns + 1) }
             if (calls.isEmpty()) running.remove(holder)
         }
         if (_state.value.holder == holder) lastCallMs = now()

@@ -5,7 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -48,10 +48,10 @@ class TabsTest {
     /** The sessions the registry has dropped. */
     private val ended = mutableSetOf<Holder.Session>()
 
-    private fun tabs(
+    private fun TestScope.tabs(
         perSession: Int = 4,
         total: Int = 8,
-        scope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
+        scope: CoroutineScope = backgroundScope,
     ) =
         Tabs(browser, lease, inFront = { it == front }, store = store, perSession, total, scope)
             .also { tabs -> tabs.sessionsFrom { it !in ended } }
@@ -68,7 +68,7 @@ class TabsTest {
 
     @Test
     fun `intent tabs become yours`() = runTest {
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         // Chrome opens the intent's tab itself, a moment after the call that sent it.
         tabs.intentTo(CHROME)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS / 2)
@@ -85,7 +85,7 @@ class TabsTest {
     @Test
     fun `other apps' tabs stay free`() = runTest {
         // The intent went to Maps, so a tab that appears now is another session's or a person's.
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         tabs.intentTo("com.google.android.apps.maps")
         val other = browser.add("other", url = PAGE)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
@@ -96,7 +96,7 @@ class TabsTest {
 
     @Test
     fun `a popup is not the intent's`() = runTest {
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         val theirs = tabs.browserFor(b).openTab("https://example.org/")
         tabs.intentTo(CHROME)
         val popup = browser.add("popup", opener = theirs.id, url = PAGE)
@@ -114,7 +114,7 @@ class TabsTest {
 
     @Test
     fun `a blank tab waits for its page`() = runTest {
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         tabs.intentTo(CHROME)
         val empty = browser.add("empty")
         browser.add("blank", url = "about:blank")
@@ -127,7 +127,7 @@ class TabsTest {
 
     @Test
     fun `open tabs are not the intent's`() = runTest {
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         browser.add("old", url = PAGE)
         tabs.intentTo(CHROME)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS)
@@ -138,7 +138,7 @@ class TabsTest {
     fun `an ended session claims none`() = runTest {
         // DevTools takes a while to answer, so a claim's checks run late.
         browser.listMs = 300
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         tabs.intentTo(CHROME)
         tabs.finish(a)
         advanceTimeBy(Tabs.CLAIM_WAIT_MS - 100)
@@ -153,7 +153,7 @@ class TabsTest {
     @Test
     fun `a late claim keeps no tab`() = runTest {
         // The claim is reading Chrome's tabs as the session ends, so it finds the intent's after.
-        val tabs = tabs(scope = backgroundScope)
+        val tabs = tabs()
         tabs.intentTo(CHROME)
         browser.add("from-intent", url = PAGE)
         browser.listMs = 300
@@ -213,7 +213,7 @@ class TabsTest {
     }
 
     @Test
-    fun `stopped timers fail waits`() = runBlocking {
+    fun `stopped timers fail waits`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         browser.stalled = setOf(tab.id)
@@ -235,7 +235,7 @@ class TabsTest {
     }
 
     @Test
-    fun `missing tabs explain`() = runBlocking {
+    fun `missing tabs explain`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         val message =
@@ -249,7 +249,7 @@ class TabsTest {
     }
 
     @Test
-    fun `opened tabs are yours`() = runBlocking {
+    fun `opened tabs are yours`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         assertEquals(listOf(true), tabs.browserFor(a).targets().map { it.owned })
@@ -259,7 +259,7 @@ class TabsTest {
     }
 
     @Test
-    fun `incognito closes unowned ones`() = runBlocking {
+    fun `incognito closes unowned ones`() = runTest {
         val tabs = tabs()
         // A person's incognito tab, and a normal tab no one owns.
         val person = browser.add("person").also { browser.incognito += it }
@@ -275,7 +275,7 @@ class TabsTest {
     }
 
     @Test
-    fun `shared incognito is noted`() = runBlocking {
+    fun `shared incognito is noted`() = runTest {
         val tabs = tabs()
         val theirs = tabs.browserFor(b).openTab("https://example.com/", incognito = true)
         // A session's own incognito tabs share with nobody else.
@@ -288,7 +288,7 @@ class TabsTest {
     }
 
     @Test
-    fun `recording stays with its owner`() = runBlocking {
+    fun `recording stays with its owner`() = runTest {
         val tabs = tabs()
         val mine = tabs.browserFor(a).openTab("https://example.com/", capture = true)
         tabs.browserFor(a).capture(mine.id, on = true)
@@ -308,7 +308,7 @@ class TabsTest {
     }
 
     @Test
-    fun `unknown tabs are not claimed`() = runBlocking {
+    fun `unknown tabs are not claimed`() = runTest {
         val tabs = tabs()
         val other = tabs.browserFor(b).openTab("https://example.com/").id
         val unknown = "chrome_devtools_remote~gone"
@@ -319,7 +319,7 @@ class TabsTest {
     }
 
     @Test
-    fun `claimed tabs go back`() = runBlocking {
+    fun `claimed tabs go back`() = runTest {
         val tabs = tabs()
         val old = browser.add("old")
         assertEquals(listOf(false), tabs.browserFor(a).targets().map { it.owned })
@@ -332,7 +332,7 @@ class TabsTest {
     }
 
     @Test
-    fun `the shown tab outlives it`() = runBlocking {
+    fun `the shown tab outlives it`() = runTest {
         val tabs = tabs()
         val shown = tabs.browserFor(a).openTab("https://example.com/")
         val other = tabs.browserFor(a).openTab("https://example.org/")
@@ -347,7 +347,7 @@ class TabsTest {
     }
 
     @Test
-    fun `a kept tab stays on screen`() = runBlocking {
+    fun `a kept tab stays on screen`() = runTest {
         // A person may be looking at it, as `cleanup` false says, so the session's next call on it
         // must not blank the screen.
         val tabs = tabs()
@@ -361,7 +361,7 @@ class TabsTest {
     }
 
     @Test
-    fun `a popup leaves a kept tab`() = runBlocking {
+    fun `a popup leaves a kept tab`() = runTest {
         val tabs = tabs()
         val shown = tabs.browserFor(a).openTab("https://example.com/")
         front = CHROME
@@ -374,7 +374,7 @@ class TabsTest {
     }
 
     @Test
-    fun `cleanup ends a kept tab`() = runBlocking {
+    fun `cleanup ends a kept tab`() = runTest {
         val tabs = tabs()
         val shown = tabs.browserFor(a).openTab("https://example.com/")
         front = CHROME
@@ -388,7 +388,7 @@ class TabsTest {
     }
 
     @Test
-    fun `a hidden tab is not kept`() = runBlocking {
+    fun `a hidden tab is not kept`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         browser.shown = tab.id
@@ -398,7 +398,7 @@ class TabsTest {
     }
 
     @Test
-    fun `ending closes opened tabs`() = runBlocking {
+    fun `ending closes opened tabs`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         tabs.finish(a)
@@ -407,7 +407,7 @@ class TabsTest {
     }
 
     @Test
-    fun `caps limit opening`() = runBlocking {
+    fun `caps limit opening`() = runTest {
         val tabs = tabs(perSession = 2, total = 3)
         repeat(2) { tabs.browserFor(a).openTab("https://example.com/") }
         assertEquals("tab_limit", error { tabs.browserFor(a).openTab("https://example.com/") })
@@ -416,7 +416,7 @@ class TabsTest {
     }
 
     @Test
-    fun `popups follow their opener`() = runBlocking {
+    fun `popups follow their opener`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         val popup = browser.add("popup", opener = tab.id)
@@ -430,7 +430,7 @@ class TabsTest {
     }
 
     @Test
-    fun `rest leaves session tabs alone`() = runBlocking {
+    fun `rest leaves session tabs alone`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         val free = browser.add("free")
@@ -440,7 +440,7 @@ class TabsTest {
     }
 
     @Test
-    fun `views forward awaitingPage`() = runBlocking {
+    fun `views forward awaitingPage`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         browser.awaiting += tab.id
@@ -450,7 +450,7 @@ class TabsTest {
     }
 
     @Test
-    fun `webviews are the holder's`() = runBlocking {
+    fun `webviews are the holder's`() = runTest {
         val tabs = tabs()
         val view = browser.add("p", socket = "webview_devtools_remote_9", pkg = "com.app")
         assertEquals("not_found", error { tabs.browserFor(a).read(view, BrowserReadRequest()) })
@@ -462,7 +462,7 @@ class TabsTest {
     }
 
     @Test
-    fun `sweep closes leftovers`() = runBlocking {
+    fun `sweep closes leftovers`() = runTest {
         val left = browser.add("left")
         store.ids = setOf(left, "chrome_devtools_remote~gone")
         val tabs = tabs()
@@ -477,7 +477,7 @@ class TabsTest {
     }
 
     @Test
-    fun `waits use the only visible tab`() = runBlocking {
+    fun `waits use the only visible tab`() = runTest {
         val tabs = tabs()
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         val waits = RecordingWaits()
@@ -488,7 +488,7 @@ class TabsTest {
     }
 
     @Test
-    fun `others' new tabs go behind`() = runBlocking {
+    fun `others' new tabs go behind`() = runTest {
         val tabs = tabs()
         front = CHROME
         lease.withScreen(a) {}
@@ -499,7 +499,7 @@ class TabsTest {
     }
 
     @Test
-    fun `placeholder stands in`() = runBlocking {
+    fun `placeholder stands in`() = runTest {
         val tabs = tabs()
         front = CHROME
         tabs.browserFor(a).openTab("https://example.com/")
@@ -512,7 +512,7 @@ class TabsTest {
     }
 
     @Test
-    fun `others' popups go behind`() = runBlocking {
+    fun `others' popups go behind`() = runTest {
         val tabs = tabs()
         front = CHROME
         lease.withScreen(a) {}
@@ -527,7 +527,7 @@ class TabsTest {
     }
 
     @Test
-    fun `screen calls fix Chrome first`() = runBlocking {
+    fun `screen calls fix Chrome first`() = runTest {
         val tabs = tabs()
         lease.withScreen(a) {}
         val theirs = tabs.browserFor(b).openTab("https://example.com/")
@@ -539,7 +539,7 @@ class TabsTest {
     }
 
     @Test
-    fun `cleanup leaves Chrome blank`() = runBlocking {
+    fun `cleanup leaves Chrome blank`() = runTest {
         val tabs = tabs()
         tabs.showPlaceholder()
         assertEquals(emptyList<String>(), browser.activated)

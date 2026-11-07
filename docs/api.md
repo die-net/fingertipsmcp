@@ -136,7 +136,7 @@ Authenticated errors are JSON:
 | 409 | `tab_limit` | A session has 4 tabs it opened, or all sessions 8 |
 | 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so PhoneAPI could not check which tab Chrome shows; a new tab from `browser_open` is closed |
 | 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, or could not see it, so nothing was typed |
-| 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it |
+| 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it. A tab Chrome goes back to after the call returned closes, and the session gets a note starting `took_screen` instead |
 | 409 | `tab_reloaded` | Chrome had unloaded the hidden tab, so PhoneAPI reloaded it instead of sending input or script to a page the caller has not seen. Also a read whose reloaded page had not loaded within 10 s |
 | 409 | `tab_frozen` | `cdp` or `cdp-mouse` input into a tab Chrome has paused, or whose timers it has stopped, as it does to tabs hidden in the background. Also a wait on such a tab. Bring it forward with `touch` or `show`, or reload it |
 | 409 | `session_conflict` | A screen call while the session that started the caller with `session_start`, or one the caller started, holds the screen |

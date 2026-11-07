@@ -32,6 +32,28 @@ The startup sweep used to read the saved list when it first got an answer from C
 
 On the Android 11 test phone on 2026-10-22, with Chrome 155, a session's own tab stayed on screen while another session opened a tab, so switching back works.
 
+#### A new tab is selected twice
+
+Chrome 91, 109, 133, and 145 on the emulators on 2026-11-07, over raw DevTools with no PhoneAPI involved, with a kept tab on screen and its `document.visibilityState` read every 20 ms. Times are from `Target.createTarget`. Each time the kept tab went hidden, `Target.activateTarget` selected it again.
+
+| Chrome | Opens | Times Chrome took the screen | First | Second, idle | Second, every core busy |
+| --- | --- | --- | --- | --- | --- |
+| 91 | 6 | 2 in all 6 | 0.05 to 0.20 s | 0.35 to 0.62 s | Not read |
+| 109 | 6, with one `activateTarget` | 2 in all 6 | Before 0.17 s | 0.36 to 0.73 s | 0.51 to 1.52 s |
+| 133 | 14 | 2 in 13, 1 in the other, with every core busy | 0.05 to 0.25 s | 0.39 to 0.76 s | 0.47 to 0.86 s |
+| 145 | 16 | 2 in all 16 | 0.08 to 0.23 s | 0.45 to 0.57 s | 0.57 to 0.72 s |
+
+- The second selection does not depend on the page. With a server that took 2 s, on Chrome 109, it came at 0.38 to 0.40 s, long before the commit, and `about:blank` got it at 0.36 to 0.37 s. So it behaves like a timer in Chrome, and the end of the new-tab animation would fit, though that is a guess.
+- Nothing on the browser session marks it. The new tab's only events in that time were `targetCreated` and, later, `targetInfoChanged` with its title.
+- Sent before the second selection, `Target.activateTarget` is undone by it. Chrome 109, sent at 0.03 to 0.07 s: the kept tab read visible, then hidden at 0.36 to 0.45 s, 5 of 5. Sent at 0.29 to 0.44 s it was sometimes lost outright, never reading visible, 2 of 4. Sent from 0.47 s on it stuck, 12 of 12. On Chrome 145, sent at 0.29 to 0.51 s, it was undone 6 of 6, by 0.59 s.
+- So `took_screen` from `Tabs.place` was not Chrome taking long to switch, or `showing` reading stale. On Chrome 109 and with PhoneAPI's own trace, one `activateTarget` went out, the kept tab read hidden on all of about 30 polls in 2 s, and the new tab read visible at the end. A retry worked because its `activateTarget` landed after the second selection.
+- The same race ended worse when the selection landed and read back first. The open returned 200, and the second selection then left the new tab on the holder's screen, until the holder's next screen call. On Chrome 109 that was 1 of 20 on `main` and 1 of 20 on v0.3.8, and 4 of 40 on `main` with logging added.
+- It is not new, and #103 did not cause it. On Chrome 109, on the same emulator with one open at a time, v0.3.8 failed 1 of 20. Its build needed a change to find the emulator's wireless debugging port, and nothing else. `main` at 220f73a failed 6 of 20, and with logging added 4 of 40 and 0 of 14. All of those are one race, so the rate moves with how long the first check takes.
+- `showing` is slow just after a tab is made: on Chrome 145 it took 329 ms there and about 40 ms after, and a first pass took 680 ms. That is why a run on a given day can show none: `activateTarget` then lands after the second selection. So a count of selections can't say when Chrome is done, since both can pass inside one check.
+- A new tab's own page can't be asked: a new connection to it is held until the commit, so `showing` on a tab still opening gives no answer.
+
+HOME reaches the top task well after the key is pressed. On the Android 13 emulator on 2026-11-07, with Chrome in front, a screen call made just after a session ended got the screen 0.77 to 2.27 s later, once cleanup saw the home app on top. Before cleanup waited for that, an open 300 ms after a session ended could still read Chrome on top and then the launcher, and was blamed for it.
+
 ### Launching apps from a tab
 
 On the emulator, tabs that were not on screen launched no app in 18 tries: an `intent:` link, an app link, and a custom scheme, each by mouse click, by script, and by script with a user gesture, from a tab behind another and with Chrome in the background. App links opened inside the tab instead. From the tab on screen, the same clicks launched YouTube.
@@ -128,6 +150,9 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 ### Still to check
 
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
+- Whether Chrome 156 on the Android 11 test phone selects a new tab twice, when the second comes, and whether 3 seconds covers it on a busy phone. Also that three parallel sessions with a kept tab showing no longer fail there, which was 12 of 69 before.
+- Whether HOME takes as long to become the top task on the phone as on the emulators.
+- Why the first `DELETE /v1/sessions/current` on the Android 16 emulator took 15.03 s once. It is not cleanup, which `DELETE` does not wait for. It closes the session's tabs, which can need a new DevTools connection, and the search for wireless debugging's port takes 15 s when it finds nothing, as on 2026-11-07 when a browser call failed that way after 15.09 s with another emulator running. So that search is the likely cause, but changing the port just before a `DELETE`, twice, left it at 0.05 s, so this was not reproduced.
 - Whether a tab opened while Chrome is in the background becomes Chrome's selected tab, as it does on the Android 16 emulator.
 - How many hidden tabs Chrome keeps loaded on the Moto G Power before it unloads them, to check the cap of 8.
 - That Chrome 155 still sends `Inspector.targetCrashed` on `Inspector.enable` for a tab it unloaded.

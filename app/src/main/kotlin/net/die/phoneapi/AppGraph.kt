@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.die.phoneapi.apps.ActivityStart
@@ -43,6 +44,7 @@ import net.die.phoneapi.core.Screenshotter
 import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.UiService
 import net.die.phoneapi.core.WaitService
+import net.die.phoneapi.core.awaitChecked
 import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.AdbEndpointFinder
 import net.die.phoneapi.helperclient.AdbIdentity
@@ -236,7 +238,13 @@ class AppGraph(
     // Cleanup runs only after a holder lets go, long after tabs exists.
     @Suppress("PropertyUsedBeforeDeclaration")
     private val screenCleanup =
-        ScreenCleanup(input, power, clipboard, showPlaceholder = { tabs.showPlaceholder() })
+        ScreenCleanup(
+            input,
+            power,
+            clipboard,
+            showPlaceholder = { tabs.showPlaceholder() },
+            awaitHome = ::awaitHome,
+        )
     private val screenLease: ScreenLease =
         ScreenLease(
             scope,
@@ -385,6 +393,29 @@ class AppGraph(
         }
     }
 
+    /**
+     * Waits for the home app to be the top task after HOME. With the screen dark or locked, HOME
+     * moves nothing, and with the top task or the home app not known, nothing can be waited for.
+     * False when another app stayed on top.
+     */
+    private suspend fun awaitHome(): Boolean {
+        val home = homePackage() ?: return true
+        return awaitChecked(merge(state.state, bus.events), HOME_WAIT_MS) {
+            val now = state.refresh()
+            now.screen != ScreenState.ON ||
+                now.keyguard.locked ||
+                topPackage().let { it == null || it == home }
+        }
+    }
+
+    /** The package HOME goes to, or null when Android would ask which one. */
+    private suspend fun homePackage(): String? =
+        withContext(ioDispatcher) {
+            val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            val found = context.packageManager.resolveActivity(home, 0)
+            found?.activityInfo?.packageName?.takeIf { it != CHOOSER_PACKAGE }
+        }
+
     /** Puts [pkg] back in front, or goes home when it has no launcher entry, as a launcher. */
     private suspend fun bringBack(pkg: String) {
         try {
@@ -499,6 +530,10 @@ class AppGraph(
     private companion object {
         const val DEVTOOLS_READ_MS = 15_000L
         const val FOREGROUND_WAIT_MS = 5_000L
+        /** How long HOME may take to reach the screen. */
+        const val HOME_WAIT_MS = 3_000L
+        /** What Android resolves HOME to when no home app is the default: its chooser. */
+        const val CHOOSER_PACKAGE = "android"
         const val TAG = "PhoneApiLease"
     }
 }

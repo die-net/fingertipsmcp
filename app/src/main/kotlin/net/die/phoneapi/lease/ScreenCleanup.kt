@@ -22,6 +22,8 @@ class ScreenCleanup(
     private val power: PowerService,
     private val clipboard: ClipboardService,
     private val showPlaceholder: suspend () -> Unit = {},
+    /** Waits for HOME to reach the screen. False when it did not, so home is not showing. */
+    private val awaitHome: suspend () -> Boolean = { true },
 ) {
     suspend fun run(lock: Boolean): List<String> = buildList {
         step("hide the keyboard") { input.hideIme() }
@@ -29,9 +31,20 @@ class ScreenCleanup(
             showPlaceholder()
             ActionResult(ok = true)
         }
-        step("go home") { input.key(KeyRequest(key = "HOME")) }
+        step("go home") { goHome() }
         if (lock) step("lock") { power.lock() }
         step("clear the clipboard") { clipboard.clearOwn() }
+    }
+
+    /**
+     * Presses HOME, which returns before the launcher comes forward. That is the end of the step,
+     * since the lease takes the end of cleanup as the end of what it did to the screen, and a
+     * session that opens a tab after that must not be blamed for the launcher arriving.
+     */
+    private suspend fun goHome(): ActionResult {
+        val pressed = input.key(KeyRequest(key = "HOME"))
+        if (!pressed.ok || awaitHome()) return pressed
+        return ActionResult(ok = false, message = "the home screen did not come forward")
     }
 
     suspend fun ready(): List<String> = buildList {
