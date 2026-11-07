@@ -150,7 +150,7 @@ async function pageLines(page, number) {
 
 // Drops running headers and footers, such as a page number or a title repeated in the margin of
 // every page: one of the two lines nearest the top or bottom of its page, no larger than the body
-// text, whose text without its digits is in the same place on at least 3 pages and a quarter of
+// text, whose text without its digits is at the same height on at least 3 pages and a quarter of
 // them. A slide's title repeats too, but it is set larger. A watermark, such as "Draft", is the
 // same text, set larger than the body, at the same height and size on at least half the pages,
 // wherever it sits. Body text that repeats, as a form's labels do, stays.
@@ -179,9 +179,13 @@ function dropRunning(pages) {
     order.slice(0, EDGE_LINES).forEach((line) => edges.set(line, "top"));
     order.slice(-EDGE_LINES).forEach((line) => edges.set(line, edges.get(line) || "bottom"));
     const found = new Map();
+    // A running line sits in the same place on each page, so its height is in the key, as for a
+    // watermark. Without it, every line of only digits near an edge shared one key, and the last
+    // rows of a table of figures went with the page numbers.
     for (const [line, side] of edges) {
       if (line.size > body + 0.5) continue;
-      found.set(line, side + ":" + norm(lineText(line).replace(/\d+/g, "")));
+      const text = norm(lineText(line).replace(/\d+/g, ""));
+      found.set(line, [side, Math.round(line.y / 3), text].join(":"));
     }
     return found;
   });

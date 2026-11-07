@@ -47,4 +47,12 @@ function pageRead(globals, options, article) {
   return plain(vm.runInContext(script, ctx));
 }
 
-module.exports = { asset, pageData, pageRead, plain };
+// pdf-read.js in a context of its own, whose functions a test can call. pdf.js is not loaded, so
+// only the functions that work on lines already taken from a page can run.
+function pdfRead() {
+  const ctx = context({});
+  vm.runInContext(asset("pdf-read.js"), ctx);
+  return ctx;
+}
+
+module.exports = { asset, pageData, pageRead, pdfRead, plain };
