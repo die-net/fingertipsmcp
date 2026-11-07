@@ -6,6 +6,7 @@ import android.content.AttributionSource
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -36,6 +37,7 @@ internal class AudioTap {
     private var thread: Thread? = null
     private var writeEnd: ParcelFileDescriptor? = null
     private val tasks by lazy { TopTask() }
+    private val activities by lazy { ActivityStarter() }
 
     @Volatile private var running = false
 
@@ -251,26 +253,18 @@ internal class AudioTap {
     }
 
     /**
-     * Starts the shell heap-dump activity and returns its task once it is on top, or null. `am
-     * start -W` returns when the launch has completed, so the activity is resumed by then, and its
-     * exit status says whether it started.
+     * Starts the shell heap-dump activity and returns its task once it is on top, or null. The wait
+     * ends when the launch has completed, so the activity is resumed by then. A cold start of its
+     * process took 2 s on an emulator, so the limit is the one app starts have, which matters only
+     * when Android holds the wait open. `am` adds the new task flag itself, so it is added here.
      */
     private fun startShellActivity(): Int? {
         val component = ComponentName(SHELL_PACKAGE, HEAP_DUMP_ACTIVITY)
-        val exit = runShell("am", "start", "-W", "-n", component.flattenToShortString())
-        if (exit != 0) {
-            Log.w(TAG, "The shell activity did not start (am exited ${exit ?: "without a status"})")
-            return null
-        }
-        val task =
-            try {
-                tasks.taskShowing(component)
-            } catch (e: IllegalStateException) {
-                Log.w(TAG, "Could not find the shell activity's task", e)
-                null
-            }
-        if (task == null) Log.w(TAG, "The shell activity started but is not on top")
-        return task
+        val intent = Intent().setComponent(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return shellActivityTask(
+            start = { activities.start(intent, START_WAIT_MS) },
+            taskShowing = { tasks.taskShowing(component) },
+        )
     }
 
     /** Closes only the task [startShellActivity] opened, not the rest of the shell package. */
@@ -281,23 +275,6 @@ internal class AudioTap {
             Log.w(TAG, "Could not close the shell activity", e)
         }
     }
-
-    /** Runs [command] and returns its exit status, or null if it didn't finish. */
-    private fun runShell(vararg command: String): Int? =
-        try {
-            val process = ProcessBuilder(*command).redirectErrorStream(true).start()
-            // Read so a full pipe can't block it; the exit status is the answer.
-            process.inputStream.use { it.readBytes() }
-            if (process.waitFor(SHELL_COMMAND_SECONDS, TimeUnit.SECONDS)) {
-                process.exitValue()
-            } else {
-                process.destroy()
-                null
-            }
-        } catch (e: IOException) {
-            Log.i(TAG, command.joinToString(" "), e)
-            null
-        }
 
     /**
      * The base context of the application [installShellPackage] installs. It has no base of its
@@ -322,7 +299,7 @@ internal class AudioTap {
         const val JOIN_MS = 500L
         const val EMPTY_READ_MS = 20L
         const val HEAP_DUMP_ACTIVITY = "com.android.shell.HeapDumpActivity"
-        const val SHELL_COMMAND_SECONDS = 2L
+        const val START_WAIT_MS = 20_000L
         const val PACKAGE_WAIT_SECONDS = 2L
         const val SHELL_PACKAGE = "com.android.shell"
         val SAMPLE_RATE_RANGE = 8_000..96_000
