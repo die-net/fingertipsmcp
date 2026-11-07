@@ -33,31 +33,31 @@ class InstanceLockTest {
     }
 
     @Test
-    fun `a second helper for the package finds the lock held`() {
+    fun `same package is refused`() {
         val child = holder("net.die.phoneapi")
         try {
-            assertNull(InstanceLock(dir).acquire("net.die.phoneapi"))
+            InstanceLock(dir).acquire("net.die.phoneapi").use { assertNull(it) }
         } finally {
             child.destroyForcibly()
         }
     }
 
     @Test
-    fun `another package's helper still starts`() {
+    fun `another package starts`() {
         val child = holder("net.die.phoneapi")
         try {
-            assertNotNull(InstanceLock(dir).acquire("net.die.phoneapi.dev"))
+            InstanceLock(dir).acquire("net.die.phoneapi.dev").use { assertNotNull(it) }
         } finally {
             child.destroyForcibly()
         }
     }
 
     @Test
-    fun `a helper that died leaves the lock free`() {
+    fun `a dead holder frees it`() {
         val child = holder("net.die.phoneapi")
         child.destroyForcibly()
         assertTrue(child.waitFor(SAFETY_S, TimeUnit.SECONDS))
-        assertNotNull(InstanceLock(dir).acquire("net.die.phoneapi"))
+        InstanceLock(dir).acquire("net.die.phoneapi").use { assertNotNull(it) }
     }
 
     private companion object {
@@ -68,13 +68,17 @@ class InstanceLockTest {
 
 /** Takes the lock in its own process and holds it until killed. */
 object LockHolder {
+    private val HELD = "held\n".toByteArray()
+    private val BUSY = "busy\n".toByteArray()
+
     @JvmStatic
     fun main(args: Array<String>) {
-        val lock = InstanceLock(File(args[0])).acquire(args[1])
-        println(if (lock != null) "held" else "busy")
-        System.out.flush()
-        // Holds the lock until the test kills this process.
-        System.`in`.read()
-        lock?.release()
+        InstanceLock(File(args[0])).acquire(args[1]).use { lock ->
+            // The parent reads this line from the child's stdout.
+            System.out.write(if (lock != null) HELD else BUSY)
+            System.out.flush()
+            // Holds the lock until the test kills this process.
+            System.`in`.read()
+        }
     }
 }

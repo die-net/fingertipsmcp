@@ -77,7 +77,7 @@ internal class KeystorePrivateKeyStore(
         }
         if (!tmp.renameTo(file)) {
             tmp.delete()
-            throw IllegalStateException("Could not replace the ADB key")
+            error("Could not replace the ADB key")
         }
     }
 

@@ -30,9 +30,9 @@ class NodeTargeting(private val screen: () -> Rect) {
                 if (node.isVisibleToUser) Rect().also(node::getBoundsInScreen) else null
             } ?: throw offscreen()
         }
-        val windows = windows()
+        val open = windows()
         try {
-            val layout = ScreenLayout.capture(windows, screen())
+            val layout = ScreenLayout.capture(open, screen())
             val raw = Rect().also(node::getBoundsInScreen)
             val clipped = layout.clip(node.windowId, raw)
             if (clipped.isEmpty) throw offscreen()
@@ -56,7 +56,7 @@ class NodeTargeting(private val screen: () -> Rect) {
             }
             return visible.toModel()
         } finally {
-            NodeCompat.recycleAll(windows)
+            NodeCompat.recycleAll(open)
         }
     }
 

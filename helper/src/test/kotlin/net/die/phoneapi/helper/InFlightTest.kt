@@ -9,20 +9,20 @@ class InFlightTest {
     private val connects = InFlight(max = 4)
 
     @Test
-    fun `two overlapping connects to one socket both go ahead`() {
+    fun `overlapping connects both go`() {
         assertTrue(connects.enter("chrome_devtools_remote"))
         assertTrue(connects.enter("chrome_devtools_remote"))
     }
 
     @Test
-    fun `a socket that never accepts stops taking threads`() {
+    fun `a stuck socket is bounded`() {
         repeat(4) { assertTrue(connects.enter("chrome_devtools_remote")) }
         assertFalse(connects.enter("chrome_devtools_remote"))
         assertTrue(connects.enter("webview_devtools_remote_42"))
     }
 
     @Test
-    fun `a finished connect frees its place`() {
+    fun `a finished connect frees one`() {
         repeat(4) { connects.enter("chrome_devtools_remote") }
         connects.exit("chrome_devtools_remote")
         assertTrue(connects.enter("chrome_devtools_remote"))

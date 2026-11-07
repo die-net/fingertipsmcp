@@ -35,28 +35,28 @@ class KeystorePrivateKeyStoreTest {
     }
 
     @Test
-    fun `a Keystore that fails for now keeps the key and the pairing`() {
+    fun `a passing failure keeps it`() {
         val store = pairedStore { throw KeyStoreException("Keystore is locked") }
         assertThrows<IllegalStateException> { store.readPrivateKeyPem() }
         assertTrue(store.isPaired)
     }
 
     @Test
-    fun `a blob that doesn't match the key is dropped`() {
+    fun `a mismatched blob is dropped`() {
         val store = pairedStore { throw AEADBadTagException() }
         assertNull(store.readPrivateKeyPem())
         assertFalse(store.isPaired)
     }
 
     @Test
-    fun `a missing Keystore key is dropped`() {
+    fun `a missing key is dropped`() {
         val store = pairedStore { null }
         assertNull(store.readPrivateKeyPem())
         assertFalse(store.isPaired)
     }
 
     @Test
-    fun `a write that can't put the key in place fails and leaves no temp file`() {
+    fun `a failed rename throws`() {
         val store = pairedStore { it.reversedArray() }
         // A directory where the key file goes makes the rename fail.
         val key = File(dir, "adb-key.bin")

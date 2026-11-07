@@ -17,14 +17,14 @@ class ClientHoldTest {
     }
 
     @Test
-    fun `a dead app's hold does not outlive it`() {
+    fun `a dead app's hold ends`() {
         hold.set(true)
         client = "restarted app"
         assertFalse(hold.held)
     }
 
     @Test
-    fun `a restarted app's release lets the session idle`() {
+    fun `a restarted app can release`() {
         // The first app dies holding; the next one holds and then releases.
         hold.set(true)
         client = "restarted app"

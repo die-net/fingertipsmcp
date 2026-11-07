@@ -30,7 +30,7 @@ class IdleTimerTest {
     }
 
     @Test
-    fun `a burst of events posts one check`() {
+    fun `a burst posts one check`() {
         timer.start()
         repeat(1_000) {
             clock += 1
@@ -40,7 +40,7 @@ class IdleTimerTest {
     }
 
     @Test
-    fun `idles out a full period after the last use`() {
+    fun `idles a period after last use`() {
         timer.start()
         advanceTo(IDLE / 2)
         timer.touch()
@@ -51,7 +51,7 @@ class IdleTimerTest {
     }
 
     @Test
-    fun `a busy session stays up and idles once free`() {
+    fun `busy stays up, then idles`() {
         busy = true
         timer.start()
         advanceTo(IDLE * 3)
@@ -72,7 +72,7 @@ class IdleTimerTest {
     }
 
     @Test
-    fun `a session reconnected before an old check still idles once`() {
+    fun `reconnect idles once`() {
         timer.start()
         timer.stop()
         advanceTo(IDLE / 2)
