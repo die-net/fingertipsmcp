@@ -1,6 +1,5 @@
 package net.die.phoneapi.browser
 
-import java.io.IOException
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -22,32 +21,36 @@ internal class TabProbe(
     private val websocketKey: () -> String,
 ) {
     /** Whether [socket] is Chrome's and its browser endpoint does not answer. */
-    suspend fun frozen(socket: String): Boolean = socket == CHROME_SOCKET && !browserAnswers(socket)
+    suspend fun frozen(socket: String): Boolean = socket == CHROME_SOCKET && browserSilent(socket)
 
-    /** Whether Chrome's browser endpoint on [socket] answers. */
-    private suspend fun browserAnswers(socket: String): Boolean =
+    /**
+     * Whether Chrome's browser endpoint on [socket] gives no answer within [PROBE_MS], to the
+     * handshake or to `Browser.getVersion`. Only that means frozen. A probe that fails some other
+     * way, such as the helper being gone or the socket refused, says nothing about Chrome, so it is
+     * not frozen and the caller's own failure stands.
+     */
+    private suspend fun browserSilent(socket: String): Boolean =
         try {
             withContext(io) {
                 open(socket).use { devtools ->
                     devtools.withStreams { input, output ->
                         CdpSession(input, output, io, websocketKey).use { cdp ->
                             cdp.open("/devtools/browser")
-                            withTimeoutOrNull(PROBE_MS) { cdp.call("Browser.getVersion") } != null
+                            withTimeoutOrNull(PROBE_MS) { cdp.call("Browser.getVersion") } == null
                         }
                     }
                 }
             }
-        } catch (_: ApiException) {
-            false
-        } catch (_: IOException) {
-            false
+        } catch (e: ApiException) {
+            e.error == "cdp_timeout"
         }
 
     /**
      * Checks that [cdp]'s page has a renderer. When Chrome unloaded the tab, this reloads it in the
      * background. A [reading] caller then gets true once the fresh page has loaded; any other fails
-     * with `tab_reloaded`, so it does not act on a page it has not looked at. When Chrome does not
-     * answer at all, this fails with `browser_frozen`.
+     * with `tab_reloaded`, so it does not act on a page it has not looked at, as does a reading one
+     * whose page has not loaded within [RELOAD_MS]. When Chrome does not answer at all, this fails
+     * with `browser_frozen`.
      */
     suspend fun revive(cdp: CdpSession, socket: String, reading: Boolean): Boolean {
         if (socket != CHROME_SOCKET || !unloaded(cdp, socket)) return false
@@ -61,8 +64,13 @@ internal class TabProbe(
                     "acting on it.",
             )
         }
-        awaitLoaded(cdp)
-        return true
+        if (awaitLoaded(cdp)) return true
+        throw ApiException(
+            409,
+            "tab_reloaded",
+            "Chrome had unloaded this hidden tab to save memory, so PhoneAPI reloaded it, but it " +
+                "has not loaded in ${RELOAD_MS / MS_PER_S} s. Read it again in a moment.",
+        )
     }
 
     /**
@@ -102,26 +110,27 @@ internal class TabProbe(
      */
     private suspend fun unloaded(cdp: CdpSession, socket: String): Boolean {
         if (withTimeoutOrNull(PROBE_MS) { cdp.call("Inspector.enable") } == null) {
-            if (!browserAnswers(socket)) throw browserFrozen()
+            if (browserSilent(socket)) throw browserFrozen()
             return false
         }
         return cdp.seen("Inspector.targetCrashed")
     }
 
-    /** Waits, up to [RELOAD_MS], until the reloaded page has its document. */
-    private suspend fun awaitLoaded(cdp: CdpSession) {
+    /** Waits, up to [RELOAD_MS], until the reloaded page has its document. True once it does. */
+    private suspend fun awaitLoaded(cdp: CdpSession): Boolean =
         withTimeoutOrNull(RELOAD_MS) {
-            while (true) {
-                // In an isolated world, like all page script, so the page cannot see the read.
-                val state =
-                    withTimeoutOrNull(PROBE_MS) {
-                        evaluateIn(cdp, "document.readyState", awaitPromise = false).value
-                    }
-                val text = (state as? JsonPrimitive)?.contentOrNull
-                if (text == "interactive" || text == "complete") return@withTimeoutOrNull
-                delay(POLL_MS)
+            while (!documentReady(cdp)) delay(POLL_MS)
+            true
+        } == true
+
+    private suspend fun documentReady(cdp: CdpSession): Boolean {
+        // In an isolated world, like all page script, so the page cannot see the read.
+        val state =
+            withTimeoutOrNull(PROBE_MS) {
+                evaluateIn(cdp, "document.readyState", awaitPromise = false).value
             }
-        }
+        val text = (state as? JsonPrimitive)?.contentOrNull
+        return text == "interactive" || text == "complete"
     }
 
     companion object {
@@ -133,6 +142,7 @@ internal class TabProbe(
                 "const c = new MessageChannel(); c.port1.onmessage = () => done(true); " +
                 "c.port2.postMessage(0); })"
         private const val POLL_MS = 250L
+        private const val MS_PER_S = 1_000L
     }
 }
 
