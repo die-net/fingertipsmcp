@@ -208,6 +208,8 @@ The merged code, at `e25a1dc`, did the same on that phone on 2026-11-07, with Ch
 - No dialog showed on the opens in front, nothing but Chrome or the launcher came forward, and nothing reached Downloads. A plain page saw `history.length` 1.
 - The first hidden open was the slowest, and Chrome was on top when it returned, then the launcher. That fits PhoneAPI starting Chrome, which takes the screen and gives it back, after the phone sat asleep. Whether Chrome was running before that open was not checked.
 
+A later check of `main` at 2acb53e on the same phone that day found a race. 2 of 12 first opens in a row with Chrome in front failed 502 `cdp_error`, `DevTools closed the WebSocket`, at 0.4 s, far too soon to be the file loading. Two hidden opens and 25 plain pages in the same rhythm were fine, and neither failed open left a tab. The cancel starts as soon as Chrome names the tab, so it can close the tab while the connection asking for its listed id waits on `Target.getTargetInfo`. That cause comes from reading the code, and a test that drops that connection gave the same error. A build that treated a begun save as the tab closing, in `listedId` only, read 30 of 30 first opens in front as `pdf`, in 3.8 to 7.2 s, and nothing reached Downloads. That change did not land, since `usePage` now answers `not_found` for a tab that closes during any call, and that fix has not run on this phone.
+
 Chrome 145 on the Android 17 emulator, opened this way, saved a PDF rather than showing its viewer, and the event and the cancel worked as on Chrome 156.
 
 With the same build on the Android 16 emulator with Chrome 133 and Drive, on 2026-11-06, 21 opens that reached Chrome gave no `START` line for Drive, and nothing reached Downloads: one with Chrome long hidden, three just after it left, thirteen with it in front, and four with `capture`, two of those in front. `capture` still navigates, so the cancel is what stops Drive there.
@@ -606,6 +608,17 @@ On 2026-10-22, with v0.3.0 and then a dev build beside it, the phone's agent and
 - `session_conflict` both ways, `screenHolder` as `you`, `agent`, `parent`, and `subagent`, and the cleanup and waited notes.
 - Restarting the dev helper closed both test tabs a live session had, since the startup sweep ran on every helper connection. It now runs once per app start. The release build's helper also restarted during cleanup, when the USB connection dropped, and its app relaunched it within 30 seconds.
 
+On 2026-11-07, a dev build of `main` at 2acb53e ran on the same phone, with Chrome 156.0.8078.79, to recheck what had changed since 4059efb. The PDF opens are under [PDFs](#pdfs). The rest worked, except where noted:
+
+- Pairing through Settings and `PAIR_ADB`. After the helper was killed, the app brought it back without help.
+- `app_launch` with the helper, and without it, with PhoneAPI not in front, 503 `helper_unavailable` in 0.03 s.
+- `am stopservice` of `ListenerService` refused connections, and `am start-foreground-service` had the API answering again within 1.5 s, with the helper still running.
+- With a viewer holding the screen and a test tab on it, `evaluate`, `navigate`, `tap` with `cdp`, `close`, and opening a tab each failed 409 `screen_taken` in about 0.1 s. A read of that tab and `evaluate` on a hidden tab worked, and the session had the screen back after the viewer let go.
+- A wait for an element on a page whose script was stuck for 9 s ended at its 2 s limit, as did a `browser.dialog` wait, and the page answered once the script ended.
+- `GET /v1/sessions` dropped a tab closed behind PhoneAPI's back. `touch` and `cdp` taps, video, a screenshot, `ime.shown`, and MCP `browser_read` and `browser_find` worked, including `queries` and `scope` `data`.
+- Keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The nodes were not read on that try. They were there in the other 15.
+- After `screen/release` with `cleanup` false and no viewer, a `cdp` tap failed `not_visible` and the tab went from `visible` to `hidden`, in the one try that read it. Why was not looked into.
+
 From the 2026-11-06 audit fixes, what the emulators could not settle. The rest was run that day on the Android 16 emulator, and part of it on Android 13. The sections above give the results, including the checks that failed.
 
 - Android 10 and 11 hardware: a frozen Chrome's handshake on the Android 10 USB path; `wm dismiss-keyguard` on Android 10 and 11; rotation on Android 10 and 11 and viewer taps on Android 10, since the Android 10 emulator has no video; Android 10 taps in the viewer opening no audio socket.
@@ -615,10 +628,11 @@ From the 2026-11-06 audit fixes, what the emulators could not settle. The rest w
 - A release and a dev helper side by side, with the UiAutomation contention, which needs a release build.
 - UiAutomation idling out after the app process is killed and restarted, as under [UiAutomation](#uiautomation).
 - The `_adb-tls-pairing` record's name on Android 11. With the serial known, the pairing search now resolves only records named `adb-<serial>-…`, so a different name there means it finds no dialog.
+- Why keyboard `clear` failed once in 16 tries on the Android 11 test phone, and why a `cdp` tap after a release without cleanup hid the tab, both under [Checked on the phone](#checked-on-the-phone).
 - `chrome-input-check` on a newer phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
 - Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
 - Opening a tab, past what [PDFs](#pdfs) says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
-- `app_launch` without the helper on Android 10 and 11 and on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator. A browser wait's limit on the Android 10 USB path.
+- `app_launch` without the helper on Android 10, and with PhoneAPI in front on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator. A browser wait's limit on the Android 10 USB path.
 - Touch on a page Chrome turned the nodes off for, as under [UiAutomation](#uiautomation): whether starting Chrome shows a page a blur or `visibilitychange`, and whether an activity start brings the nodes back on a phone, where opening and closing a tab did.
 - The occasional `content_unavailable` on a new tab on Chrome 133, as under [UiAutomation](#uiautomation): what the tree holds when it happens.
 - The lost click on Chrome 109 with the tab switcher open, under [Screen hand-offs](#screen-hand-offs), which did not come back in 35 tries.
