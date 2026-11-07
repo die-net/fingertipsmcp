@@ -299,16 +299,18 @@ internal class PdfReader(private val script: suspend () -> String) {
     /**
      * A handle on the tab's document, when it is still the one with [loader], else null. The loader
      * id is checked after the handle is taken: a document loaded in between has another loader id,
-     * and the one this made loaded before, so a handle that passes is on this page's document.
+     * and the one this made loaded before, so a handle that passes is on this page's document. The
+     * document is named by its backend node id, since Chrome drops a `nodeId` at DOMContentLoaded,
+     * which can come between the two calls while the page is still loading.
      */
     private suspend fun ownPage(cdp: CdpSession, loader: String): OwnPage? {
         val root =
             cdp.call("DOM.getDocument", buildJsonObject { put("depth", 0) })
                 .decodeCdp<DocumentRoot>()
                 ?.root
-                ?.nodeId ?: return null
+                ?.backendNodeId ?: return null
         val handle =
-            cdp.call("DOM.resolveNode", buildJsonObject { put("nodeId", root) })
+            cdp.call("DOM.resolveNode", buildJsonObject { put("backendNodeId", root) })
                 .decodeCdp<Resolved>()
                 ?.`object`
                 ?.objectId ?: return null
@@ -512,7 +514,7 @@ private data class Paused(
 
 @Serializable private data class DocumentRoot(val root: DocumentNode? = null)
 
-@Serializable private data class DocumentNode(val nodeId: Int? = null)
+@Serializable private data class DocumentNode(val backendNodeId: Int? = null)
 
 @Serializable private data class Resolved(val `object`: Handle? = null)
 
