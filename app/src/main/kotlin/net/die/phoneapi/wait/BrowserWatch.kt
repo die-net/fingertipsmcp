@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -41,9 +42,14 @@ import net.die.phoneapi.model.ElementState
 import net.die.phoneapi.model.WaitCondition
 
 /**
- * CDP sessions held for one `POST /v1/wait`. Every event updates [PageModel] or [TargetModel] and
- * wakes the wait loop, on the session's reader, so a wait busy with a check skips none. Closing the
+ * CDP sessions held for one `POST /v1/wait`. Events update [PageModel] or [TargetModel] and wake
+ * the wait loop, on the session's reader, so a wait busy with a check skips none. Closing the
  * sockets unblocks the readers.
+ *
+ * A page's nodes are the exception. Chrome reports a change only under parents the session has
+ * read, and no event covers a style rule, so a `browser.element` wait looks again every
+ * [ELEMENT_POLL_MS] instead. Reading the whole document to hear of every node costs far more, and
+ * slows the page's own changes enough for it to measure, as `docs/device-notes.md` has it.
  *
  * The watch owns the wait's limit. Set-up and every look at a page end there, and a page they did
  * not reach in time matches nothing, so a page that stops answering reads as a wait that timed out.
@@ -217,8 +223,7 @@ internal class BrowserWatch(
         // Before the reader starts, since a listener hears only what comes after it.
         hold(
             session.listen { event ->
-                model.apply(event.method, event.params, now())
-                signals.tryEmit(Unit)
+                if (model.apply(event.method, event.params, now())) signals.tryEmit(Unit)
             }
         )
         session.open("/devtools/page/$chromeId")
@@ -295,15 +300,19 @@ internal class BrowserWatch(
     private suspend fun element(
         page: PageSession,
         condition: WaitCondition.BrowserElement,
-    ): Check =
-        page.cdp.withNodeIds {
-            val nodeId = findNode(page, condition)
-            when (condition.state) {
-                ElementState.ABSENT -> Check(nodeId == 0)
-                ElementState.PRESENT -> Check(nodeId != 0)
-                ElementState.VISIBLE -> Check(nodeId != 0 && visible(page, nodeId))
+    ): Check {
+        val holds =
+            page.cdp.withNodeIds {
+                val nodeId = findNode(page, condition)
+                when (condition.state) {
+                    ElementState.ABSENT -> nodeId == 0
+                    ElementState.PRESENT -> nodeId != 0
+                    ElementState.VISIBLE -> nodeId != 0 && visible(page, nodeId)
+                }
             }
-        }
+        // Counted from the end of the look, so a slow page gets fewer of them.
+        return if (holds) Check(true) else Check(false, recheckAtMs = now() + ELEMENT_POLL_MS)
+    }
 
     private suspend fun findNode(page: PageSession, condition: WaitCondition.BrowserElement): Int {
         if (condition.by == ElementBy.CSS) return firstMatch(page.cdp, condition.selector)
@@ -337,17 +346,29 @@ internal class BrowserWatch(
 
     private suspend fun visible(page: PageSession, nodeId: Int): Boolean =
         try {
-            val quads =
-                page.cdp
-                    .call("DOM.getContentQuads", buildJsonObject { put("nodeId", nodeId) })
-                    .decodeCdp<QuadList>()
-                    ?.quads
+            val node = buildJsonObject { put("nodeId", nodeId) }
+            layOut(page, node)
+            val quads = page.cdp.call("DOM.getContentQuads", node).decodeCdp<QuadList>()?.quads
             !quads.isNullOrEmpty()
         } catch (e: ApiException) {
             // Chrome refuses the quads of a node with no box.
             if (e.rejected == null) throw e
             false
         }
+
+    /**
+     * Has Chrome lay the page out. It does that for a hidden tab only when asked, and
+     * `DOM.getContentQuads` doesn't ask, so a node added since the last layout shows no box.
+     * `DOM.getBoxModel` asks. Its answer isn't used, since it refuses a `display: contents` element
+     * that the quads do show, and it lays the page out before it refuses.
+     */
+    private suspend fun layOut(page: PageSession, node: JsonObject) {
+        try {
+            page.cdp.call("DOM.getBoxModel", node)
+        } catch (e: ApiException) {
+            if (e.rejected == null) throw e
+        }
+    }
 
     /**
      * Enables what [domains] the conditions need. Chrome sends Page.lifecycleEvent only after
@@ -410,6 +431,12 @@ internal class BrowserWatch(
         const val SOCKET_SLACK_MS = 20_000L
         /** The least a wait gets to reach a page and look at it. */
         const val MIN_LOOK_MS = 1_000L
+        /**
+         * The time between looks at a page for a `browser.element` condition. A look that finds a
+         * node under a parent with many children takes Chrome about 100 ms, so a shorter time would
+         * show on a large page.
+         */
+        const val ELEMENT_POLL_MS = 250L
         const val BLANK = "about:blank"
         const val READY_STATE = "document.readyState"
     }

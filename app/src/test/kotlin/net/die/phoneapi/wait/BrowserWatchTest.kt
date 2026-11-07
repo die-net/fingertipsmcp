@@ -8,6 +8,7 @@ import kotlinx.coroutines.Delay
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -49,6 +50,12 @@ class BrowserWatchTest {
     private val dialog = WaitCondition.BrowserDialog(target = TAB)
     private val settled = WaitCondition.BrowserSettled(target = TAB, quietMs = 0)
     private val loaded = WaitCondition.BrowserLoaded(target = TAB)
+    private val visible =
+        WaitCondition.BrowserElement(
+            target = TAB,
+            selector = "#a",
+            state = ElementState.VISIBLE,
+        )
 
     @Test
     fun `counts a dialog already open`() = clock.run {
@@ -451,17 +458,13 @@ class BrowserWatchTest {
         val page =
             lookingPage(
                 document(3) +
-                    harness.serverTextFrame("""{"id":4,"result":{"nodeId":2}}""") +
+                    found(4) +
                     dropped(5, NO_NODE) +
-                    document(6) +
-                    harness.serverTextFrame("""{"id":7,"result":{"nodeId":2}}""") +
-                    harness.serverTextFrame(harness.quad(8))
-            )
-        val visible =
-            WaitCondition.BrowserElement(
-                target = TAB,
-                selector = "#a",
-                state = ElementState.VISIBLE,
+                    refused(6, NO_NODE) +
+                    document(7) +
+                    found(8) +
+                    box(9) +
+                    harness.serverTextFrame(harness.quad(10))
             )
         assertTrue(looked(page, visible))
     }
@@ -471,16 +474,113 @@ class BrowserWatchTest {
         val page =
             lookingPage(
                 document(3) +
-                    harness.serverTextFrame("""{"id":4,"result":{"nodeId":2}}""") +
-                    refused(5, "Could not compute content quads.")
+                    found(4) +
+                    refused(5, NO_BOX) +
+                    refused(6, "Could not compute content quads.")
             )
-        val visible =
+        assertFalse(looked(page, visible))
+    }
+
+    @Test
+    fun `a new hidden node has a box`() = clock.run {
+        // Chrome shows such a node no quads until something has it lay the page out.
+        val page =
+            lookingPage(document(3) + found(4) + box(5) + harness.serverTextFrame(harness.quad(6)))
+        assertTrue(looked(page, visible))
+        assertEquals(
+            listOf("DOM.getBoxModel", "DOM.getContentQuads"),
+            page.methods().takeLast(2),
+        )
+    }
+
+    @Test
+    fun `display contents has quads`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    found(4) +
+                    refused(5, NO_BOX) +
+                    harness.serverTextFrame(harness.quad(6))
+            )
+        assertTrue(looked(page, visible))
+    }
+
+    @Test
+    fun `a wait finds a new node`() = clock.run {
+        // Chrome reports nothing about a node added under a parent the session has not read, so
+        // nothing wakes the wait between the looks.
+        val page = lookingPage(document(3) + notFound(4) + document(5) + found(6))
+        val outcome = waited(page, WaitCondition.BrowserElement(target = TAB, selector = "#a"))
+        assertTrue(outcome.matched)
+        assertEquals(POLL_MS, clock.now)
+    }
+
+    @Test
+    fun `a wait finds new text`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    harness.serverTextFrame(
+                        """{"id":4,"result":{"searchId":"S","resultCount":0}}"""
+                    ) +
+                    document(5) +
+                    search(6) +
+                    harness.serverTextFrame("""{"id":7,"result":{"nodeIds":[2]}}""") +
+                    reply(8)
+            )
+        val text = WaitCondition.BrowserElement(target = TAB, selector = "a", by = ElementBy.TEXT)
+        val outcome = waited(page, text)
+        assertTrue(outcome.matched)
+        assertEquals(POLL_MS, clock.now)
+    }
+
+    @Test
+    fun `a wait sees a node go`() = clock.run {
+        val page = lookingPage(document(3) + pathTo(4) + found(4) + document(5) + notFound(6))
+        val absent =
             WaitCondition.BrowserElement(
                 target = TAB,
                 selector = "#a",
-                state = ElementState.VISIBLE,
+                state = ElementState.ABSENT,
             )
-        assertFalse(looked(page, visible))
+        assertTrue(waited(page, absent).matched)
+        assertEquals(POLL_MS, clock.now)
+    }
+
+    @Test
+    fun `a wait sees a node get a box`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    pathTo(4) +
+                    found(4) +
+                    refused(5, NO_BOX) +
+                    noQuads(6) +
+                    document(7) +
+                    pathTo(8) +
+                    found(8) +
+                    box(9) +
+                    harness.serverTextFrame(harness.quad(10))
+            )
+        assertTrue(waited(page, visible).matched)
+        assertEquals(POLL_MS, clock.now)
+    }
+
+    @Test
+    fun `a look sets off no other`() = clock.run {
+        // Chrome sends the path to a node each time a look finds it, since the look's
+        // DOM.getDocument forgets what the session was told.
+        val look = { first: Int ->
+            document(first) +
+                pathTo(first + 1) +
+                found(first + 1) +
+                refused(first + 2, NO_BOX) +
+                noQuads(first + 3)
+        }
+        val page = lookingPage(look(3) + look(7) + look(11))
+        assertFalse(waited(page, visible, forMs = POLL_MS - 1).matched)
+        // The first look, and the one a wait always makes at its end.
+        assertEquals(2, page.methods().count { it == "DOM.getDocument" })
     }
 
     @Test
@@ -506,6 +606,24 @@ class BrowserWatchTest {
         return watch.check(condition).satisfied.also { watch.close() }
     }
 
+    /** The wait loop on [condition] over [page], as a wait runs it, for [forMs]. */
+    private suspend fun waited(
+        page: KeyedSocket,
+        condition: WaitCondition,
+        forMs: Long = LIMIT_MS,
+    ): WaitOutcome = coroutineScope {
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(condition), timeoutMs = LIMIT_MS)
+        val changes = Channel<Unit>(Channel.CONFLATED)
+        val pump = launch { watch.changes.collect { changes.trySend(Unit) } }
+        val watcher = ConditionWatcher { watch.check(condition) }
+        awaitConditions(listOf(watcher), emptyList(), clock.now + forMs, changes) { clock.now }
+            .also {
+                pump.cancel()
+                watch.close()
+            }
+    }
+
     /** A page that answers a `browser.element` wait's set-up, then with [looks]. */
     private fun lookingPage(looks: ByteArray) =
         KeyedSocket(
@@ -519,6 +637,22 @@ class BrowserWatchTest {
 
     private fun document(id: Int) =
         harness.serverTextFrame("""{"id":$id,"result":{"root":{"nodeId":1}}}""")
+
+    private fun found(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{"nodeId":2}}""")
+
+    private fun notFound(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{"nodeId":0}}""")
+
+    /** What Chrome sends, ahead of its answer to command [id], when that command finds a node. */
+    private fun pathTo(id: Int) =
+        harness.serverTextFrame(
+            """{"afterId":$id,"method":"DOM.setChildNodes",""" +
+                """"params":{"parentId":1,"nodes":[]}}"""
+        )
+
+    private fun box(id: Int) =
+        harness.serverTextFrame("""{"id":$id,"result":{"model":{"width":9,"height":9}}}""")
+
+    private fun noQuads(id: Int) = harness.serverTextFrame("""{"id":$id,"result":{"quads":[]}}""")
 
     private fun search(id: Int) =
         harness.serverTextFrame("""{"id":$id,"result":{"searchId":"S","resultCount":1}}""")
@@ -611,6 +745,10 @@ class BrowserWatchTest {
         /** A wait's limit, well under the 15 s a single DevTools call may take. */
         const val LIMIT_MS = 4_000L
         const val MIN_LOOK_MS = 1_000L
+        /** The time between looks for a `browser.element` condition. */
+        const val POLL_MS = 250L
+        /** Chrome's refusal of the box of a node that has none. */
+        const val NO_BOX = "Could not compute box model."
         /** Chrome's refusal of a node id it has dropped. */
         const val NO_NODE = "Could not find node with given id"
         /** Events in a burst, more than a session could hold for a reader that is behind. */
