@@ -57,6 +57,18 @@ internal suspend fun refused(reconnect: suspend () -> Unit): Boolean =
         tabGone(e)
     }
 
+/**
+ * A call to a tab whose server has not answered. It has no page to use yet: Chrome holds a new
+ * connection until the commit, or shows it the page the tab had before.
+ */
+internal fun tabWaiting(id: String): ApiException =
+    ApiException(
+        409,
+        "content_unavailable",
+        "Browser target $id is still waiting for its server, so it has no page yet. A " +
+            "browser.settled wait returns once it has loaded.",
+    )
+
 /** A tab that closed, whoever closed it. */
 internal fun tabClosed(id: String): ApiException =
     ApiException.notFound(
