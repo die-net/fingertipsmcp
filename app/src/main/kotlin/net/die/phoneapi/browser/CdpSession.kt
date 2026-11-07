@@ -5,6 +5,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.SocketTimeoutException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -25,8 +26,8 @@ import net.die.phoneapi.model.ApiException
 internal data class CdpEvent(val method: String, val params: JsonObject)
 
 /**
- * One DevTools WebSocket. Commands are matched by id; everything without an id is an [events] item.
- * The reader runs on [dispatcher].
+ * One DevTools WebSocket. Commands are matched by id; everything without an id is an event, for
+ * [listen] and [events]. The reader runs on [dispatcher].
  */
 internal class CdpSession(
     input: InputStream,
@@ -42,12 +43,30 @@ internal class CdpSession(
     private var closedBy: IOException? = null
     private val nextId = AtomicInteger(0)
     private val stopped = CompletableDeferred<Unit>()
+    private val listeners = CopyOnWriteArrayList<(CdpEvent) -> Unit>()
     private val eventsFlow =
         MutableSharedFlow<CdpEvent>(
             replay = EVENT_BUFFER,
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
+
+    /**
+     * The events, as a flow that replays the last [EVENT_BUFFER]. A collector that falls behind
+     * skips events, so code that has to see every one uses [listen].
+     */
     val events: Flow<CdpEvent> = eventsFlow.asSharedFlow()
+
+    /**
+     * Calls [onEvent] with every event from now on, in the order Chrome sent them, on the reader,
+     * until the returned handle is closed. It runs before the next message is read, so it must not
+     * block or wait.
+     */
+    fun listen(onEvent: (CdpEvent) -> Unit): Closeable {
+        // A holder of its own, so closing removes this listener and no other.
+        val holder: (CdpEvent) -> Unit = { onEvent(it) }
+        listeners += holder
+        return Closeable { listeners -= holder }
+    }
 
     /**
      * Whether [method] arrived among the last events. Messages are handled in order, so an event
@@ -141,7 +160,9 @@ internal class CdpSession(
         val id = message.id
         if (id == null) {
             val method = message.method ?: return
-            eventsFlow.emit(CdpEvent(method, message.params ?: JsonObject(emptyMap())))
+            val event = CdpEvent(method, message.params ?: JsonObject(emptyMap()))
+            listeners.forEach { it(event) }
+            eventsFlow.emit(event)
             return
         }
         val error = message.error

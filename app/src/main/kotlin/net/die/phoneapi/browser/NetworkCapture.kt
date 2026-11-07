@@ -8,7 +8,6 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -152,6 +151,9 @@ internal class NetworkCapture(
     private class Capture(val link: PageLink, val log: CaptureLog) {
         @Volatile var used = 0L
         var job: Job? = null
+        /** Records every event into [log] as the session reads it, so none is skipped. */
+        val recording: Closeable =
+            link.cdp.listen { event -> synchronized(log) { log.apply(event) } }
 
         fun responses(): List<CapturedResponse> = synchronized(log) { log.responses }
     }
@@ -173,7 +175,7 @@ internal class NetworkCapture(
         captures[id] = capture
         var started = false
         try {
-            // Collecting starts before Network does, so no event is missed.
+            // Recording started with the capture, before Network, so no event is missed.
             capture.job = scope.launch(start = CoroutineStart.UNDISPATCHED) { watch(id, capture) }
             link.cdp.call(
                 "Network.enable",
@@ -188,6 +190,7 @@ internal class NetworkCapture(
             if (!started) {
                 captures.remove(id, capture)
                 capture.job?.cancel()
+                capture.recording.close()
                 link.close()
             }
         }
@@ -206,6 +209,7 @@ internal class NetworkCapture(
     fun stop(id: String) {
         val capture = captures.remove(id) ?: return
         capture.job?.cancel()
+        capture.recording.close()
         capture.link.close()
     }
 
@@ -257,24 +261,15 @@ internal class NetworkCapture(
     /** Ends a capture when its session closes, as when the tab does, or when it goes unused. */
     private suspend fun watch(id: String, capture: Capture) {
         try {
-            coroutineScope {
-                val events =
-                    launch(start = CoroutineStart.UNDISPATCHED) {
-                        capture.link.cdp.events.collect { event ->
-                            synchronized(capture.log) { capture.log.apply(event) }
-                        }
-                    }
-                var open = true
-                while (open) {
-                    val left = capture.used + IDLE_MS - now()
-                    open =
-                        left > 0 &&
-                            withTimeoutOrNull(left) { capture.link.cdp.awaitClosed() } == null
-                }
-                events.cancel()
+            var open = true
+            while (open) {
+                val left = capture.used + IDLE_MS - now()
+                open =
+                    left > 0 && withTimeoutOrNull(left) { capture.link.cdp.awaitClosed() } == null
             }
         } finally {
             captures.remove(id, capture)
+            capture.recording.close()
             capture.link.close()
         }
     }
