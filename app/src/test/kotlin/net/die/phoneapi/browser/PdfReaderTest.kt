@@ -191,6 +191,28 @@ class PdfReaderTest {
     }
 
     @Test
+    fun `outlives DOMContentLoaded`() {
+        // The page commits and is still loading when its document is named. Chrome drops the
+        // nodeId it gave once DOMContentLoaded fires, so that id can't be the one resolved.
+        val replies = Replies()
+        replies.navigation(loader = "L1")
+        replies.commit("L1")
+        replies.result("""{"root":{"nodeId":1,"backendNodeId":7}}""")
+        replies.domContentLoaded(after = 6)
+        replies.result("""{"object":{"objectId":"D1"}}""")
+        replies.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L1"}}}""")
+        replies.value("\"complete\"")
+        replies.loaded()
+        replies.value("true")
+        replies.value(EXTRACT)
+        val page = replies.socket()
+        onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        val resolve = page.sent().lines().single { "DOM.resolveNode" in it }
+        assertTrue(""""backendNodeId":7""" in resolve, resolve)
+        assertFalse(""""nodeId"""" in resolve, resolve)
+    }
+
+    @Test
     fun `ignores an earlier commit`() {
         // A navigation that started before this one can commit first, and its loader is another.
         val replies = Replies()
@@ -620,6 +642,15 @@ class PdfReaderTest {
                 )
         }
 
+        /** DOMContentLoaded, once command [after] is sent. */
+        fun domContentLoaded(after: Int) {
+            script +=
+                harness.serverTextFrame(
+                    """{"method":"Page.domContentEventFired","afterId":$after,""" +
+                        """"params":{"timestamp":1}}"""
+                )
+        }
+
         /** An event that has nothing to do with the takeover. */
         fun noise() {
             script += harness.serverTextFrame("""{"method":"Page.frameResized","params":{}}""")
@@ -630,7 +661,7 @@ class PdfReaderTest {
 
         /** A handle on the tab's document, whose loader is then [loader]. */
         fun handle(loader: String) {
-            result("""{"root":{"nodeId":1}}""")
+            result("""{"root":{"nodeId":1,"backendNodeId":7}}""")
             result("""{"object":{"objectId":"D1"}}""")
             result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"$loader"}}}""")
         }
