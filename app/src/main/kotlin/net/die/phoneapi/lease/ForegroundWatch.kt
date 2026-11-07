@@ -13,10 +13,12 @@ import net.die.phoneapi.model.ApiException
  * these, so this is a tripwire for workflows that rely on one, not something agents handle in
  * normal use.
  *
- * A change of top task during the call, or within [LATE_MS] after, with no screen call running or
- * started meanwhile, is the session's doing. The call fails with `took_screen`. A session that
- * caused it while no one held the screen gets the screen, so it can look and clean up. Otherwise
- * the app that was in front comes back, and the holder is told.
+ * A change of top task during the call, or within [LATE_MS] after, with no screen call or cleanup
+ * running at any time meanwhile, is the session's doing. Those are what PhoneAPI itself moves the
+ * screen with, and the lease records them, so what is in front is not taken as evidence. The call
+ * fails with `took_screen`. A session that caused it while no one held the screen gets the screen,
+ * so it can look and clean up. Otherwise the app that was in front comes back, and the holder is
+ * told.
  */
 class ForegroundWatch(
     private val lease: ScreenLease,
@@ -41,8 +43,9 @@ class ForegroundWatch(
     /** Runs [holder]'s call [block], watching the top task when [holder] lacks the screen. */
     suspend fun <T> watch(holder: Holder.Session, block: suspend () -> T): T {
         if (lease.holds(holder) || lease.state.value.holder is Holder.Viewer) return block()
+        // Read first, so a screen call or cleanup that ends while top() runs counts as overlapping.
+        val turns = lease.screenTurns
         val before = top() ?: return block()
-        val calls = lease.screenCalls
         inFlight.incrementAndGet()
         val value =
             try {
@@ -51,14 +54,14 @@ class ForegroundWatch(
                 inFlight.decrementAndGet()
             }
         val after = top()
-        if (after != null && after != before && quiet(calls)) {
+        if (after != null && after != before && quiet(turns)) {
             throw tookScreen(holder, before, after, late = false)
         }
         if (after != null) {
             scope.launch {
                 delay(LATE_MS)
                 val late = top()
-                if (late != null && late != after && quiet(calls)) {
+                if (late != null && late != after && quiet(turns)) {
                     tookScreen(holder, after, late, late = true)
                 }
             }
@@ -66,10 +69,13 @@ class ForegroundWatch(
         return value
     }
 
-    /** No screen call ran since [calls] was read, so a change is not the holder's. */
-    private fun quiet(calls: Long): Boolean =
-        lease.screenCalls == calls &&
-            !lease.callRunning() &&
+    /**
+     * No screen call or cleanup ran at any time since [turns] was read, so a change is neither the
+     * holder's nor PhoneAPI's own.
+     */
+    private fun quiet(turns: Long): Boolean =
+        lease.screenTurns == turns &&
+            !lease.screenBusy() &&
             // A person in the viewer drives the screen without screen calls.
             lease.state.value.holder !is Holder.Viewer
 

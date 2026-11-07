@@ -172,6 +172,9 @@ internal class FakeApi(
             cleanupCount.value = value
         }
 
+    /** What cleanup does on the fake phone, which a test sets to act out its HOME. */
+    @Volatile var duringCleanup: suspend () -> Unit = {}
+
     /** Waits until cleanup has run [count] times in all. */
     suspend fun awaitCleanups(count: Int) {
         cleanupCount.first { it >= count }
@@ -185,6 +188,7 @@ internal class FakeApi(
         ScreenLease(
             CoroutineScope(clock),
             cleanup = {
+                duringCleanup()
                 cleanups++
                 emptyList()
             },

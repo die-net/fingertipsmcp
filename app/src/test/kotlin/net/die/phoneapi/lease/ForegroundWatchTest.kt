@@ -22,12 +22,15 @@ class ForegroundWatchTest {
 
     private data class Watched(val lease: ScreenLease, val watch: ForegroundWatch)
 
-    private fun TestScope.watched(): Watched {
+    private fun TestScope.watched(cleanup: suspend () -> Unit = {}): Watched {
         val lease =
             ScreenLease(
                 backgroundScope,
-                cleanup = { emptyList() },
-                lockedNow = { true },
+                cleanup = {
+                    cleanup()
+                    emptyList()
+                },
+                lockedNow = { false },
                 now = { testScheduler.currentTime },
             )
         val watch =
@@ -100,6 +103,89 @@ class ForegroundWatchTest {
     }
 
     @Test
+    fun `a call ending midway is spared`() = runTest {
+        val (lease, watch) = watched()
+        lease.withScreen(a) {}
+        val launch = CompletableDeferred<Unit>()
+        val call = async {
+            lease.withScreen(a) {
+                launch.await()
+                top = "com.maps"
+            }
+        }
+        runCurrent()
+        // The holder's call started before b's and ends within it, so no call is running at the
+        // end, and none started during it.
+        watch.watch(b) {
+            launch.complete(Unit)
+            call.await()
+        }
+        advanceTimeBy(ForegroundWatch.LATE_MS + 1)
+        assertEquals("com.maps", top)
+        assertEquals(0, watch.count(b))
+    }
+
+    @Test
+    fun `cleanup ending is not blamed`() = runTest {
+        val home = CompletableDeferred<Unit>()
+        val (lease, watch) =
+            watched {
+                home.await()
+                top = "com.launcher"
+            }
+        lease.withScreen(a) { top = CHROME }
+        // Ending a session returns with its cleanup still running, as DELETE does.
+        lease.forget(a)
+        runCurrent()
+        watch.watch(b) {
+            home.complete(Unit)
+            runCurrent()
+        }
+        advanceTimeBy(ForegroundWatch.LATE_MS + 1)
+        assertEquals("com.launcher", top)
+        assertEquals(0, watch.count(b))
+        assertEquals(emptyList<String>(), reported)
+        assertTrue(!lease.holds(b))
+    }
+
+    @Test
+    fun `running cleanup is not blamed`() = runTest {
+        val finish = CompletableDeferred<Unit>()
+        val (lease, watch) =
+            watched {
+                top = "com.launcher"
+                finish.await()
+            }
+        lease.withScreen(a) { top = CHROME }
+        lease.forget(a)
+        watch.watch(b) { runCurrent() }
+        assertEquals("com.launcher", top)
+        assertEquals(0, watch.count(b))
+        finish.complete(Unit)
+    }
+
+    @Test
+    fun `cleanup is not a late launch`() = runTest {
+        val (lease, watch) = watched { top = "com.launcher" }
+        lease.withScreen(a) { top = CHROME }
+        watch.watch(b) {}
+        lease.forget(a)
+        advanceTimeBy(ForegroundWatch.LATE_MS + 1)
+        assertEquals("com.launcher", top)
+        assertEquals(0, watch.count(b))
+    }
+
+    @Test
+    fun `a launch after cleanup counts`() = runTest {
+        val (lease, watch) = watched { top = "com.launcher" }
+        lease.withScreen(a) { top = CHROME }
+        lease.forget(a)
+        runCurrent()
+        assertEquals("took_screen", error { watch.watch(b) { top = "com.maps" } })
+        assertEquals(1, watch.count(b))
+    }
+
+    @Test
     fun `late launches are noted`() = runTest {
         val (lease, watch) = watched()
         watch.watch(b) {}
@@ -120,4 +206,8 @@ class ForegroundWatchTest {
         } catch (e: ApiException) {
             e.error
         }
+
+    private companion object {
+        const val CHROME = "com.android.chrome"
+    }
 }

@@ -89,6 +89,9 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
     /** Chrome ignores selecting a tab. */
     var stuck = false
 
+    /** While true, Chrome loses a selection, as one sent just before its own. */
+    var losesSelection: () -> Boolean = { false }
+
     /** How many `showing` checks a tab switch takes to land. */
     var switchAfter = 0
     private var pending: String? = null
@@ -202,9 +205,9 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
     override suspend fun activate(id: String) {
         activated += id
         when {
-            stuck -> Unit
+            stuck || losesSelection() -> Unit
             switchAfter == 0 -> shown = id
-            else -> {
+            pending != id -> {
                 pending = id
                 checks = 0
             }
@@ -217,7 +220,11 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
     /** The tabs that do not say whether they are showing. */
     var silent = emptySet<String>()
 
+    /** Runs while a `showing` check waits for Chrome. */
+    var whenShowing: suspend () -> Unit = {}
+
     override suspend fun showing(id: String): Boolean? {
+        whenShowing()
         if (failShowing) throw ApiException.unavailable("cdp_timeout", "no answer")
         if (id in silent) return null
         pending?.let {

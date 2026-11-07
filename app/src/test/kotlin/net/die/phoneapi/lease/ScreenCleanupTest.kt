@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test
 class ScreenCleanupTest {
     private val steps = mutableListOf<String>()
     private var clearClip: () -> ActionResult = { ActionResult(ok = true) }
+    /** Whether the home screen comes forward after HOME. */
+    private var homeCame = true
 
     private val cleanup =
         ScreenCleanup(
@@ -34,18 +36,30 @@ class ScreenCleanupTest {
             Power(),
             Clipboard(),
             showPlaceholder = { steps += "placeholder" },
+            awaitHome = {
+                steps += "home"
+                homeCame
+            },
         )
 
     @Test
     fun `the clipboard is cleared last`() = runTest {
         assertEquals(emptyList<String>(), cleanup.run(lock = true))
-        assertEquals(listOf("hideIme", "placeholder", "HOME", "lock", "clearOwn"), steps)
+        assertEquals(listOf("hideIme", "placeholder", "HOME", "home", "lock", "clearOwn"), steps)
     }
 
     @Test
     fun `a hand-off skips the lock`() = runTest {
         assertEquals(emptyList<String>(), cleanup.run(lock = false))
-        assertEquals(listOf("hideIme", "placeholder", "HOME", "clearOwn"), steps)
+        assertEquals(listOf("hideIme", "placeholder", "HOME", "home", "clearOwn"), steps)
+    }
+
+    @Test
+    fun `a missing home is reported`() = runTest {
+        homeCame = false
+        val failed = cleanup.run(lock = false)
+        assertEquals(listOf("go home: the home screen did not come forward"), failed)
+        assertEquals("clearOwn", steps.last())
     }
 
     @Test
