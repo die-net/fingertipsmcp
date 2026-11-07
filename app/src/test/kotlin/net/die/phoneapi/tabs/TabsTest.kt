@@ -25,6 +25,7 @@ import net.die.phoneapi.model.WaitRequest
 import net.die.phoneapi.model.WaitResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -343,6 +344,47 @@ class TabsTest {
         assertEquals(listOf(other.id), browser.closed)
         tabs.browserFor(b).read(shown.id, BrowserReadRequest())
         assertEquals(1, tabs.count(b))
+    }
+
+    @Test
+    fun `a kept tab stays on screen`() = runBlocking {
+        // A person may be looking at it, as `cleanup` false says, so the session's next call on it
+        // must not blank the screen.
+        val tabs = tabs()
+        val shown = tabs.browserFor(a).openTab("https://example.com/")
+        front = CHROME
+        browser.shown = shown.id
+        tabs.keepShowing(a)
+        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
+        tabs.browserFor(a).tap(shown.id, tap)
+        assertEquals(shown.id, browser.shown)
+    }
+
+    @Test
+    fun `a popup leaves a kept tab`() = runBlocking {
+        val tabs = tabs()
+        val shown = tabs.browserFor(a).openTab("https://example.com/")
+        front = CHROME
+        browser.shown = shown.id
+        tabs.keepShowing(a)
+        browser.shown = browser.add("popup", opener = shown.id)
+        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
+        tabs.browserFor(a).tap(shown.id, tap)
+        assertEquals(shown.id, browser.shown)
+    }
+
+    @Test
+    fun `cleanup ends a kept tab`() = runBlocking {
+        val tabs = tabs()
+        val shown = tabs.browserFor(a).openTab("https://example.com/")
+        front = CHROME
+        browser.shown = shown.id
+        tabs.keepShowing(a)
+        tabs.showPlaceholder()
+        browser.shown = shown.id
+        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
+        tabs.browserFor(a).tap(shown.id, tap)
+        assertNotEquals(shown.id, browser.shown)
     }
 
     @Test

@@ -396,11 +396,12 @@ With a viewer on the Android 16 and Android 13 emulators on 2026-11-06:
 
 A session's own read of its tab during a take hid it on the Android 11 test phone on 2026-11-06 too, and taps then landed on the placeholder.
 
-On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, the tab stayed `visible` for 3.6 s with no calls, read over raw DevTools. The next `evaluate` hid it at once, and the placeholder became `visible`, 2 of 2 times, and a `read` left it alone. So the earlier `cdp` tap that failed `not_visible` found the tab already hidden, by the test's own `evaluate` before it. Each call that acts ends in `Tabs.afterInput`, whose `showFor` with no holder counts the session's own tab as another's and selects the placeholder. That last step is from the code. 8 of 8 tries with an `evaluate` after the release showed the tab hidden after it.
+On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, the tab stayed `visible` for 3.6 s with no calls, read over raw DevTools. The next `evaluate` hid it at once, and the placeholder became `visible`, 2 of 2 times, and a `read` left it alone. So the earlier `cdp` tap that failed `not_visible` found the tab already hidden, by the test's own `evaluate` before it. 8 of 8 tries with an `evaluate` after the release showed the tab hidden after it.
 
 ### Still to check
 
 - The lost click on Chrome 109 with the tab switcher open, as above, which did not come back in 35 tries.
+- That a tab left by `cleanup` false stays on screen through the session's next `evaluate`, now that it is recorded. The tests show the selection, and no device has run it.
 
 ## Video and audio streams
 

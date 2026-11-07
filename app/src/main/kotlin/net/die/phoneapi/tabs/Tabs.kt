@@ -83,6 +83,12 @@ class Tabs(
     /** The tab each session last opened or brought forward. */
     private val fronts = ConcurrentHashMap<Holder.Session, String>()
 
+    /**
+     * The tab a session left on screen for a person, which stays there while no one holds the
+     * screen, whatever its session goes on doing.
+     */
+    @Volatile private var leftShowing: String? = null
+
     /** Names the session registry. The server does this before any session can exist. */
     fun sessionsFrom(live: (Holder.Session) -> Boolean) {
         this.live = live
@@ -130,6 +136,7 @@ class Tabs(
      * Returns the kept tab's id, or null when Chrome is not in front showing one of [holder]'s.
      */
     suspend fun keepShowing(holder: Holder.Session): String? {
+        leftShowing = null
         // Chrome's selected tab reports itself visible even with Chrome hidden, so check first.
         if (!inFront(CHROME_PACKAGE)) return null
         val mine = owners.filterValues { it.holder == holder }.keys
@@ -146,6 +153,7 @@ class Tabs(
             // The startup sweep closes only opened tabs, so this one survives a restart too.
             saveOpened()
         }
+        leftShowing = shown
         return shown
     }
 
@@ -205,6 +213,7 @@ class Tabs(
         mutex.withLock {
             gone.forEach(owners::remove)
             fronts.values.removeAll(gone)
+            if (leftShowing in gone) leftShowing = null
             saveOpened()
         }
     }
@@ -321,6 +330,7 @@ class Tabs(
         mutex.withLock {
             owners.remove(id)
             fronts.values.remove(id)
+            if (leftShowing == id) leftShowing = null
             saveOpened()
         }
     }
@@ -503,6 +513,7 @@ class Tabs(
 
     /** For cleanup: shows the placeholder if Chrome is in front, so it is blank next time. */
     suspend fun showPlaceholder() {
+        leftShowing = null
         if (!inFront(CHROME_PACKAGE)) return
         base.activate(placeholderTab())
     }
@@ -524,13 +535,14 @@ class Tabs(
 
     /**
      * With Chrome in front, selects [holder]'s tab, or the placeholder, if Chrome shows another
-     * session's. Selecting a tab can bring Chrome forward, so this does nothing while it is hidden.
-     * True when Chrome shows nothing it should not. A person in the viewer may look at any tab, so
-     * nothing is selected for them: Chrome shows what they chose, not a tab that is another's.
+     * session's. With no [holder], the tab left on screen for a person stands in for theirs.
+     * Selecting a tab can bring Chrome forward, so this does nothing while it is hidden. True when
+     * Chrome shows nothing it should not. A person in the viewer may look at any tab, so nothing is
+     * selected for them: Chrome shows what they chose, not a tab that is another's.
      */
     private suspend fun showFor(holder: Holder?): Boolean {
         if (holder is Holder.Viewer || !inFront(CHROME_PACKAGE)) return true
-        val front = (holder as? Holder.Session)?.let { fronts[it] }
+        val front = if (holder is Holder.Session) fronts[holder] else leftShowing
         if (front != null && base.showing(front) == true) return true
         // A popup a page opened on its own, since the last listing, is its opener's too.
         adoptPopups(base.targets())
