@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import net.die.phoneapi.apps.ActivityStart
 import net.die.phoneapi.apps.AppsServiceImpl
 import net.die.phoneapi.apps.RESUMED_ACTIVITY_ARGS
+import net.die.phoneapi.apps.ownProcessInFront
 import net.die.phoneapi.apps.resumedPackage
 import net.die.phoneapi.browser.BrowserServiceImpl
 import net.die.phoneapi.browser.CdpForward
@@ -42,6 +43,7 @@ import net.die.phoneapi.core.Screenshotter
 import net.die.phoneapi.core.SettingsStore
 import net.die.phoneapi.core.UiService
 import net.die.phoneapi.core.WaitService
+import net.die.phoneapi.core.awaitDeviceState
 import net.die.phoneapi.helperclient.AdbEndpointFinder
 import net.die.phoneapi.helperclient.HelperConnection
 import net.die.phoneapi.helperclient.HelperLogcatFeed
@@ -214,8 +216,10 @@ class AppGraph(
             invalidateSnapshots = tree::invalidate,
             seq = tree.seq,
             shell = shell,
-            state = state,
-            bus = bus,
+            awaitForeground = { pkg ->
+                awaitDeviceState(state, bus, FOREGROUND_WAIT_MS) { it.foregroundPackage == pkg }
+            },
+            inFront = ::ownProcessInFront,
         )
     private val chromeDialog = ChromeDialog(state::refresh, tree::find, ioDispatcher)
     val browser: BrowserService = browserService()
@@ -495,6 +499,7 @@ class AppGraph(
 
     private companion object {
         const val DEVTOOLS_READ_MS = 15_000L
+        const val FOREGROUND_WAIT_MS = 5_000L
         const val TAG = "PhoneApiLease"
     }
 }

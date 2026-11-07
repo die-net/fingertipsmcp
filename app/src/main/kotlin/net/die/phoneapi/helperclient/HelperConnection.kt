@@ -79,7 +79,11 @@ class HelperConnection(private val bus: EventBus, private val idleStatus: Helper
     }
 
     /** Returns the helper or throws `503 helper_unavailable`, naming how to start it. */
-    fun require(): IHelper = helper ?: throw ApiException.helperUnavailable(whyUnavailable())
+    fun require(): IHelper = helper ?: throw unavailable()
+
+    /** The `503 helper_unavailable` for a call that needs the helper because of [why]. */
+    fun unavailable(why: String? = null): ApiException =
+        ApiException.helperUnavailable(listOfNotNull(why, whyUnavailable()).joinToString(" "))
 
     private fun whyUnavailable(): String =
         when (statusFlow.value) {

@@ -357,6 +357,16 @@ On the Android 16 emulator on 2026-11-06, with the lock screen turned on, a swip
 
 On the Android 16 emulator on 2026-11-06, `app_launch` through the helper brought Settings forward in 1.5 s. Without the helper Android dropped the start, and the call failed 503 `helper_unavailable` after 5 s. A copy with `KEYCODE_COPY` in Chrome returned the selected text. An `open_intent` tab was claimed within 2.2 s, under the URL match main has since replaced. Chrome 133 returned `loaderId` from `Page.getFrameTree`, sent the `load` lifecycle event, and sent `requestWillBeSent` again with the same id for a redirect. A debug start logged a StrictMode `DiskReadViolation` from `getFilesDir` in `AdbEndpointFinder`'s constructor, on the main thread. A helper registering while the app starts threw `lateinit property graph has not been initialized` across binder, and it got in on the app's next try.
 
+Run again on the Android 16 emulator on 2026-11-06, once `app_launch` decided from whether PhoneAPI is the top app, with the helper stopped by PhoneAPI's own switch and its foreground service running:
+
+| PhoneAPI | Screen | Result |
+| --- | --- | --- |
+| In front | On | `ok` true, `backend` `activity`, in 0.25 to 0.44 s, with `wait` true and false, and Settings came forward |
+| Behind the launcher | On | 503 `helper_unavailable` in 0.25 to 0.36 s, and Settings did not start |
+| In front | Off | 503 `helper_unavailable`, and the screen stayed off |
+
+So the foreground service does not count as in front, and a process that is on top with the screen off does not either. Without the helper nothing reports the foreground app, which is why such a start returns without waiting for it. Through the helper, a cold Settings took 10 s on the loaded host, and `ok` true.
+
 ## Browser waits
 
 On the Android 10 emulator (Chrome 91) on 2026-11-06, with a wait's events read through `CdpSession.listen`:
@@ -434,4 +444,5 @@ From the 2026-11-06 audit fixes, what the emulators could not settle. The rest w
 - `chrome-input-check` on Android 11 and a newer phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
 - Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
 - Opening a tab (none of this has run on a device): `Page.enable` and `Page.getFrameTree` on a page socket right after `Target.createTarget`, with the frame on `about:blank` until the commit and `Page.frameNavigated` sent for it, and with the first frame's `url` not empty. `Page.downloadWillBegin` on Chrome for Android: whether it is sent to a page session at all, for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
+- `app_launch` without the helper on Android 10 and 11 and on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator. A browser wait's limit on the Android 10 USB path.
 - Starting activities, as [Starting activities](#starting-activities) describes: all of it on Android 11, whose signature was read only from AOSP's source, and on any phone, since an OEM can change this interface; the wait running out at 20 s, which no emulator reached; an incognito open, whose start runs only on a Chrome that reports a tab's profile (Chrome 91 and 109 stop before it, with `Chrome did not say which profile a new tab is in`).

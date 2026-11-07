@@ -213,7 +213,7 @@ The clipboard calls need the shell helper (`clipboard`), which reads the clip as
 | Method | Path | Scope | Summary |
 | --- | --- | --- | --- |
 | `GET` | `/v1/apps` | observe | Installed apps → `AppInfo[]` |
-| `POST` | `/v1/apps/{pkg}/launch` | control | `LaunchRequest` |
+| `POST` | `/v1/apps/{pkg}/launch` | control | `LaunchRequest`. Android drops an app's activity starts from the background, so without the helper this works only while PhoneAPI is in front. Otherwise it fails at once with 503 `helper_unavailable`, and wakes nothing. A start without the helper has `backend` `activity`, and with `wait` its `message` says it can't tell whether the app came forward, since only the helper sees what is in front |
 | `POST` | `/v1/apps/{pkg}/stop` | control | Force-stop (helper) |
 | `POST` | `/v1/apps/{pkg}/clear` | control | Clear data (helper) |
 | `POST` | `/v1/intents` | control | `IntentRequest` (helper) |
@@ -332,7 +332,7 @@ Run `phoneapi server` and point a Streamable HTTP client at `http://127.0.0.1:<p
 | `clipboard_read` / `clipboard_write` | control | The clipboard's text, or its image as image content (up to 1.5 MB) on a read. `copy` presses `KEYCODE_COPY` first, which copies what is selected on screen in the app in front; `paste` presses `KEYCODE_PASTE` after. Writes take text only (needs helper) |
 | `wait_for` | observe or browser | Same conditions and scopes as `/v1/wait`. `snapshot` adds a capped, masked outline and `screenshot` a PNG; both need observe. `target` names the tab for browser conditions that name none |
 | `keyboard_hide` / `keyboard_show` | control | Soft keyboard |
-| `app_launch` / `app_stop` / `app_clear` | control | Package control (`stop`/`clear` need helper) |
+| `app_launch` / `app_stop` / `app_clear` | control | Package control (`stop`/`clear` need helper, and `launch` does unless PhoneAPI is in front, as under [Apps and intents](#apps-and-intents)) |
 | `open_intent` | control | Start an intent (needs helper). A tab Chrome opens for it is the caller's |
 | `device_wake` / `device_unlock` | control or browser | Screen on / keyguard |
 | `device_lock` | control | Lock |
