@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import android.util.Log
 import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.streams.asByteWriteChannel
 import io.ktor.websocket.Frame
@@ -11,6 +12,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -30,7 +32,8 @@ internal class ChromeSocket(
     private val newKey: () -> String = ::websocketKey,
 ) : Closeable {
     // Independent of the caller's job so a single command timeout does not cancel the reader.
-    private val scope = CoroutineScope(context + SupervisorJob() + CoroutineName("devtools"))
+    private val scope =
+        CoroutineScope(context + SupervisorJob() + CoroutineName("devtools") + pipeFailed)
     private var webSocket: WebSocketSession? = null
 
     fun handshake(path: String) = handshakeWebSocket(input, output, path, newKey)
@@ -79,4 +82,20 @@ internal class ChromeSocket(
 
     private fun socket(): WebSocketSession =
         webSocket ?: error("DevTools WebSocket is not connected")
+
+    private companion object {
+        const val TAG = "PhoneApi"
+
+        /**
+         * Ktor's writer flushes again from a finally block after a write fails, so a pipe that has
+         * died fails its coroutine with an IOException that no caller sees. The session already
+         * ends, since the writer's failure cancels the reader. Anything else is a bug and stays
+         * fatal: one that corrupts a shared pool, such as okio's, fails every later call until the
+         * process restarts.
+         */
+        val pipeFailed = CoroutineExceptionHandler { _, e ->
+            if (e !is IOException) throw e
+            Log.w(TAG, "DevTools socket failed", e)
+        }
+    }
 }
