@@ -8,20 +8,16 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
-import com.flyfishxu.kadb.mdns.KadbMdnsAndroid
-import com.flyfishxu.kadb.mdns.MdnsEndpoint
-import java.net.InetAddress
-import java.net.UnknownHostException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -38,6 +34,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal class WirelessPairing(
     private val context: Context,
     private val supervisor: HelperSupervisor,
+    private val finder: AdbEndpointFinder,
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher,
 ) {
@@ -68,34 +65,29 @@ internal class WirelessPairing(
         post(notification(outcome.message, reply = false).setTimeoutAfter(DONE_SHOWN_MS))
     }
 
-    private suspend fun watch() =
-        withContext(io) {
-            KadbMdnsAndroid(context).use { mdns ->
-                mdns.start()
-                mdns.state
-                    .map { ownPort(it.pairDevices) }
-                    .distinctUntilChanged()
-                    .collect { found ->
-                        port = found
-                        val prompt = codePrompt(found)
-                        // A new post rather than an update: on an Android 11 Moto, a silent
-                        // notification updated to an alerting one stayed in the shade. Android's
-                        // own code reads as if it should drop down, so the cause is unknown.
-                        if (prompt.alert) manager().cancel(NOTIFICATION_ID)
-                        post(prompt(prompt))
-                    }
-            }
-        }
-
     /**
-     * Other phones on the network may be pairing too; only this one's dialog counts. A miss here
-     * doesn't stop pairing, since [HelperSupervisor.pair] looks for the port again.
+     * Keeps the notification in step with this phone's pairing dialog. Other phones on the network
+     * may be pairing too; only this one's dialog counts. A miss here doesn't stop pairing, since
+     * [HelperSupervisor.pair] looks for the port again, so a search that can't browse leaves the
+     * notification up.
      */
-    private fun ownPort(found: List<MdnsEndpoint>): Int? {
-        if (found.isEmpty()) return null
-        val own = localAddresses()
-        return found.firstOrNull { parse(it.host) in own }?.port
-    }
+    private suspend fun watch(): Nothing =
+        withContext(io) {
+            finder
+                .pairingPorts()
+                .onStart { emit(null) }
+                .distinctUntilChanged()
+                .collect { found ->
+                    port = found
+                    val prompt = codePrompt(found)
+                    // A new post rather than an update: on an Android 11 Moto, a silent
+                    // notification updated to an alerting one stayed in the shade. Android's own
+                    // code reads as if it should drop down, so the cause is unknown.
+                    if (prompt.alert) manager().cancel(NOTIFICATION_ID)
+                    post(prompt(prompt))
+                }
+            awaitCancellation()
+        }
 
     private fun notification(text: String, reply: Boolean): NotificationCompat.Builder {
         val builder =
@@ -154,7 +146,6 @@ internal class WirelessPairing(
     }
 
     private companion object {
-        const val TAG = "PhoneApiHelper"
         const val CHANNEL = "wireless_pairing"
         // A group of its own keeps Android from folding this into a group with PhoneAPI's other
         // notifications, where the code field takes two expands to reach.
@@ -165,14 +156,6 @@ internal class WirelessPairing(
         const val REPLY_REQUEST = 2
         const val SEARCH_MS = 5 * 60_000L
         const val DONE_SHOWN_MS = 5_000L
-
-        fun parse(host: String): InetAddress? =
-            try {
-                InetAddress.getByName(host)
-            } catch (e: UnknownHostException) {
-                Log.w(TAG, "Unparseable mDNS host $host", e)
-                null
-            }
     }
 }
 

@@ -101,6 +101,9 @@ internal class ResolveQueue<T : Any>(private val wanted: (String) -> Boolean) {
     }
 
     fun next(): T? = pending.removeFirstOrNull()?.second
+
+    /** Whether the record [name] was queued and has not been lost since. */
+    fun advertised(name: String): Boolean = name in seen
 }
 
 /** This device's own addresses, which a record's host must be one of. */

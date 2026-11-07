@@ -52,6 +52,7 @@ import net.die.phoneapi.helperclient.HelperShell
 import net.die.phoneapi.helperclient.HelperStatusNotifier
 import net.die.phoneapi.helperclient.HelperSupervisor
 import net.die.phoneapi.helperclient.KeystorePrivateKeyStore
+import net.die.phoneapi.helperclient.NsdRecordBrowser
 import net.die.phoneapi.helperclient.SecureSettings
 import net.die.phoneapi.helperclient.WirelessPairing
 import net.die.phoneapi.helperclient.WirelessSetting
@@ -119,7 +120,7 @@ class AppGraph(
     val network = NetworkWatcher(context)
     private val adbKeys = KeystorePrivateKeyStore(filesDir)
     private val adbEndpoints =
-        AdbEndpointFinder(context, helper, ioDispatcher, AdbIdentity(filesDir))
+        AdbEndpointFinder(helper, ioDispatcher, AdbIdentity(filesDir), NsdRecordBrowser(context))
     private val wirelessSetting =
         SecureSettings(context.contentResolver).let {
             WirelessSetting(read = it::wirelessEnabled, write = it::setWirelessEnabled)
@@ -142,7 +143,8 @@ class AppGraph(
             openSocket = { helper.require().openAbstractSocket(USB_DEVTOOLS_SOCKET) },
             io = ioDispatcher,
         )
-    internal val wirelessPairing = WirelessPairing(context, helperSupervisor, scope, ioDispatcher)
+    internal val wirelessPairing =
+        WirelessPairing(context, helperSupervisor, adbEndpoints, scope, ioDispatcher)
 
     /** The lock-screen PIN, provisioned over ADB and never returned by the API. */
     val pins = PinStore(filesDir)

@@ -57,7 +57,6 @@ mcp-core = { module = "io.modelcontextprotocol:kotlin-sdk-core", version.ref = "
 
 kadb = { module = "com.flyfishxu:kadb", version.ref = "kadb" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
-kadb-mdns = { module = "com.flyfishxu:kadb-mdns", version.ref = "kadb" }
 androidx-activity = { module = "androidx.activity:activity", version.ref = "androidx-activity" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
 androidx-core = { module = "androidx.core:core", version.ref = "androidx-core" }
