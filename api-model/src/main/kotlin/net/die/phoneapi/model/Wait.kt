@@ -207,7 +207,18 @@ public sealed interface WaitCondition {
         @Doc("Message text must contain this string.") val textContains: String? = null,
     ) : WaitCondition
 
-    @Doc("The layer tree is unchanged for quietMs and no requests are in flight.")
+    @Doc(
+        "The page's document has loaded, as its load event says. Matches at once on a page that already has. Unlike browser.lifecycle, it does not wait for another load."
+    )
+    @Serializable
+    @SerialName("browser.loaded")
+    public data class BrowserLoaded(
+        @Doc("Browser target id. Omit only when one page is open.") val target: String? = null
+    ) : WaitCondition
+
+    @Doc(
+        "The page has loaded, and since then the layer tree has been unchanged for quietMs with no requests in flight."
+    )
     @Serializable
     @SerialName("browser.settled")
     public data class BrowserSettled(

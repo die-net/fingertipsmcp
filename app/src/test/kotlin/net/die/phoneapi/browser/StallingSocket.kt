@@ -19,10 +19,12 @@ import kotlinx.serialization.json.intOrNull
  *
  * The header goes out once the client has written its request. A frame with an `id` goes out once
  * the client has sent the command with that id, and the frames after it without one, such as
- * events, follow it. So a call cannot return before its command is written, and a reply nothing
- * asked for is never read. After the script the peer sends nothing until the socket closes, as a
- * page that stopped answering. A response other than a 101 ends with the connection closing, as
- * DevTools' HTTP replies do.
+ * events, follow it. An event that Chrome sends only because of a command, before answering it,
+ * names that command in an `afterId` field and waits for it the same way. So a call cannot return
+ * before its command is written, and a reply nothing asked for is never read. After the script the
+ * peer sends nothing until the socket closes, as a page that stopped answering, or until [send]
+ * delivers what the page did on its own. A response other than a 101 ends with the connection
+ * closing, as DevTools' HTTP replies do.
  *
  * With a [clock], a read waiting for a command counts as parked there, so the clock can move time
  * on while it waits.
@@ -81,6 +83,12 @@ internal open class StallingSocket(
 
     override fun close() = lock.withLock {
         closed = true
+        letWaitersGo()
+    }
+
+    /** Sends [frames] now, as Chrome does with an event no command asked for. */
+    fun send(frames: ByteArray) = lock.withLock {
+        readable += frames
         letWaitersGo()
     }
 
@@ -193,7 +201,7 @@ internal open class StallingSocket(
         var at = headerEnd
         var frame = frame(script, at)
         while (frame != null) {
-            val id = frame.text()?.let(::idOf)
+            val id = frame.text()?.let { idOf(it) ?: idOf(it, "afterId") }
             out +=
                 Part(script.copyOfRange(at, frame.end), id?.let { Gate.Command(it) } ?: Gate.None)
             at = frame.end
@@ -252,9 +260,9 @@ internal open class StallingSocket(
                 .substringBefore(' ')
                 .toIntOrNull()
 
-        fun idOf(text: String): Int? =
+        fun idOf(text: String, field: String = "id"): Int? =
             try {
-                ((Json.parseToJsonElement(text) as? JsonObject)?.get("id") as? JsonPrimitive)
+                ((Json.parseToJsonElement(text) as? JsonObject)?.get(field) as? JsonPrimitive)
                     ?.intOrNull
             } catch (_: IllegalArgumentException) {
                 null

@@ -35,8 +35,12 @@ internal class SessionBrowser(
 ) : BrowserService {
     override suspend fun targets(): List<BrowserTarget> = tabs.visible(holder, base.targets())
 
-    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean): BrowserTarget =
-        tabs.opened(holder, url, capture, incognito)
+    override suspend fun openTab(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = tabs.opened(holder, url, capture, incognito, created)
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 
@@ -62,11 +66,6 @@ internal class SessionBrowser(
 
     override suspend fun find(id: String, request: BrowserFindRequest): BrowserFindResult =
         mine(id) { base.find(id, request) }
-
-    override fun savedPdf(url: String): Boolean = base.savedPdf(url)
-
-    override suspend fun loadPdf(id: String, url: String): Boolean =
-        mine(id) { base.loadPdf(id, url) }
 
     override suspend fun tap(id: String, request: BrowserTapRequest): ActionResult =
         acting(id, request.input) { base.tap(id, request) }
@@ -119,8 +118,12 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
     BrowserService {
     override suspend fun targets(): List<BrowserTarget> = tabs.sharedTargets()
 
-    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean): BrowserTarget =
-        base.openTab(url, capture, incognito)
+    override suspend fun openTab(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = base.openTab(url, capture, incognito, created)
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 

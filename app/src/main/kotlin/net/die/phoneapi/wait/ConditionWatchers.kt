@@ -48,6 +48,7 @@ internal class ConditionWatchers(
             is WaitCondition.BrowserDialog,
             is WaitCondition.BrowserNewTarget,
             is WaitCondition.BrowserLog,
+            is WaitCondition.BrowserLoaded,
             is WaitCondition.BrowserSettled -> browser(condition)
         }
 

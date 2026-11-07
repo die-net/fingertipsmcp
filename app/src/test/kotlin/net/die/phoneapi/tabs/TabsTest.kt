@@ -4,12 +4,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.IntentStart
 import net.die.phoneapi.core.WaitService
@@ -525,6 +527,47 @@ class TabsTest {
     }
 
     @Test
+    fun `owns a tab while it opens`() = runTest {
+        // The page takes a while to answer, and meanwhile nobody else may claim the tab.
+        val tabs = tabs()
+        var seen: List<String>? = null
+        var claim: String? = null
+        browser.whileOpening = { id ->
+            seen = tabs.browserFor(b).targets().map { it.id }
+            claim = error { tabs.browserFor(b).snapshot(id) }
+        }
+        val tab = tabs.browserFor(a).openTab("https://example.com/")
+        assertEquals(emptyList<String>(), seen)
+        assertEquals("not_found", claim)
+        assertEquals(1, tabs.count(a))
+        assertEquals(tab.id, tabs.browserFor(a).targets().single().id)
+    }
+
+    @Test
+    fun `hides a tab before its page`() = runTest {
+        // Chrome shows a new tab at once, and the page must not sit on the holder's screen while
+        // it answers.
+        val tabs = tabs()
+        front = CHROME
+        lease.withScreen(a) {}
+        val mine = tabs.browserFor(a).openTab("https://example.com/")
+        var showing: String? = null
+        browser.whileOpening = { showing = browser.shown }
+        tabs.browserFor(b).openTab("https://example.org/")
+        assertEquals(mine.id, showing)
+    }
+
+    @Test
+    fun `a saved page moves its owner`() = runTest {
+        val tabs = tabs()
+        browser.saves = true
+        val tab = tabs.browserFor(a).openTab("https://example.com/report.pdf")
+        assertEquals(true, tab.savedPdf)
+        assertEquals(1, tabs.count(a))
+        assertEquals(tab.id, tabs.browserFor(a).targets().single().id)
+    }
+
+    @Test
     fun `a hidden Chrome needs no turn`() = runTest {
         // With Chrome in the background, a new tab cannot show, so the holder's long call does not
         // hold up another session's open.
@@ -677,6 +720,12 @@ class TabsTest {
             return BrowserCaptureResult(capturing = on)
         }
 
+        /** Runs while a tab waits for its page, after Chrome has made the tab. */
+        var whileOpening: suspend (String) -> Unit = {}
+
+        /** Chrome saves the page, so its tab closes and a second tab takes its place. */
+        var saves = false
+
         /** Holds a new tab back until it completes, as Chrome takes a while to open one. */
         var opening: CompletableDeferred<Unit>? = null
 
@@ -687,14 +736,38 @@ class TabsTest {
             url: String,
             capture: Boolean,
             incognito: Boolean,
+            created: suspend (String) -> Unit,
         ): BrowserTarget {
             opening?.await()
             if (capture) captures += "new" to true
+            val tab = newTab(url, incognito, created)
+            whileOpening(tab.id)
+            if (!saves) return tab
+            open.removeAll { it.id == tab.id }
+            return newTab(url, incognito, created).copy(savedPdf = true)
+        }
+
+        /**
+         * A tab as Chrome makes one, closed again when [created] fails or the call is cancelled.
+         */
+        private suspend fun newTab(
+            url: String,
+            incognito: Boolean,
+            created: suspend (String) -> Unit,
+        ): BrowserTarget {
             val id = add("t${next++}")
             if (incognito) this.incognito += id
             open[open.lastIndex] = open.last().copy(url = url)
             if (chromeInFront()) shown = id
-            return open.last()
+            val tab = open.last()
+            var done = false
+            try {
+                created(id)
+                done = true
+            } finally {
+                if (!done) withContext(NonCancellable) { closeTab(id) }
+            }
+            return tab
         }
 
         override suspend fun navigate(id: String, url: String) = open.first { it.id == id }

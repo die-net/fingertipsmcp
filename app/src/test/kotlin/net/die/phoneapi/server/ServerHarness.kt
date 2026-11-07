@@ -125,11 +125,13 @@ internal class MemoryTokens : TokenGateway {
 internal class RecordingWaits : WaitService {
     var calls = 0
     var request: WaitRequest? = null
+    val requests = ArrayList<WaitRequest>()
     var scopes: Set<Scope>? = null
 
     override suspend fun wait(request: WaitRequest, scopes: Set<Scope>): WaitResult {
         calls++
         this.request = request
+        requests += request
         this.scopes = scopes
         return WaitResult(matched = true, timedOut = false, elapsedMs = 1)
     }
@@ -502,7 +504,15 @@ internal open class FakeBrowser : BrowserService {
     // Chrome has the tab, so a session can claim it without opening it first.
     override suspend fun targets(): List<BrowserTarget> = listOf(tab)
 
-    override suspend fun openTab(url: String, capture: Boolean, incognito: Boolean) = tab
+    override suspend fun openTab(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget {
+        created(tab.id)
+        return tab
+    }
 
     override suspend fun navigate(id: String, url: String) =
         BrowserTarget(id = id, type = "page", url = url, socket = "s")

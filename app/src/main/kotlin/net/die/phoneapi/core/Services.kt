@@ -159,15 +159,31 @@ interface BrowserService {
     suspend fun targets(): List<BrowserTarget>
 
     /**
-     * Opens a tab on [url]. With [capture], the tab records the JSON responses its page fetches
-     * from the start of its load, as [capture] does. With [incognito], the tab is in Chrome's
-     * incognito profile, which brings Chrome forward, so the caller holds the screen.
+     * Opens a tab on [url], returning once its navigation has committed, so the tab holds the page
+     * and not the blank one a new tab shows first. The page may still be loading. A server that
+     * does not answer in time leaves the tab waiting, with `loading` set. A PDF Chrome saves rather
+     * than shows is put in a tab of PhoneAPI's own, with `savedPdf` set, and any other download
+     * fails with `download_saved`. With [capture], the tab records the JSON responses its page
+     * fetches from the start of its load, as [capture] does. With [incognito], the tab is in
+     * Chrome's incognito profile, which brings Chrome forward, so the caller holds the screen.
+     *
+     * [created] runs with each tab's id as soon as Chrome has made it, before the wait, for what
+     * must not wait for the page, such as owning the tab. A failure in it closes the tab and fails
+     * the call. It can run twice, since a saved PDF moves to a second tab, so the id returned is
+     * the one that lasts.
      */
     suspend fun openTab(
         url: String,
         capture: Boolean = false,
         incognito: Boolean = false,
+        created: suspend (String) -> Unit = {},
     ): BrowserTarget
+
+    /**
+     * Whether [id] is a tab whose server had not answered when [openTab] returned. While such a tab
+     * shows about:blank, that is its first empty page, not the page it was opened on.
+     */
+    fun awaitingPage(id: String): Boolean = false
 
     /**
      * Whether Chrome is not running, so opening a tab starts it first. That brings Chrome forward,
@@ -216,18 +232,6 @@ interface BrowserService {
 
     /** Reads a target's content, or its outline. */
     suspend fun read(id: String, request: BrowserReadRequest): BrowserReadResult
-
-    /**
-     * Whether Chrome saved the PDF at [url] rather than showing it, as far as this remembers. Such
-     * a URL goes to [loadPdf], since opening it would save another copy.
-     */
-    fun savedPdf(url: String): Boolean = false
-
-    /**
-     * Puts the PDF at [url] in the tab [id], without Chrome showing or saving it, for [read] and
-     * [find] to read. False when [url] is not a PDF.
-     */
-    suspend fun loadPdf(id: String, url: String): Boolean = false
 
     /** Finds text or links in a target's content, at the offsets [read] uses. */
     suspend fun find(id: String, request: BrowserFindRequest): BrowserFindResult
