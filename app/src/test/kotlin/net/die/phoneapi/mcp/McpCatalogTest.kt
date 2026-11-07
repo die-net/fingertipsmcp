@@ -14,6 +14,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import net.die.phoneapi.core.ApiJson
+import net.die.phoneapi.model.BrowserFindRequest
+import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.Capabilities
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.SessionArg
@@ -151,6 +153,28 @@ class McpCatalogTest {
             MCP_TOOLS.first { it.name == "tap" }.arguments.first(),
             buildJsonObject { put("count", 2) },
         )
+    }
+
+    @Test
+    fun `read and find compose requests`() {
+        for ((name, request) in
+            listOf(
+                "browser_read" to serializer<BrowserReadRequest>(),
+                "browser_find" to serializer<BrowserFindRequest>(),
+            )) {
+            val schema = MCP_TOOLS.first { it.name == name }.schema
+            val properties = schema.properties!!
+            val fields = (0 until request.descriptor.elementsCount)
+            assertTrue(properties.keys.containsAll(fields.map(request.descriptor::getElementName)))
+            assertTrue(properties.keys.containsAll(listOf("target", "url", "close", "session")))
+            // Either target or url will do, which the call itself checks.
+            assertEquals(null, schema.required, name)
+        }
+        // The docs are the request type's, with nothing copied by hand.
+        val find = MCP_TOOLS.first { it.name == "browser_find" }.schema.properties!!
+        val kindDoc = find.getValue("kind").jsonObject.getValue("description")
+        val kind = kindDoc.jsonPrimitive.content
+        assertTrue("does not read as an article" in kind, kind)
     }
 
     @Test

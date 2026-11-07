@@ -50,6 +50,8 @@ internal data class PageExtract(
     val next: String? = null,
     val canonical: String? = null,
     val data: List<DataBlob> = emptyList(),
+    /** How many blobs the page has past those in [data]. */
+    val moreData: Int = 0,
     val pageChars: Int = 0,
     val links: Int = 0,
     val tables: Int = 0,
@@ -351,6 +353,7 @@ internal fun readPage(extract: PageExtract, request: BrowserReadRequest): Browse
             next = extract.next,
             canonical = extract.canonical,
             data = extract.data,
+            moreData = extract.moreData,
             pending = extract.pending,
             extracted = extract.extracted,
             selected = extract.selected,
@@ -405,6 +408,7 @@ internal fun findInPage(extract: PageExtract, request: BrowserFindRequest): Brow
             version = page.version,
             totalChars = page.text.length,
             total = 0,
+            clipped = extract.clipped,
         )
     return when (request.kind) {
         FindKind.TEXT -> findText(page, request, base)

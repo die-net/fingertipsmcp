@@ -220,6 +220,7 @@ internal fun findData(extract: DataExtract, request: BrowserFindRequest): Browse
             version = search.hash.value(),
             totalChars = search.chars,
             total = search.totals.sum(),
+            clipped = blobs.clipped,
         )
     if (request.queries.isEmpty()) return base.copy(matches = search.kept[0])
     val found =

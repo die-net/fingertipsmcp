@@ -5,7 +5,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import kotlin.time.TimeSource
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 import net.die.phoneapi.browser.MAX_FIND_RESULTS
 import net.die.phoneapi.browser.checkFind
 import net.die.phoneapi.browser.dataSize
@@ -16,135 +15,63 @@ import net.die.phoneapi.model.BrowserFindResult
 import net.die.phoneapi.model.BrowserReadRequest
 import net.die.phoneapi.model.BrowserReadResult
 import net.die.phoneapi.model.BrowserTarget
-import net.die.phoneapi.model.DATA_PATHS_DOC
-import net.die.phoneapi.model.DATA_PATH_DOC
 import net.die.phoneapi.model.DataBlob
-import net.die.phoneapi.model.FIND_PATH_DOC
-import net.die.phoneapi.model.FIND_QUERIES_DOC
-import net.die.phoneapi.model.FIND_QUERY_DOC
 import net.die.phoneapi.model.FeedLink
 import net.die.phoneapi.model.FindKind
-import net.die.phoneapi.model.READ_FORMAT_DOC
-import net.die.phoneapi.model.READ_MAX_CHARS_DOC
-import net.die.phoneapi.model.READ_SCOPE_DOC
-import net.die.phoneapi.model.READ_SELECTOR_DOC
-import net.die.phoneapi.model.READ_VERSION_DOC
-import net.die.phoneapi.model.ReadFormat
+import net.die.phoneapi.model.PageArg
 import net.die.phoneapi.model.ReadScope
-import net.die.phoneapi.model.SHOW_DOC
 import net.die.phoneapi.model.Scope
 import net.die.phoneapi.model.TextMatch
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.model.WaitRequest
-import net.die.phoneapi.model.schema.Doc
 import net.die.phoneapi.server.ServerServices
-
-@Serializable
-internal data class BrowserReadArgs(
-    @Doc("Browser target id. Pass this or url.") val target: String? = null,
-    @Doc(
-        "An http(s) URL to open in a new tab and read once it settles, instead of target. The result names the new target, so it can be read further and closed with browser_close."
-    )
-    val url: String? = null,
-    @Doc(READ_SCOPE_DOC) val scope: ReadScope = ReadScope.ARTICLE,
-    @Doc(READ_SELECTOR_DOC) val selector: String? = null,
-    @Doc(READ_FORMAT_DOC) val format: ReadFormat = ReadFormat.MARKDOWN,
-    @Doc(
-        "Return headings with their offsets, and counts of links, tables, and forms, instead of the content. Cheap."
-    )
-    val outline: Boolean = false,
-    @Doc("Character offset to start at, such as nextOffset or an offset from browser_find.")
-    val offset: Int = 0,
-    @Doc(READ_MAX_CHARS_DOC) val maxChars: Int = 8_000,
-    @Doc(SHOW_DOC) val show: Boolean = false,
-    @Doc(READ_VERSION_DOC) val version: String? = null,
-    @Doc(DATA_PATH_DOC) val path: String? = null,
-    @Doc(DATA_PATHS_DOC) val paths: List<String> = emptyList(),
-    @Doc(CLOSE_DOC) val close: Boolean = false,
-)
-
-@Serializable
-internal data class BrowserFindArgs(
-    @Doc("Browser target id. Pass this or url.") val target: String? = null,
-    @Doc(
-        "An http(s) URL to open in a new tab and search once it settles, instead of target. The result names the new target, unless close is true."
-    )
-    val url: String? = null,
-    @Doc("text (default) finds query in the content. links lists links, with their URLs.")
-    val kind: FindKind = FindKind.TEXT,
-    @Doc(FIND_QUERY_DOC) val query: String? = null,
-    @Doc(FIND_QUERIES_DOC) val queries: List<String> = emptyList(),
-    @Doc("Treat query or queries as regular expressions, in Java syntax, ignoring case.")
-    val regex: Boolean = false,
-    @Doc("For links, a string the URL must contain, ignoring case.")
-    val hrefContains: String? = null,
-    @Doc(READ_SCOPE_DOC) val scope: ReadScope = ReadScope.ARTICLE,
-    @Doc(READ_SELECTOR_DOC) val selector: String? = null,
-    @Doc(READ_FORMAT_DOC) val format: ReadFormat = ReadFormat.MARKDOWN,
-    @Doc("Characters of context on each side of a text match, 0 to 2000. Defaults to 150.")
-    val contextChars: Int = 150,
-    @Doc("Most results, 1 to 200, for each query when there are several. Defaults to 10.")
-    val limit: Int = 10,
-    @Doc(FIND_PATH_DOC) val path: String? = null,
-    @Doc(CLOSE_DOC) val close: Boolean = false,
-)
-
-private const val CLOSE_DOC =
-    "Close the tab after this call, when this is the last look you need. Saves a browser_close call."
 
 internal suspend fun browserRead(
     services: ServerServices,
     scopes: Set<Scope>,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserReadArgs>()
-    if ((args.target == null) == (args.url == null)) {
-        throw ApiException.badRequest("Pass target or url, not both")
-    }
-    val read =
-        BrowserReadRequest(
-            scope = args.scope,
-            selector = args.selector,
-            format = args.format,
-            outline = args.outline,
-            offset = args.offset,
-            maxChars = args.maxChars,
-            show = args.show,
-            version = args.version,
-            path = args.path,
-            paths = args.paths,
-        )
+    val page = request.page()
+    val read = request.args<BrowserReadRequest>()
     val text: suspend (String) -> String = { target ->
         val result = services.browser.read(target, read)
-        val label = if (args.scope == ReadScope.DATA) dataLabel(args, result) else null
+        val label = if (read.scope == ReadScope.DATA) dataLabel(read, result) else null
         when {
-            result.changed == false -> unchangedText(result, args.show, label)
-            label == null && args.outline -> outlineText(result, args.maxChars, args.show)
-            else -> readText(result, args.show, label)
+            result.changed == false -> unchangedText(result, read.show, label)
+            label == null && read.outline -> outlineText(result, read.maxChars, read.show)
+            else -> readText(result, read.show, label)
         }
     }
-    onTarget(services, scopes, args.target, args.url, args.close, args.scope, text)
+    onTarget(services, scopes, page, read.scope, text)
+}
+
+/** The page the call names, which is a tab or a URL to open one at. */
+private fun CallToolRequest.page(): PageArg {
+    val page = args<PageArg>()
+    if ((page.target == null) == (page.url == null)) {
+        throw ApiException.badRequest("Pass target or url, not both")
+    }
+    return page
 }
 
 /**
- * Runs [block] on [target], or on a new tab at [url], closing the tab after when [close] is set. A
- * data read of a page it opens records the page's responses too, as browser_capture does.
+ * Runs [block] on [page]'s tab, or on a new tab at its URL, closing the tab after when it says to.
+ * A data read of a page it opens records the page's responses too, as browser_capture does.
  */
 private suspend fun onTarget(
     services: ServerServices,
     scopes: Set<Scope>,
-    target: String?,
-    url: String?,
-    close: Boolean,
+    page: PageArg,
     scope: ReadScope,
     block: suspend (String) -> String,
 ): String {
+    val url = page.url
     if (url == null) {
-        val id = target.orEmpty()
-        return closingAfter(services, id, close, opened = false) { block(id) }
+        val id = page.target.orEmpty()
+        return closingAfter(services, id, page.close, opened = false) { block(id) }
     }
-    val opened = open(services, scopes, url, close, scope == ReadScope.DATA)
-    return onOpened(services, opened, close, block)
+    val opened = open(services, scopes, url, page.close, scope == ReadScope.DATA)
+    return onOpened(services, opened, page.close, block)
 }
 
 /** The result of [block] on the tab the call [opened], after the line that names it. */
@@ -314,28 +241,12 @@ internal suspend fun browserFind(
     scopes: Set<Scope>,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    val args = request.args<BrowserFindArgs>()
-    if ((args.target == null) == (args.url == null)) {
-        throw ApiException.badRequest("Pass target or url, not both")
-    }
-    val find =
-        BrowserFindRequest(
-            kind = args.kind,
-            query = args.query,
-            queries = args.queries,
-            regex = args.regex,
-            hrefContains = args.hrefContains,
-            scope = args.scope,
-            selector = args.selector,
-            format = args.format,
-            contextChars = args.contextChars,
-            limit = args.limit,
-            path = args.path,
-        )
+    val page = request.page()
+    val find = request.args<BrowserFindRequest>()
     checkFind(find)
-    onTarget(services, scopes, args.target, args.url, args.close, args.scope) { target ->
+    onTarget(services, scopes, page, find.scope) { target ->
         val result = services.browser.find(target, find)
-        if (args.kind == FindKind.LINKS) linksText(result) else matchesText(result)
+        if (find.kind == FindKind.LINKS) linksText(result) else matchesText(result)
     }
 }
 
@@ -363,7 +274,7 @@ private fun stateNotes(result: BrowserReadResult, show: Boolean): List<String> =
     if (readyState != null && readyState != "complete") {
         add("# readyState=$readyState: the page is still loading")
     }
-    if (result.clipped) add(if (result.extracted == "data") DATA_CLIPPED else TEXT_CLIPPED)
+    if (result.clipped) add(clippedNote(result.extracted))
     addAll(pageNotes(result))
 }
 
@@ -373,11 +284,14 @@ private fun pageNotes(result: BrowserReadResult): List<String> = buildList {
     if (result.feeds.isNotEmpty()) add("# feeds: " + feedList(result.feeds))
     result.next?.let { add("# next: " + oneLine(it)) }
     result.canonical?.let { add("# canonical: " + oneLine(it)) }
-    if (result.data.isNotEmpty()) add("# data: " + dataList(result.data))
+    if (result.data.isNotEmpty()) add("# data: " + dataList(result.data, result.moreData))
 }
 
-/** Names a page's blobs and their sizes, and says how to read them. */
-private fun dataList(blobs: List<DataBlob>): String {
+/**
+ * Names a page's blobs and their sizes, and says how to read them. [past] counts the blobs the page
+ * has past those the read lists, which cannot be read.
+ */
+private fun dataList(blobs: List<DataBlob>, past: Int): String {
     val only = blobs.singleOrNull()
     if (only?.name == "response") {
         return "the response is JSON, ${dataSize(only.chars)}; read it with scope data, path response"
@@ -388,18 +302,24 @@ private fun dataList(blobs: List<DataBlob>): String {
         }
     val more = blobs.size - MAX_LISTED_BLOBS
     val count = plural(blobs.size, "embedded JSON blob", "embedded JSON blobs")
-    return "$count: $parts" + (if (more > 0) ", and $more more" else "") + "; read with scope data"
+    val unread =
+        if (past > 0) "; ${plural(past, "more blob", "more blobs")} past these can't be read"
+        else ""
+    return "$count: $parts" +
+        (if (more > 0) ", and $more more" else "") +
+        "; read with scope data" +
+        unread
 }
 
 /** What a data read returned, as its header names it. */
-private fun dataLabel(args: BrowserReadArgs, result: BrowserReadResult): String {
-    val path = args.path
+private fun dataLabel(read: BrowserReadRequest, result: BrowserReadResult): String {
+    val path = read.path
     val values = plural(result.values ?: 0, "value", "values")
     return when {
-        args.paths.isNotEmpty() -> "$values at ${args.paths.size} paths"
+        read.paths.isNotEmpty() -> "$values at ${read.paths.size} paths"
         path == null -> "data outline"
         hasWildcard(path) -> "$values at $path"
-        args.outline -> "outline of data at $path"
+        read.outline -> "outline of data at $path"
         else -> "data at $path"
     }
 }
@@ -525,7 +445,7 @@ internal fun outlineText(result: BrowserReadResult, maxChars: Int, show: Boolean
 }
 
 internal fun matchesText(result: BrowserFindResult): String {
-    val head = listOf(pageLine(result.title, result.url)) + reloadedNote(result)
+    val head = listOf(pageLine(result.title, result.url)) + findNotes(result)
     val queries = result.queries
     val data = result.extracted == "data"
     if (queries != null) {
@@ -590,12 +510,18 @@ internal fun linksText(result: BrowserFindResult): String {
     val lines = links.map {
         "@${it.offset} ${quoted(it.text)} ${it.href}" + if (it.sameOrigin) " same-origin" else ""
     }
-    return (listOf(pageLine(result.title, result.url)) + reloadedNote(result) + summary + lines)
+    return (listOf(pageLine(result.title, result.url)) + findNotes(result) + summary + lines)
         .joinToString("\n")
 }
 
-private fun reloadedNote(result: BrowserFindResult): List<String> =
-    if (result.reloaded) listOf(RELOADED_NOTE) else emptyList()
+private fun findNotes(result: BrowserFindResult): List<String> = buildList {
+    if (result.reloaded) add(RELOADED_NOTE)
+    if (result.clipped) add(clippedNote(result.extracted))
+}
+
+/** Says a read or find stopped at the most it takes of what [extracted] names. */
+private fun clippedNote(extracted: String): String =
+    if (extracted == "data") DATA_CLIPPED else TEXT_CLIPPED
 
 /** Chrome had unloaded the tab, so what the session saw before is gone. */
 internal const val RELOADED_NOTE =
