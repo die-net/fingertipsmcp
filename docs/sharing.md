@@ -154,7 +154,7 @@ Chrome stays in the background after cleanup. When it comes forward for the new 
 
 Watching needs no lease. The video and audio sockets show whatever is on screen, because the person at the viewer is the phone's operator.
 
-Input does. The viewer sends touches, keys, text, orientation, copy, and paste on its input socket, `WS /v1/input/pointer`, and that socket is its holder. The page opens the socket on load and reconnects every 500 ms whether the page is visible or not, so an open socket does not hold the screen. Input does:
+Input does. The viewer sends touches, keys, text, orientation, copy, and paste on its input socket, `WS /v1/input/pointer`, and that socket is its holder. The page opens the socket on load and reconnects when it drops, after 500 ms and then backing off to every 10 s while the server is away, whether the page is visible or not, so an open socket does not hold the screen. Input does:
 
 - The viewer's first input takes the screen at once if no one holds it. That input is delivered.
 - If someone else holds it, the input is dropped, not queued, and the socket tells the page. The page shows that the phone is in use, by an agent, a script, or another viewer, and for how long, with a **Take over** button.

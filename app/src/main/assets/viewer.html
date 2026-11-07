@@ -308,6 +308,8 @@ syncVideo();
 let audioDecoder = null;
 let audioSocket = null;
 let audioCtx = null;
+// The audio socket's header: codec, sample rate, and channels, which configure its decoder.
+let audioHeader = null;
 let nextAt = 0;
 
 function audioPlayable() {
@@ -344,14 +346,19 @@ function onAudio(data) {
   const bytes = new Uint8Array(data);
   const payload = bytes.subarray(9);
   if (bytes[0] === 1) {
-    if (audioDecoder) return;
-    const codec = window.__audioCodec === "aac" ? "mp4a.40.2" : "opus";
+    if (audioDecoder || !audioHeader) return;
+    const codec = audioHeader.codec === "aac" ? "mp4a.40.2" : "opus";
     audioDecoder = new AudioDecoder({
       output: playAudio,
       error(e) { status.textContent = String(e); }
     });
     try {
-      audioDecoder.configure({ codec, sampleRate: 48000, numberOfChannels: 2, description: payload });
+      audioDecoder.configure({
+        codec,
+        sampleRate: audioHeader.sampleRate,
+        numberOfChannels: audioHeader.channels,
+        description: payload,
+      });
     } catch (error) {
       status.textContent = "AudioDecoder failed: " + error;
       stopAudio();
@@ -375,7 +382,7 @@ function stopAudio() {
   }
   if (audioDecoder && audioDecoder.state !== "closed") audioDecoder.close();
   audioDecoder = null;
-  window.__audioCodec = undefined;
+  audioHeader = null;
   nextAt = 0;
 }
 
@@ -392,7 +399,7 @@ function startAudio() {
   as.onmessage = (event) => {
     if (audioSocket !== as) return;
     if (typeof event.data === "string") {
-      window.__audioCodec = JSON.parse(event.data).codec;
+      audioHeader = JSON.parse(event.data);
       return;
     }
     onAudio(event.data);
@@ -421,6 +428,10 @@ document.body.addEventListener("pointerdown", unlockAudio, { once: true });
 let inputQueue = Promise.resolve();
 let pointerSocket = null;
 let pointerRetry = null;
+// The input socket reconnects at once after a drop, then backs off while the server is away.
+const POINTER_RETRY_MIN_MS = 500;
+const POINTER_RETRY_MAX_MS = 10000;
+let pointerRetryMs = POINTER_RETRY_MIN_MS;
 const contacts = new Map();
 const usedSlots = new Set();
 let gestureT0 = 0;
@@ -542,6 +553,9 @@ function connectPointer() {
   const next = socket("/v1/input/pointer");
   pointerSocket = next;
   next.binaryType = "blob";
+  next.onopen = () => {
+    if (pointerSocket === next) pointerRetryMs = POINTER_RETRY_MIN_MS;
+  };
   next.onmessage = (event) => {
     if (event.data instanceof Blob) onImageFrame(event.data);
     else onSocketMessage(event.data);
@@ -552,7 +566,9 @@ function connectPointer() {
     usedSlots.clear();
     gestureT0 = 0;
     failCopies();
-    pointerRetry = setTimeout(connectPointer, 500);
+    status.textContent = "Lost the connection for input. Reconnecting.";
+    pointerRetry = setTimeout(connectPointer, pointerRetryMs);
+    pointerRetryMs = Math.min(pointerRetryMs * 2, POINTER_RETRY_MAX_MS);
   };
 }
 
