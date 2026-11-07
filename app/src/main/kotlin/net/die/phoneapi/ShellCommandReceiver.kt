@@ -23,19 +23,17 @@ import net.die.phoneapi.model.Scope
  * is result code 0. Neither PIN path returns the PIN.
  */
 class ShellCommandReceiver : BroadcastReceiver() {
-    @Suppress("TooGenericExceptionCaught") // A bad extra must not crash the app process.
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in ACTIONS) return
         val pending = goAsync()
-        val graph =
-            try {
-                PhoneApiApp.graph
-            } catch (e: Exception) {
-                pending.resultCode = 1
-                pending.resultData = e.message ?: "failed"
-                pending.finish()
-                return
-            }
+        // The application builds the graph before any receiver runs, so this is a guard only.
+        val graph = PhoneApiApp.graphOrNull()
+        if (graph == null) {
+            pending.resultCode = 1
+            pending.resultData = "PhoneAPI has not started yet"
+            pending.finish()
+            return
+        }
         graph.scope.launch(graph.ioDispatcher) { deliver(graph, intent, pending) }
     }
 
