@@ -186,22 +186,32 @@ internal class BrowserServiceImpl(
         return found
     }
 
+    /**
+     * Every socket's targets. A failure of Chrome's own fails the listing with its own error, since
+     * a list without Chrome's tabs would read as all of them closed. A WebView that does not answer
+     * is left out while anything else answers.
+     */
     private suspend fun queryTargets(sockets: List<DevtoolsSocketInfo>): List<BrowserTarget> =
         coroutineScope {
             val results = sockets.map { socket -> async { listQuietly(socket) } }.awaitAll()
             val out = ArrayList<BrowserTarget>()
             val failures = ArrayList<ApiException>()
-            for (result in results) {
+            results.forEachIndexed { i, result ->
                 when (result) {
                     is SocketList.Ready -> out += result.targets
-                    is SocketList.Failed -> failures += result.error
+                    is SocketList.Failed -> {
+                        if (sockets[i].name == CHROME_SOCKET) throw result.error
+                        failures += result.error
+                    }
                 }
             }
             if (out.isEmpty() && failures.isNotEmpty()) {
+                val first = failures.first()
                 throw ApiException(
-                    failures.last().status,
-                    "cdp_error",
+                    first.status,
+                    first.error,
                     failures.joinToString("; ") { it.message ?: it.error },
+                    cause = first,
                 )
             }
             out

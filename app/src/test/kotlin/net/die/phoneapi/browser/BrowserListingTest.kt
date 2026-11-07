@@ -90,6 +90,61 @@ class BrowserListingTest {
         assertTrue(closed.get())
     }
 
+    @Test
+    fun `a silent chrome fails the listing`() {
+        // A WebView answers, but Chrome's listing times out: a list without Chrome's tabs would
+        // read as every one of them closed.
+        val sockets =
+            """[{"name":"chrome_devtools_remote","pid":1,"package":"com.android.chrome"},""" +
+                """{"name":"webview_devtools_remote_2","pid":2,"package":"a.pkg"}]"""
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = sockets,
+                open = { name ->
+                    if (name == CHROME_SOCKET) {
+                        harness.socket(harness.switched())
+                    } else {
+                        harness.socket(
+                            harness.http(
+                                """[{"id":"w","type":"page","url":"https://example.com/"}]"""
+                            )
+                        )
+                    }
+                },
+            )
+        assertEquals("cdp_timeout", harness.virtual { harness.failure { service.targets() } })
+    }
+
+    @Test
+    fun `a silent webview is left out`() {
+        val sockets =
+            """[{"name":"chrome_devtools_remote","pid":1,"package":"com.android.chrome"},""" +
+                """{"name":"webview_devtools_remote_2","pid":2,"package":"a.pkg"}]"""
+        val service =
+            harness.service(
+                byteArrayOf(),
+                sockets = sockets,
+                open = { name ->
+                    if (name == CHROME_SOCKET) {
+                        harness.socket(
+                            harness.switched() +
+                                harness.serverTextFrame(
+                                    """{"id":1,"result":{"targetInfos":[{"targetId":"abc",""" +
+                                        """"type":"page","url":"https://example.com/"}]}}"""
+                                )
+                        )
+                    } else {
+                        harness.socket(byteArrayOf())
+                    }
+                },
+            )
+        assertEquals(
+            listOf("chrome_devtools_remote~abc"),
+            harness.virtual { service.targets() }.map { it.id },
+        )
+    }
+
     private class BlockingSocket(private val onClose: () -> Unit) : DevtoolsSocket {
         private val closed = CountDownLatch(1)
         override val input: InputStream =
