@@ -1,8 +1,14 @@
 # Device notes
 
-This is what Android, Chrome, and the MCP SDK were seen to do, which PhoneAPI's design depends on, and what is still to check on a phone. [sharing.md](sharing.md) describes the behavior built on it. Each check gives its date. Chrome and Android change between releases, so a check is worth running again after either updates. `scripts/chrome-input-check` checks Chrome's input behavior against an attached phone, as [development.md](development.md) describes.
+This is what Android, Chrome, and the MCP SDK were seen to do, which PhoneAPI's design depends on, and what is still to check. Each section ends with what is still to check on its topic, so an open item goes there, not in a list of its own. [sharing.md](sharing.md) describes the behavior built on it. Each check gives its date. Chrome and Android change between releases, so a check is worth running again after either updates. `scripts/chrome-input-check` checks Chrome's input behavior against an attached phone, as [development.md](development.md) describes.
 
-The emulators run Android 16 and Android 10 with Chrome 133. The emulator's Chrome is a debug app, and the helper often runs there as root after `adb root`. The test phone runs Android 11 with Chrome 155.0.8059.84.
+The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android 16 with Chrome 133, and Android 17 with Chrome 145. The emulator's Chrome is a debug app, and the helper often runs there as root after `adb root`. The test phone runs Android 11 with Chrome 156.0.8078.79.
+
+## Last phone run
+
+On 2026-11-07, a dev build of `main` at 2acb53e ran on the Android 11 test phone, with Chrome 156.0.8078.79, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
+
+Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
 
 ## Chrome tabs in the background
 
@@ -23,6 +29,8 @@ The first id is the Android tab's number, and it is what `Target.createTarget` a
 `Target.getTargets` lists only tabs Chrome has loaded. On Chrome 109 that day `/json/list` had 33 tabs, restored from earlier runs, and `Target.getTargets` had 3. A restarted Chrome also gives its tabs new hex ids, as one tab did on the Android 13 emulator that day, so a tab left by a run before Chrome restarted cannot be matched, and the sweep leaves it open.
 
 The startup sweep used to read the saved list when it first got an answer from Chrome, by which time a live session's tabs were on it. On the Android 13 emulator on 2026-11-06, with Chrome stopped at the first helper connect, a tab a session then opened stayed open through a helper restart, and a leftover closed at the next start with Chrome running.
+
+On the Android 11 test phone on 2026-10-22, with Chrome 155, a session's own tab stayed on screen while another session opened a tab, so switching back works.
 
 ### Launching apps from a tab
 
@@ -88,6 +96,15 @@ Not measured: the title in another language (Chrome did not come up under DevToo
 
 A world belongs to one document. `Runtime.evaluate` naming a world whose document has gone fails with code -32000 and the message `Cannot find context with specified id`, and runs nothing. A context id that never existed gets the same reply. Chrome gives -32000 for any server error, so PhoneAPI needs the message too, and it is the only thing that names this failure. Checked with Chrome 109 and 145 on the Android 13 and 17 emulators on 2026-11-06, with a reload between making the world and using it.
 
+### Still to check
+
+- How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
+- Whether a tab opened while Chrome is in the background becomes Chrome's selected tab, as it does on the Android 16 emulator.
+- How many hidden tabs Chrome keeps loaded on the Moto G Power before it unloads them, to check the cap of 8.
+- That Chrome 155 still sends `Inspector.targetCrashed` on `Inspector.enable` for a tab it unloaded.
+- Whether a hidden tab's timers also stop while Chrome itself is in front, with the tab behind another, or only while Chrome is in the background.
+- That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
+
 ## Android's app freezer
 
 On Android 12 and later the cached-app freezer is on by default. On the Android 16 emulator on 2026-10-21, about 2 minutes after Chrome went to the background, every Chrome process was frozen (`isFrozen=true`), and nothing answered, not even the browser endpoint. Android 11 has the freezer but leaves it off by default. On the phone on 2026-10-22, `dumpsys activity` printed "Freezer settings" with `use_freezer=false`, and `cached_apps_freezer` was unset.
@@ -102,6 +119,12 @@ Holding Chrome's Custom Tabs binding was checked on the Android 16 emulator, wit
 - Chrome's Custom Tabs service listed PhoneAPI as its client from a foreground-service process.
 
 On the phone on 2026-10-22, PhoneAPI held the binding (`chromeKept`).
+
+### Still to check
+
+- That binding Chrome's Custom Tabs service works on a real Android 12 or later phone, and does not change anything visible on the Android 11 test phone.
+- Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
+- A frozen Chrome's handshake on the Android 10 USB path.
 
 ## Starting activities
 
@@ -124,6 +147,11 @@ Run through `POST /v1/intents` and `POST /v1/apps/{pkg}/launch` on the Android 1
 - The Android 11 audio start's heap-dump activity, run on the Android 17 emulator on 2026-11-06 with a throwaway build that took out the Android 11 check: `startActivityAndWait` gave `START_SUCCESS` and the activity's name, also with the screen off, and `removeTask` left the launcher on top. A class that does not exist gave -92, and audio still started. Android logged `Displayed` at about 0.8 s, and at 2 s for the first start after a boot, which ran past a 2 s wait. So the audio start's limit is the same 20 s as an app start. The shell can't `pm disable` that activity, since `pm` threw.
 On the Android 11 test phone on 2026-11-06, `app_launch` of Settings with `wait` took 0.6 to 1.3 s and returned ok. `open_intent` of a `VIEW` for Chrome, with Chrome open, opened the tab and gave `Activity not started, its current task has been brought to the front`, and the tab was the caller's. The heap-dump activity's start ran for audio. An intent refused or left unhandled was not tried there.
 
+### Still to check
+
+- Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
+- All of this section on phones other than the Android 11 test phone, since an OEM can change this interface; the wait running out at 20 s, which no emulator reached; an incognito open, whose start runs only on a Chrome that reports a tab's profile (Chrome 91 and 109 stop before it, with `Chrome did not say which profile a new tab is in`).
+
 ## Incognito tabs
 
 DevTools cannot open an incognito tab. Chrome on Android fails `Target.createBrowserContext`, and opens a normal tab when `Target.createTarget` names the incognito tabs' `browserContextId`. So PhoneAPI starts Chrome's "New Incognito tab" shortcut instead, as [sharing.md](sharing.md#incognito-tabs) describes.
@@ -140,6 +168,10 @@ Checked on the Android 16 emulator with Chrome 133 on 2026-10-31, with the helpe
 - A cookie set in one session's incognito tab showed in another session's, and in a third opened after the first closed its tab. Once every incognito tab was closed, a new one had no cookie.
 - With an incognito tab opened outside PhoneAPI holding a cookie, an incognito open closed it, and the new tab, opened right after, was in a new browser context with no cookies. A second session's open kept the first session's tab, saw its cookie, and got the note.
 - The Incognito Screenshot flag was in `chrome://flags`. It stayed on after Relaunch; Chrome writes flags as it shuts down, so a force stop loses the change. With it on, the video and `/v1/screenshot` showed an incognito tab's page and Chrome's incognito icon.
+
+### Still to check
+
+- That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
 
 ## PDFs
 
@@ -251,6 +283,14 @@ Checked through MCP on the Android 16 emulator with Chrome 133 on 2026-11-06:
 
 On the Android 10 emulator with Chrome 91 on 2026-11-06, the takeover of an arXiv PDF answered its pause and loaded the stand-in page, and the script then failed with `SyntaxError: Unexpected token '{'`. So Chrome 91 can't run the PDF scripts, which is taken to be syntax newer than it, though the token's place was not looked up.
 
+### Still to check
+
+- What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
+- That `Page.frameNavigated` reaches the stand-in's session with the navigation's loader id on the phone's Chrome 156, as it does on Chrome 109, 133, and 145. Without it, a takeover fails `page_error` after 5 s. Also that a `backendNodeId` outlives `DOMContentLoaded` there, and that Chrome 156 refuses a connection to a tab that closed during a call.
+- How long a long PDF takes to read on the phone, against DevTools' 15 s call limit. Also `browser_read` end to end through PhoneAPI on Android 17, which was checked only over raw DevTools. Also a PDF from a site whose service worker answers navigations, which may answer before DevTools can pause it.
+- Opening a tab, past what this section says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
+- On Chrome 145, `loaderId` from `Page.getFrameTree`, and the PDF takeover. On Chrome 133, whether `Runtime.callFunctionOn` works on a `DOM.resolveNode` handle in the stand-in and `Page.navigate` returns only after the fulfil were not looked at apart from the reads that depend on them. A site whose service worker answers the navigation itself. A quick PDF through Chrome 133's viewer: only the 17 s one was seen to return text, since the two `url` reads of a quick one were cut off in the test's output.
+
 ## Starting Chrome
 
 Chrome opens `chrome_devtools_remote` only while it runs. A tab open with Chrome stopped starts it from its launcher entry, as tapping its icon would, and waits for the socket, as [sharing.md](sharing.md) describes.
@@ -264,6 +304,12 @@ Chrome can run with no tab and no activity. On the Android 16 emulator on 2026-1
 
 The first tab open after a cold boot failed once on each emulator that day: on Android 16 with 503 `cdp_error` about the wireless debugging port at 19.4 s, while the restart loop was turning the setting off and on, and on Android 13 with 502 `Could not open Chrome's DevTools socket` at 2.5 s. The next opens worked. Three more cold starts on Android 13 took 2.0 to 2.4 s.
 
+On the Android 11 test phone on 2026-11-06, with Chrome 156, an open with Chrome stopped took 3.3 s and showed no first-run screen. With it running, an open took 0.5 s.
+
+### Still to check
+
+- Whether a first-run or sign-in screen keeps Chrome from opening its DevTools socket after a tab open starts it.
+
 ## The top task
 
 PhoneAPI asks for the top task before and after calls that could launch an app. The first build ran `dumpsys activity activities`. It took about 8 ms on the emulator but 90 to 140 ms on the phone, where any `dumpsys` costs that much to start, adding about a quarter second to each background input. The helper now calls `IActivityTaskManager.getTasks` directly, choosing the overload as it does for input injection, and falls back to `dumpsys` if that call fails. The same call answers the "is Chrome in front" checks behind the placeholder tab.
@@ -276,6 +322,13 @@ Android 16 reports one clipboard write as two clipboard changes, a second apart,
 
 On the Android 16 emulator on 2026-10-29, with the helper as the shell user, cleanup cleared PhoneAPI's own clip, left a clip copied after it, and left the clip after `cleanup` false. On 2026-10-31, text a person pasted in the viewer was still on the clipboard after the viewer let go, and the next session read it as empty. A session read its own write back, found the clipboard empty after a person took over and handed the screen back, and a session that got the screen after a release with `cleanup` false found it empty too.
 
+### Still to check
+
+- That the shell user can clear the clipboard through `IClipboard.clearPrimaryClip` and read `getPrimaryClipDescription` on Android 11.
+- That a session finds the clipboard empty on Android 11 after a person copied something, and that the clear leaves no toast or visible change.
+- That clipboard images go both ways on Android 11, checked so far on the Android 10 and 16 emulators. Also that the helper can read an image another app copied, which the emulators' Chrome would not put on the clipboard.
+- That the viewer's copy and paste work from a real keyboard in Chrome, Safari, and Firefox, including the second Cmd+C that Safari and Firefox need when the page guessed text and the phone held an image.
+
 ## Audio capture
 
 `AudioRecord` names the app that records. Android 11 and 12 take the name from `ActivityThread.currentOpPackageName`. Android 13 and later ask the current application for its `AttributionSource` instead, so the helper's stand-in application has to answer that too. Without it the helper threw a `NullPointerException` in `AudioRecord`'s constructor and no audio stream started. The AOSP sources for Android 13 through 16 all take that path; only Android 16 was run.
@@ -283,6 +336,11 @@ On the Android 16 emulator on 2026-10-29, with the helper as the shell user, cle
 On the Android 16 emulator on 2026-11-05, with the helper answering as `com.android.shell` and before the app skipped silence or joined packets, `/v1/stream/audio` sent about 50 Opus packets a second. They were 12 bytes while nothing played and 156 to 286 bytes while Chrome played a 6 s 440 Hz tone, for those 6 s.
 
 On the Android 11 test phone on 2026-11-06, `/v1/stream/audio` sent its header 1.6 s after the socket opened, and the foreground app stayed Chrome, so the shell activity's start and `removeTask` left it as it was. One packet came in 3 s of silence. A 0.6 s 440 Hz tone from a page came as 13 packets of 170 to 534 bytes over 0.64 s. The audio itself was not decoded. Closing the socket logged `audio reader stopped`.
+
+### Still to check
+
+- That a sound comes through whole on Android 11, without its start or end clipped, once decoded. That checks the Opus encoder's output timestamps against its input.
+- Restarting for a second viewer on Android 11 and later. On the Android 13 emulator each viewer got a header and one packet and the reader stopped cleanly, but the tone never started. The Android 11 audio start: how long the first one after a boot takes, what a locked phone does to the wait, and which of `setProcessImportant` and the activity lets `startRecording` attach.
 
 ## Screen hand-offs
 
@@ -302,6 +360,15 @@ With a viewer on the Android 16 and Android 13 emulators on 2026-11-06:
 - On Chrome 109 a `touch` tap with the tab switcher open returned ok and the click was lost, once. It did not happen again on 2026-11-06, in 35 tries on the Android 13 emulator: a tap on the tab Chrome had selected and on another, raw taps 0.08 to 1 s after `Page.bringToFront`, humanized or not, with six busy processes in the emulator and host load about 25. All 35 clicked. With the switcher open the tree has `tab_list_view` and no `WebView`. `Page.bringToFront` closes the switcher on Chrome 109, and the `WebView` is back within 0.28 s, so the check that the page is on screen passes for the right reason. Chrome 133 leaves the switcher up, and the tap is refused. So the lost click is not explained, and nothing was changed for it.
 - `browser.dialog` with an alert up matched in 77 ms with the screen on, on Android 16. On Android 13 the same wait, with a 4 s limit, failed 503 `cdp_timeout` at 15.1 s. With the screen off the wait never turned it on, on both. There it did not match: it timed out at 4.0 s twice, and failed `cdp_timeout` at 15.1 and 15.6 s on Android 16 with a keyguard up.
 
+A session's own read of its tab during a take hid it on the Android 11 test phone on 2026-11-06 too, and taps then landed on the placeholder.
+
+On the Android 11 test phone on 2026-11-07, after `screen/release` with `cleanup` false and no viewer, a `cdp` tap failed `not_visible` and the tab went from `visible` to `hidden`, in the one try that read it.
+
+### Still to check
+
+- The lost click on Chrome 109 with the tab switcher open, as above, which did not come back in 35 tries.
+- Why a `cdp` tap after a release without cleanup hid the tab.
+
 ## Video and audio streams
 
 Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encoder:
@@ -313,6 +380,16 @@ Measured on the Android 16 emulator on 2026-11-05, with the `C2SoftAvcEnc` encod
 - A 6 s tone played in Chrome came through as 102 messages: 101 Opus packets of three 20 ms frames, 60 ms apart, and one single frame sent as silence started. Nothing was sent before or after the tone. Apple's AudioToolbox decoder, which Safari's `AudioDecoder` uses, decoded them to 6.08 s of audio, sample for sample the same as the frames split back into 20 ms packets. Chrome's decoder takes packets up to 120 ms. Firefox was not checked.
 
 Rotating while a viewer streamed, on the Android 16 and Android 13 emulators on 2026-11-06, without the display poll: new headers came 0.2 to 1.1 s after each of 90, 180, 270, and 0, and a viewer's tap at the screen's center reached the page at each, with a `stream,control` token. With the host loaded (load average 29), one header took about 8 s, and the log showed `relay release`, `The relay thread did not answer`, and `releaseOutputBuffer() is valid only at Executing states`. No viewer was closed. `wm size` changes no display mode, so no header came and `/v1/device` kept the physical size, while Chrome's viewport did change. The emulators have one display mode, so a real resolution change was not run.
+
+On the Android 11 test phone on 2026-11-06, video at `maxSize` 720 was H.264 High, 338x720, with its first frame at 0.8 s, and 27 of 29 frames decoded in `ffprobe`. A PNG screenshot took 0.8 to 1 s.
+
+### Still to check
+
+- That a still screen on the Moto G Power looks sharp after scrolling, with the relay's settle redraws in place of `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, and sends a frame every 4 s.
+- That the viewer in Firefox plays the 60 ms Opus packets the phone sends.
+- That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
+- A real resolution change while streaming, which needs a phone with more than one display mode.
+- Rotation on Android 10 and 11 and viewer taps on Android 10, since the Android 10 emulator has no video. Android 10 taps in the viewer opening no audio socket.
 
 ## UiAutomation
 
@@ -374,6 +451,14 @@ A tap by `ref` from `includeInvisible` on a page with `scroll-behavior:smooth` s
 
 With the app killed and restarted beside a live helper, on the Android 13 and 16 emulators that day, `uiAutomationConnected` read false for as long as it was watched, 331 s on Android 16, though snapshots worked. The helper's connection outlived the app, and the new app was not told. No `UiAutomation idle` line came in over 200 s on Android 13, so whether it idles out then is not settled.
 
+### Still to check
+
+- Whether the first `ui_snapshot` after UiAutomation connects can come back empty, as one did, and should wait for windows.
+- A release and a dev helper side by side, with the UiAutomation contention, which needs a release build.
+- The occasional `content_unavailable` on a new tab on Chrome 133, as above: what the tree holds when it happens.
+- UiAutomation idling out after the app process is killed and restarted, as above.
+- Touch on a page Chrome turned the nodes off for, as above: whether starting Chrome shows a page a blur or `visibilitychange`, and whether an activity start brings the nodes back on a phone, where opening and closing a tab did.
+
 ## The on-screen keyboard
 
 Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web field in Chrome through Gboard (15.1 on Android 16).
@@ -400,6 +485,12 @@ The merged code typed the same cases exactly on the Android 11 test phone on 202
 
 `keyboard_show` on the Android 16 emulator on 2026-11-06: without a selector, with a field focused, the keyboard came up in 1.5 s. With a selector, one try said `The keyboard did not appear`, two worked, and three failed `not_found`, the Chrome node collapse above being the likely cause.
 
+On the Android 11 test phone on 2026-11-07, keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The nodes were not read on that try. They were there in the other 15.
+
+### Still to check
+
+- Why keyboard `clear` failed once in 16 tries on the Android 11 test phone.
+
 ## MCP SDK
 
 PhoneAPI uses the Kotlin MCP SDK 0.16.0. A prototype with 0.15.0 on the Android 16 emulator showed, on 2026-10-20:
@@ -418,6 +509,10 @@ SDK 0.16.0 answers a POST that repeats a request id with 400 `Invalid Request`, 
 Progress would need one of two things. The session's GET stream already carries it in JSON mode, but clients may skip that stream. Streaming POST responses, which every client must accept, would need PhoneAPI's own transport on the SDK's `Transport` interface, about 250 to 350 lines, owning session ids, headers, and errors. Wrapping the SDK's transport instead is smaller but depends on its internals.
 
 MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need state across calls mint handles that clients pass as tool arguments, as `session_start` does. SDK 0.16.0 does not speak that revision yet (its latest protocol version is 2025-11-25), so such clients cannot connect, but the tools would carry over.
+
+### Still to check
+
+- Whether a release build logs anything from the SDK, such as session ids. A release build uses a different logging backend from the debug build checked above.
 
 ## Wireless debugging pairing
 
@@ -465,17 +560,41 @@ On the Android 16 emulator on 2026-11-06, `ro.serialno` was `EMULATOR37X2X13X0` 
 
 A wrong code sent once on the Android 16 emulator that day failed once in 0.2 s, with `Could not exchange peer info`. The dialog stayed open with the same code, and the app's pairing kept working. The broadcast's result code was 0 with the failure in its text.
 
+On the Android 11 test phone on 2026-11-06, `am start` of `.SubSettings` was refused for the shell, so the way in is `android.settings.APPLICATION_DEVELOPMENT_SETTINGS` and the Wireless debugging row. `uiautomator dump` can't run beside the helper, so PhoneAPI's own `ui/snapshot` read the code and port for `PAIR_ADB`. A tap on a list still moving only stops the list, so wait for `idle` first.
+
+On the Android 11 test phone on 2026-10-22, the release build's helper restarted during cleanup, when the USB connection dropped, and its app relaunched it within 30 seconds.
+
+### Still to check
+
+- That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
+- That the restart loop recovers a lost mDNS record in one start on a phone, as it did on the Android 13 emulator. On the Android 11 test phone the record was present, so the search found it at once and the off/on cycle was not exercised with the serial filter in place. The one-prompt refusal on an unapproved network was checked only on the Android 16 emulator, since clearing a network's trust needs root. Giving up with the setting left as it was found was checked on the Android 11 test phone.
+- What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
+- That the shared mDNS walk finds the pairing dialog and the connect port on the Android 11 and 12 phones, below API 34, where a hung resolve can't be cancelled and `FAILURE_ALREADY_ACTIVE` is what a search waits out. Only the Android 17 emulator has run it. With another device's record on the LAN and the serial known, its record should never be resolved. With the serial not known yet, as on a first pairing, every record is, so a hung foreign one still blocks that search. Also a bare connect to the pairing port leaving the dialog working there, which `pairingPort()` does.
+- The `_adb-tls-pairing` record's name on Android 11. With the serial known, the pairing search now resolves only records named `adb-<serial>-…`, so a different name there means it finds no dialog.
+
 ## The listener's socket
 
 `LocalServerSocket.close()` does not wake a thread in `accept()`, on the Android 13 and 16 emulators on 2026-11-06. After `ListenerService` stopped, the next connection was accepted and never answered, and each cycle left one more connected socket in `/proc/net/unix`. The abstract name stays bound until that happens. So a stop and a start with no client between failed: `Failed to open the abstract socket`, `java.io.IOException: Address already in use`, with the service still foreground and nothing serving. A later start worked. With a client in between, three of three cycles came back.
 
 `Os.shutdown` with `SHUT_RDWR` on the listening socket's descriptor does wake that `accept()`, on the Android 10 (kernel 4.14), 13, and 16 emulators on 2026-11-06. Each ran three stops and starts with no client between, where `/proc/net/unix` showed the name gone within a second of `am stopservice` returning, and three more back to back. The host was overloaded, so that time is only an upper bound. The API answered every time, nothing failed to bind, and on Android 16 a client connecting after a stop failed at once rather than hanging. These ran on throwaway AVDs of the same system images, since other work held the named ones.
 
+### Still to check
+
+- That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
+
 ## Unlocking
 
 On the Android 16 emulator on 2026-11-06, with the lock screen turned on, a swipe keyguard went away through `wm dismiss-keyguard` in 3.6 s with no swipe. A PIN unlock worked three of three times in 4.2 to 5.2 s, and the PIN did not reach the log. With the helper down, `POST /v1/device/wake` failed `wake_failed`, since Android dropped `WakeActivity`'s start from the background.
 
 The PIN field on the Android 10 and 17 emulators on 2026-11-06 was `com.android.systemui:id/pinEntry`, a visible, non-clickable node with the password flag. Its text holds one character per digit, as `•` on Android 17, and is empty when the field is. Delete is `delete_button`, labelled Delete. The Android 17 count followed each digit and delete tap, one at a time, though a read can come before the tap shows. On both, with two digits left in the field, `POST /v1/device/unlock` cleared them and unlocked, in 6.2 s on Android 17 and 10.6 s on Android 10. On Android 17 the PIN reached no PhoneAPI log. With three emulators sharing the machine, at a load average near 30, a cold unlock often failed with no keypad: on Android 17 the keys took 1.9 to 4.1 s to appear after `wm dismiss-keyguard`, past the 1.5 s the bouncer gets. That failure types nothing, and it is the same wait as before the field check.
+
+On the Android 11 test phone on 2026-11-06, with no keyguard set, `device_lock` turned the screen off and the state stayed `locked` false. `device_unlock` said `The device was not locked`.
+
+### Still to check
+
+- That the PIN field and delete key read the same on the Android 11 and 12 phones and any OEM keyguard: a visible node with the password flag whose text length is the digit count. An unlock refuses when no such field is found, so a keyguard that hides it, as a PIN auto-confirm or PIN-shape setting may, can't be unlocked with a stored PIN. Also a real cancelled entry cleared on the phone, and whether 1.5 s covers its bouncer coming up.
+- That PIN unlock works on the phone, which has only run it on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
+- `wm dismiss-keyguard` on Android 10 and 11.
 
 ## App launch and copy
 
@@ -492,6 +611,12 @@ Run again on the Android 16 emulator on 2026-11-06, once `app_launch` decided fr
 So the foreground service does not count as in front, and a process that is on top with the screen off does not either. Without the helper nothing reports the foreground app, which is why such a start returns without waiting for it. Through the helper, a cold Settings took 10 s on the loaded host, and `ok` true.
 
 `getFilesDir` stats the directory on every call, not only the first, so a second call on the main thread was what StrictMode reported. With one call left, the app logged no StrictMode line on the Android 10, 13, and 16 emulators on 2026-11-06, from a clean install through pairing and six listener restarts, and none on an Android 16 cold start. The same logs held up to 502 StrictMode lines from other processes, such as the Google app, the dialer, and `system_server`, so filter by the app's pid.
+
+On the Android 11 test phone on 2026-11-07, `app_launch` without the helper, with PhoneAPI not in front, failed 503 `helper_unavailable` in 0.03 s.
+
+### Still to check
+
+- `app_launch` without the helper on Android 10, and with PhoneAPI in front on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator.
 
 ## Browser waits
 
@@ -546,94 +671,24 @@ Seen while checking, and not changed:
 - A `browser.element` wait on a background tab did not match an element that script added after the load, 3 of 3 on Chrome 133 and on Chrome 145. Nothing wakes the wait, since a session that took the document at depth 0 hears of no new nodes.
 - A tap on a selector whose element is `display: none` fails at once with `cdp_error` `Node does not have a layout object`, on Chrome 133 and 145, and does not wait out `waitMs`.
 
-## Still to check on the phone
+### Still to check
 
-- That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
-- That the restart loop recovers a lost mDNS record in one start on a phone, as it did on the Android 13 emulator. On the Android 11 test phone the record was present, so the search found it at once and the off/on cycle was not exercised with the serial filter in place. The one-prompt refusal on an unapproved network was checked only on the Android 16 emulator, since clearing a network's trust needs root. Giving up with the setting left as it was found was checked on the Android 11 test phone.
-- What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
-- That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
-- How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
-- What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
-- That `Page.frameNavigated` reaches the stand-in's session with the navigation's loader id on the phone's Chrome 156, as it does on Chrome 109, 133, and 145. Without it, a takeover fails `page_error` after 5 s. Also that a `backendNodeId` outlives `DOMContentLoaded` there, and that Chrome 156 refuses a connection to a tab that closed during a call.
 - That `DOM.documentUpdated` comes before Chrome refuses a dropped node id on the phone's Chrome 156, as it does on Chrome 91, 109, 133, and 145. Without it, a lookup fails `cdp_error` as it did before `withNodeIds`, and a new call works.
-- That the PIN field and delete key read the same on the Android 11 and 12 phones and any OEM keyguard: a visible node with the password flag whose text length is the digit count. An unlock refuses when no such field is found, so a keyguard that hides it, as a PIN auto-confirm or PIN-shape setting may, can't be unlocked with a stored PIN. Also a real cancelled entry cleared on the phone, and whether 1.5 s covers its bouncer coming up.
-- That the shared mDNS walk finds the pairing dialog and the connect port on the Android 11 and 12 phones, below API 34, where a hung resolve can't be cancelled and `FAILURE_ALREADY_ACTIVE` is what a search waits out. Only the Android 17 emulator has run it. With another device's record on the LAN and the serial known, its record should never be resolved. With the serial not known yet, as on a first pairing, every record is, so a hung foreign one still blocks that search. Also a bare connect to the pairing port leaving the dialog working there, which `pairingPort()` does.
-- That PIN unlock works on the phone, which has only run it on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
-- How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
-- That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
-- Whether a tab opened while Chrome is in the background becomes Chrome's selected tab, as it does on the Android 16 emulator.
-- That the shell user can clear the clipboard through `IClipboard.clearPrimaryClip` and read `getPrimaryClipDescription` on Android 11.
-- That a session finds the clipboard empty on Android 11 after a person copied something, and that the clear leaves no toast or visible change.
-- That clipboard images go both ways on Android 11, checked so far on the Android 10 and 16 emulators. Also that the helper can read an image another app copied, which the emulators' Chrome would not put on the clipboard.
-- That the viewer's copy and paste work from a real keyboard in Chrome, Safari, and Firefox, including the second Cmd+C that Safari and Firefox need when the page guessed text and the phone held an image.
-- How many hidden tabs Chrome keeps loaded on the Moto G Power before it unloads them, to check the cap of 8.
-- Whether a release build logs anything from the SDK, such as session ids. A release build uses a different logging backend from the debug build checked above.
-- That binding Chrome's Custom Tabs service works on a real Android 12 or later phone, and does not change anything visible on the Android 11 test phone.
-- That Chrome 155 still sends `Inspector.targetCrashed` on `Inspector.enable` for a tab it unloaded.
-- Whether the first `ui_snapshot` after UiAutomation connects can come back empty, as one did, and should wait for windows.
-- Whether a hidden tab's timers also stop while Chrome itself is in front, with the tab behind another, or only while Chrome is in the background.
-- That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
-- Whether Android 11 applies a change to `cached_apps_freezer` as quickly as Android 16 does.
-- That a sound comes through whole on Android 11, without its start or end clipped, once decoded. That checks the Opus encoder's output timestamps against its input.
-- That a still screen on the Moto G Power looks sharp after scrolling, with the relay's settle redraws in place of `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, and sends a frame every 4 s.
-- That the viewer in Firefox plays the 60 ms Opus packets the phone sends.
-- That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
-- How long a long PDF takes to read on the phone, against DevTools' 15 s call limit. Also `browser_read` end to end through PhoneAPI on Android 17, which was checked only over raw DevTools. Also a PDF from a site whose service worker answers navigations, which may answer before DevTools can pause it.
-- Whether a first-run or sign-in screen keeps Chrome from opening its DevTools socket after a tab open starts it.
+- A browser wait's limit on the Android 10 USB path.
+
+## Page reads and events
+
+### Still to check
+
+- How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
 
-## Checked on the phone
+## Injected input
 
-On 2026-11-06, a dev build of `main` at 4059efb ran beside the release app on the Android 11 test phone, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. Failures are in the sections above, and only what passed is listed here.
+`chrome-input-check` on Chrome 156 on the Android 11 test phone on 2026-11-06: all ten checks gave what the script expects, in 28 s.
 
-- `phoneapi-dev setup --no-build` installed, paired, and reported the helper running in 18 s over USB. `/v1/device` listed every capability but `ui.stableIds`.
-- Pairing beside the running helper: `uiautomator dump` can't run, so PhoneAPI's own `ui/snapshot` read the code and port for `PAIR_ADB`, whose result was `Paired. Starting the helper.`. `am start` of `.SubSettings` is refused for the shell on Android 11, so the way in is `android.settings.APPLICATION_DEVELOPMENT_SETTINGS` and the Wireless debugging row. A tap on a list still moving only stops the list, so wait for `idle` first.
-- Wake, lock, and state. `device_lock` turned the screen off, and with no keyguard set the state stayed `locked` false. `device_unlock` said `The device was not locked`.
-- `ui/snapshot`, `ui/find`, `ui_act`, screenshot (PNG, 0.8 to 1 s), tap by selector and point, swipe, key, and waits for `window`, `node`, `idle`, `screen`, `keyguard`, and `ime`.
-- Clipboard text: write, read, paste, and copy of a selection, with `changed` true.
-- The screen lease between two REST sessions: a waiter got the screen at once on release, and took it from an idle holder at 30.06 s, each with the cleanup note. `session_start` and `session_end` too.
-- `/v1/events` delivered `window.changed`, `ui.changed`, and `screen.on`.
-- The viewer: `?access_token=` gave a cookie and a redirect, and the cookie opened `/viewer`, and got 404 on `/v1/device`. An `Origin` from another host got 404 on the upgrade. Video at `maxSize` 720 was H.264 High, 338x720, first frame at 0.8 s, and 27 of 29 frames decoded in `ffprobe`. The page in a browser played it with WebCodecs at 600x1280, and after `screen_release` with `cleanup` false, Take over and a click on the canvas tapped the page's button. A read by the session during a take hid the tab, as on the emulators, and taps then landed on the placeholder.
-- Browser, over REST and MCP, on a local test page, example.com, and en.wikipedia.org: open, `read`, `find`, links, outline, snapshot, embedded data by path and `*`, `evaluate`, `tap` with `cdp`, `cdp-mouse`, and `touch` (`isTrusted` true each time), swipe with `touch` and `cdp`, text with `touch` and `cdp`, key, console, `capture` with `response-1` read by path and `find`, close, and waits for `browser.settled`, `loaded`, `element`, `url`, `request`, and `networkIdle`. An open with Chrome stopped took 3.3 s and showed no first-run screen. With it running, an open took 0.5 s.
-- `chrome-input-check` on Chrome 156: all ten checks gave what the script expects, in 28 s.
-- Helper restart over wireless debugging. With the setting on, the helper was registered 3.4 s after `kill`, and browser calls worked. With the setting put to 0 by hand and the helper running, 12 s passed with the helper up and the setting left at 0. After a `kill` from there, the app set it to 1 at once, and the helper was registered in 5 s. The setting then stays 1 while the helper runs, as [setup.md](setup.md) says.
-- One swipe sent right after `BACK`, as the window changed, returned 200 with `ok` false and `The system cancelled the gesture`. The error table's 409 `gesture_cancelled` did not come.
+On the same phone that day, one swipe sent right after `BACK`, as the window changed, returned 200 with `ok` false and `The system cancelled the gesture`. The error table's 409 `gesture_cancelled` did not come.
 
-Not run that day: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
+### Still to check
 
-On 2026-10-22, with v0.3.0 and then a dev build beside it, the phone's agent and adb checked:
-
-- Tabs a request opened were gone in the next request, from when REST calls held the screen for one call.
-- A session's own tab stayed on screen while another session opened a tab, so switching back works on Chrome 155.
-- `session_conflict` both ways, `screenHolder` as `you`, `agent`, `parent`, and `subagent`, and the cleanup and waited notes.
-- Restarting the dev helper closed both test tabs a live session had, since the startup sweep ran on every helper connection. It now runs once per app start. The release build's helper also restarted during cleanup, when the USB connection dropped, and its app relaunched it within 30 seconds.
-
-On 2026-11-07, a dev build of `main` at 2acb53e ran on the same phone, with Chrome 156.0.8078.79, to recheck what had changed since 4059efb. The PDF opens are under [PDFs](#pdfs). The rest worked, except where noted:
-
-- Pairing through Settings and `PAIR_ADB`. After the helper was killed, the app brought it back without help.
-- `app_launch` with the helper, and without it, with PhoneAPI not in front, 503 `helper_unavailable` in 0.03 s.
-- `am stopservice` of `ListenerService` refused connections, and `am start-foreground-service` had the API answering again within 1.5 s, with the helper still running.
-- With a viewer holding the screen and a test tab on it, `evaluate`, `navigate`, `tap` with `cdp`, `close`, and opening a tab each failed 409 `screen_taken` in about 0.1 s. A read of that tab and `evaluate` on a hidden tab worked, and the session had the screen back after the viewer let go.
-- A wait for an element on a page whose script was stuck for 9 s ended at its 2 s limit, as did a `browser.dialog` wait, and the page answered once the script ended.
-- `GET /v1/sessions` dropped a tab closed behind PhoneAPI's back. `touch` and `cdp` taps, video, a screenshot, `ime.shown`, and MCP `browser_read` and `browser_find` worked, including `queries` and `scope` `data`.
-- Keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The nodes were not read on that try. They were there in the other 15.
-- After `screen/release` with `cleanup` false and no viewer, a `cdp` tap failed `not_visible` and the tab went from `visible` to `hidden`, in the one try that read it. Why was not looked into.
-
-From the 2026-11-06 audit fixes, what the emulators could not settle. The rest was run that day on the Android 16 emulator, and part of it on Android 13. The sections above give the results, including the checks that failed.
-
-- Android 10 and 11 hardware: a frozen Chrome's handshake on the Android 10 USB path; `wm dismiss-keyguard` on Android 10 and 11; rotation on Android 10 and 11 and viewer taps on Android 10, since the Android 10 emulator has no video; Android 10 taps in the viewer opening no audio socket.
-- Audio: restarting for a second viewer on Android 11 and later. On the Android 13 emulator each viewer got a header and one packet and the reader stopped cleanly, but the tone never started. The Android 11 audio start: how long the first one after a boot takes, what a locked phone does to the wait, and which of `setProcessImportant` and the activity lets `startRecording` attach.
-- A real resolution change while streaming, which needs a phone with more than one display mode.
-- Chrome 145: `loaderId` from `Page.getFrameTree`, and the PDF takeover. On Chrome 133, whether `Runtime.callFunctionOn` works on a `DOM.resolveNode` handle in the stand-in and `Page.navigate` returns only after the fulfil were not looked at apart from the reads that depend on them. A site whose service worker answers the navigation itself. A quick PDF through Chrome 133's viewer: only the 17 s one was seen to return text, since the two `url` reads of a quick one were cut off in the test's output.
-- A release and a dev helper side by side, with the UiAutomation contention, which needs a release build.
-- UiAutomation idling out after the app process is killed and restarted, as under [UiAutomation](#uiautomation).
-- The `_adb-tls-pairing` record's name on Android 11. With the serial known, the pairing search now resolves only records named `adb-<serial>-…`, so a different name there means it finds no dialog.
-- Why keyboard `clear` failed once in 16 tries on the Android 11 test phone, and why a `cdp` tap after a release without cleanup hid the tab, both under [Checked on the phone](#checked-on-the-phone).
-- `chrome-input-check` on a newer phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
-- Added after these checks ran, on code they did not test: an `open_intent` tab claimed within 2 s: that the start names `com.android.chrome` as what took a URL with no package named, with Chrome in front and behind, and that the new tab has no `openerId`, including across a redirect; that `app_launch` of a running Chrome opens no new tab.
-- Opening a tab, past what [PDFs](#pdfs) says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A server that takes over 12 s: `loading` true, then `browser.settled` matching once it has loaded. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
-- `app_launch` without the helper on Android 10, and with PhoneAPI in front on a phone, and `ActivityManager.getMyMemoryState`'s importance there: it was read only on the Android 16 emulator. A browser wait's limit on the Android 10 USB path.
-- Touch on a page Chrome turned the nodes off for, as under [UiAutomation](#uiautomation): whether starting Chrome shows a page a blur or `visibilitychange`, and whether an activity start brings the nodes back on a phone, where opening and closing a tab did.
-- The occasional `content_unavailable` on a new tab on Chrome 133, as under [UiAutomation](#uiautomation): what the tree holds when it happens.
-- The lost click on Chrome 109 with the tab switcher open, under [Screen hand-offs](#screen-hand-offs), which did not come back in 35 tries.
-- Starting activities, as [Starting activities](#starting-activities) describes: all of it on phones other than the Android 11 test phone, since an OEM can change this interface; the wait running out at 20 s, which no emulator reached; an incognito open, whose start runs only on a Chrome that reports a tab's profile (Chrome 91 and 109 stop before it, with `Chrome did not say which profile a new tab is in`).
+- `chrome-input-check` on a phone newer than the Android 11 test phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
