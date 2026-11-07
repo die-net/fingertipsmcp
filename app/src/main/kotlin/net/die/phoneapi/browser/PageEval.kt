@@ -64,10 +64,12 @@ internal suspend fun evaluateInFrame(
 
 /**
  * Whether Chrome refused to run in a world because its document has gone. Chrome checks this before
- * running anything, so the expression did not run.
+ * running anything, so the expression did not run. A broken connection is no such refusal, whatever
+ * it says. The code is the one Chrome gives any server error, so the message is the only signal
+ * that names this one, as docs/device-notes.md records.
  */
 private fun worldGone(e: ApiException): Boolean =
-    e.error == "cdp_error" && e.message.orEmpty().contains(NO_CONTEXT, ignoreCase = true)
+    e.rejected?.let { it.code == SERVER_ERROR && it.message == NO_CONTEXT } == true
 
 /** A new isolated world on the page's main frame, by its execution context id. */
 internal suspend fun isolatedWorld(cdp: CdpSession): Int = isolatedWorld(cdp, mainFrameId(cdp))
@@ -169,6 +171,9 @@ private data class ExceptionObject(
 )
 
 private const val ISOLATED_WORLD = "phoneapi"
+
+/** The JSON-RPC code Chrome gives a command it could not carry out, for any reason. */
+private const val SERVER_ERROR = -32_000
 
 /** Chrome's error when a Runtime call names an execution context that no longer exists. */
 private const val NO_CONTEXT = "Cannot find context with specified id"

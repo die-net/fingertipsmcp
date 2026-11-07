@@ -48,6 +48,22 @@ class PageEvalTest {
         assertEquals("Not allowed", error.message)
     }
 
+    @Test
+    fun `only Chrome's refusal counts`() {
+        // The same words under another code are some other failure, so nothing says the
+        // expression did not run, and it must not run twice.
+        val other = "Cannot find context with specified id"
+        val failed =
+            harness.serverTextFrame("""{"id":2,"error":{"code":-32602,"message":"$other"}}""")
+        val page = StallingSocket(harness.switched() + world(1) + failed)
+        val error =
+            assertThrows(ApiException::class.java) {
+                onPage(page) { evaluateInFrame(it, "F", "x", awaitPromise = false) }
+            }
+        assertEquals(other, error.message)
+        assertEquals(1, page.methods().count { it == "Runtime.evaluate" })
+    }
+
     private fun <T> onPage(page: StallingSocket, block: suspend (CdpSession) -> T): T =
         runBlocking {
             try {
