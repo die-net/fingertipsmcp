@@ -143,19 +143,19 @@ class SessionRouteTest {
         apiClient().use { http ->
             val id = startSession(http, token)
             assertEquals(HttpStatusCode.OK, intent(http, token, id, INTENT).status)
-            // Chrome handles the URL a moment after the activity starts.
-            val mine = chrome.opens("mine", "https://example.com/")
-            chrome.opens("person", "https://example.org/")
+            // Chrome handles the URL a moment after the activity starts, and the page redirects.
+            val mine = chrome.opens("mine", "https://www.example.com/landing")
             clock.testScheduler.advanceTimeBy(Tabs.CLAIM_WAIT_MS)
             assertEquals(setOf(mine), api.tabStore.ids)
         }
     }
 
     @Test
-    fun `other urls are not claimed`() = testApplication {
+    fun `other apps claim no tab`() = testApplication {
         val clock = TestScope()
         val chrome = ChromeOpensTabs()
         val api = FakeApi(browser = chrome, tabScope = clock)
+        api.intentApp = "com.google.android.apps.maps"
         val token = api.tokens.issue("all", Scope.entries.toSet())
         application { phoneApiModule(api.services) }
         apiClient().use { http ->
@@ -211,8 +211,7 @@ class SessionRouteTest {
                     setBody(MCP_INTENT)
                 }
             assertTrue(called.bodyAsText().contains("isError\":false"))
-            val mine = chrome.opens("mine", "https://example.com/")
-            chrome.opens("person", "https://example.org/")
+            val mine = chrome.opens("mine", "https://www.example.com/landing")
             clock.testScheduler.advanceTimeBy(Tabs.CLAIM_WAIT_MS)
             assertEquals(setOf(mine), api.tabStore.ids)
         }

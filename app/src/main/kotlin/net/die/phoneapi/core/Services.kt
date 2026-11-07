@@ -140,8 +140,11 @@ interface AppsService {
 
     suspend fun clear(packageName: String): ActionResult
 
-    suspend fun intent(request: IntentRequest): ActionResult
+    suspend fun intent(request: IntentRequest): IntentStart
 }
+
+/** What starting an intent did: the [result] for the caller, and the app it went to, if known. */
+data class IntentStart(val result: ActionResult, val packageName: String?)
 
 interface WaitService {
     /**

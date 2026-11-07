@@ -41,8 +41,8 @@ fun Route.appRoutes(services: ServerServices) {
         post("/v1/intents") {
             val request = call.receive<IntentRequest>()
             call.respond(
-                withScreen(call, services, claimUrl = request.data) {
-                    services.apps.intent(request)
+                withScreen(call, services) { holder ->
+                    services.tabs.intent(holder) { services.apps.intent(request) }
                 }
             )
         }

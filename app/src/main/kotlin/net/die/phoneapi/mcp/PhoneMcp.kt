@@ -285,7 +285,7 @@ private suspend fun callTool(
     return leased(services.lease, holder, screen, brief) {
         val call = suspend { tool.call(services, scopes, request) }
         when {
-            screen -> services.tabs.screenCall(holder, tool.screen.claimUrl(arguments), call)
+            screen -> services.tabs.screenCall(holder, call)
             tool.screen.launches(arguments) ->
                 tookScreenError { services.foreground.watch(holder, call) }
             else -> call()

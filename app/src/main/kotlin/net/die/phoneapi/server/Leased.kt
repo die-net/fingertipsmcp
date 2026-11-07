@@ -40,9 +40,8 @@ internal fun ApplicationCall.session(): Holder.Session {
  * Runs a REST call as the session it names. When [needed], the call holds the screen, waiting for
  * it first, and the session keeps it afterwards, as an MCP session does; Chrome shows none of
  * another session's tabs meanwhile. A call that could make a page launch an app, [launching], is
- * watched for that while the session lacks the screen. A call that sends an intent for a URL,
- * [claimUrl], gives the caller the tab Chrome opens for it. A call that needs the screen only while
- * it runs, [giveBack], lets it go afterwards if the session did not have it before. Notes for the
+ * watched for that while the session lacks the screen. A call that needs the screen only while it
+ * runs, [giveBack], lets it go afterwards if the session did not have it before. Notes for the
  * session go in `X-PhoneAPI-Note` headers.
  */
 internal suspend fun <T> withScreen(
@@ -50,7 +49,6 @@ internal suspend fun <T> withScreen(
     services: ServerServices,
     needed: Boolean = true,
     launching: Boolean = false,
-    claimUrl: String? = null,
     giveBack: Boolean = false,
     block: suspend (Holder.Session) -> T,
 ): T {
@@ -69,7 +67,7 @@ internal suspend fun <T> withScreen(
     }
     val screened =
         services.lease.withScreen(holder, giveBack) {
-            services.tabs.screenCall(holder, claimUrl) { block(holder) }
+            services.tabs.screenCall(holder) { block(holder) }
         }
     screened.notes.forEach { call.response.headers.append(NOTE_HEADER, it) }
     return screened.value

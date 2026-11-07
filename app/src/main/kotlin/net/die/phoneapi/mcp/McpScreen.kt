@@ -41,8 +41,6 @@ internal class ToolScreen(
      * is such an act.
      */
     private val pageActs: (JsonObject?) -> Boolean = { false },
-    /** The URL a call asks Chrome to open, if any. The tab it opens belongs to the caller. */
-    val claimUrl: (JsonObject?) -> String? = { null },
 ) {
     fun takes(args: JsonObject?): Boolean = always || byArguments(args)
 
@@ -54,13 +52,6 @@ internal class ToolScreen(
 
         /** A tool that never takes the screen and acts on no page. */
         val NEVER = ToolScreen()
-
-        /** A tool that acts on the screen and can make Chrome open its `data` URL in a tab. */
-        val CLAIMING =
-            ToolScreen(
-                always = true,
-                claimUrl = { (it?.get("data") as? JsonPrimitive)?.contentOrNull },
-            )
 
         /** Pointer input, which takes the screen unless it is a cdp mouse tap. */
         val POINTER = ToolScreen(byArguments = { input(it) != "cdp-mouse" }, pageActs = { true })
