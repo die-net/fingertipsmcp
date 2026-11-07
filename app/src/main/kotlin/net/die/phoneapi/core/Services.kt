@@ -185,6 +185,14 @@ interface BrowserService {
     fun awaitingPage(id: String): Boolean
 
     /**
+     * Returns once the tab [id] is no longer held up by its server: it committed or closed, or
+     * PhoneAPI stopped listening for that. At once for any other tab. A connection made before then
+     * is not worth having, since Chrome either holds it until the commit or shows it the blank
+     * first page.
+     */
+    suspend fun awaitAnswer(id: String)
+
+    /**
      * Whether Chrome is not running, so opening a tab starts it first. That brings Chrome forward,
      * so the caller holds the screen while the tab opens. False when it cannot tell.
      */
