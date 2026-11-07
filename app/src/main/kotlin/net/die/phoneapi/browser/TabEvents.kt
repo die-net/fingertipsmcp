@@ -17,8 +17,11 @@ import net.die.phoneapi.model.ApiException
 
 /** What the browser session has heard of one tab since it started listening. */
 internal data class TabHeard(
-    /** Chrome gave the tab a title, which a tab opened on its URL first gets at its commit. */
-    val titled: Boolean = false,
+    /**
+     * The last title Chrome named for the tab. A tab opened on its URL first gets one at its
+     * commit. A connection coming or going repeats the one it has, whatever URL is loading.
+     */
+    val title: String? = null,
     /**
      * The tab's own session saw the navigation PhoneAPI started commit, as [TabEvents] was told.
      */
@@ -27,7 +30,11 @@ internal data class TabHeard(
     val save: DownloadStart? = null,
     /** The tab has closed. */
     val closed: Boolean = false,
-)
+) {
+    /** Whether Chrome has named a title for the tab. */
+    val titled: Boolean
+        get() = title != null
+}
 
 /**
  * Chrome's tabs and downloads, as heard on [cdp], a session on the browser. It listens from before
@@ -45,11 +52,12 @@ internal class TabEvents(private val cdp: CdpSession) {
         when (event.method) {
             "Target.targetCreated" -> {
                 val info = event.params.decodeCdp<TargetEvent>()?.targetInfo ?: return
-                if (info.type == "page") announced += info.targetId
+                if (info.type != "page") return
+                announced += info.targetId
+                retitle(info)
             }
             "Target.targetInfoChanged" -> {
-                val info = event.params.decodeCdp<TargetEvent>()?.targetInfo ?: return
-                if (!info.title.isNullOrEmpty()) change(info.targetId) { it.copy(titled = true) }
+                event.params.decodeCdp<TargetEvent>()?.targetInfo?.let(::retitle)
             }
             "Target.targetDestroyed" -> {
                 val id = event.params.decodeCdp<ClosedEvent>()?.targetId ?: return
@@ -196,6 +204,11 @@ internal class TabEvents(private val cdp: CdpSession) {
             // The save carries on, which costs a copy in Downloads and not the read.
             if (e.rejected == null && e.error != "cdp_error") throw e
         }
+    }
+
+    private fun retitle(info: EventTarget) {
+        val title = info.title?.takeIf { it.isNotEmpty() } ?: return
+        change(info.targetId) { it.copy(title = title) }
     }
 
     private fun change(id: String, how: (TabHeard) -> TabHeard) = heard.update {

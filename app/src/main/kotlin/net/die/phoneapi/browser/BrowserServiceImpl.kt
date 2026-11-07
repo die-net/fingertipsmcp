@@ -314,6 +314,8 @@ internal class BrowserServiceImpl(
 
     override fun awaitingPage(id: String): Boolean = opener.awaitingPage(id)
 
+    override suspend fun awaitAnswer(id: String) = opener.awaitAnswer(id)
+
     override suspend fun incognitoTabs(): Set<String> = privateTabs.listed(chromeSocket())
 
     private suspend fun chromeSocket(): DevtoolsSocketInfo =

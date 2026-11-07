@@ -215,6 +215,8 @@ internal class BrowserWatch(
 
     @Suppress("MissingUseCall") // The watch closes every socket it opened.
     private suspend fun openPage(id: String, conditions: List<WaitCondition>) {
+        // Until the server answers, a connection is held or shows a blank page that seems loaded.
+        browser.awaitAnswer(id)
         val (socketName, chromeId) = parseBrowserTargetId(id)
         val devtools = openSocket(socketName)
         val session = hold(CdpSession(devtools.input, devtools.output, io))
@@ -410,7 +412,8 @@ internal class BrowserWatch(
         val frameId = frame.id
         if (load == null || frameId == null) return
         // A tab still waiting for its server shows a blank page that is complete but is not it.
-        if (frame.url == BLANK && browser.awaitingPage(load)) return
+        // Chrome 156 can name no URL for that page. This is for a tab nothing listens for now.
+        if ((frame.url.isNullOrEmpty() || frame.url == BLANK) && browser.awaitingPage(load)) return
         val state = evaluateInFrame(session, frameId, READY_STATE, awaitPromise = false).value
         if ((state as? JsonPrimitive)?.content == "complete") model.alreadyLoaded(frame.loaderId)
     }

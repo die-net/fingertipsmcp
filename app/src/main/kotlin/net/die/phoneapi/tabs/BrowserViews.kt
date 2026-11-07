@@ -49,6 +49,8 @@ internal class SessionBrowser(
 
     override fun awaitingPage(id: String): Boolean = base.awaitingPage(id)
 
+    override suspend fun awaitAnswer(id: String) = base.awaitAnswer(id)
+
     override suspend fun navigate(id: String, url: String): BrowserTarget =
         acting(id) { base.navigate(id, url) }
 
@@ -140,6 +142,8 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 
     override fun awaitingPage(id: String): Boolean = base.awaitingPage(id)
+
+    override suspend fun awaitAnswer(id: String) = base.awaitAnswer(id)
 
     override suspend fun navigate(id: String, url: String): BrowserTarget =
         free(id) { base.navigate(id, url) }

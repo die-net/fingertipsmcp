@@ -56,6 +56,11 @@ internal class TabOpener(
     /** Whether [id] is a tab that came back still waiting for its server. */
     fun awaitingPage(id: String): Boolean = unanswered.containsKey(id)
 
+    /** Returns once nothing is listening for [id]'s server any more, which may be at once. */
+    suspend fun awaitAnswer(id: String) {
+        unanswered[id]?.join()
+    }
+
     /** Stops counting [id] as waiting, since it closed or was sent elsewhere. */
     fun forget(id: String) {
         unanswered.remove(id)?.cancel()
@@ -135,9 +140,16 @@ internal class TabOpener(
 
     /**
      * Keeps a browser session on [tab], which came back unanswered, so that a save starting after
-     * that is treated as one that started before it. It ends when the tab closes, when a tab opened
-     * on its URL commits, when something calls [forget], or after [LATE_MS]. Its session is
-     * listening before this returns, since the open's own session closes then.
+     * that is treated as one that started before it, and [awaitAnswer] knows when the page came. It
+     * ends when the tab closes, when the page commits, when something calls [forget], or after
+     * [LATE_MS]. Its session is listening before this returns, since the open's own session closes
+     * then.
+     *
+     * A tab that navigated has a first page with a title of its own, and a connection coming or
+     * going repeats it with the URL still loading. A page setting its title sends no event, so only
+     * this session's replay has that title for certain, and the commit is any other. A commit
+     * between the open's session closing and the replay reads as the first page's title, which
+     * leaves this watch running to its limit.
      */
     private suspend fun watchLate(
         tab: BrowserTarget,
@@ -146,15 +158,13 @@ internal class TabOpener(
         incognito: Boolean,
     ) {
         val listening = CompletableDeferred<Unit>()
-        val done: (TabHeard) -> Boolean = { it.closed || (!navigate && it.titled) }
         val watch =
             scope?.launch(start = CoroutineStart.LAZY) {
                 try {
                     withTimeoutOrNull(LATE_MS) {
                         onBrowser(tab.socket) { events ->
                             listening.complete(Unit)
-                            if (incognito) events.await(chromeId, done)
-                            else events.cancellingPdf(chromeId) { events.await(chromeId, done) }
+                            hearLate(events, chromeId, navigate, incognito)
                             unanswered.remove(tab.id)
                         }
                     }
@@ -165,11 +175,24 @@ internal class TabOpener(
                     Log.d(TAG, "Stopped watching an unanswered tab: ${e.error}")
                 }
             }
-        unanswered[tab.id] = watch ?: Job()
+        unanswered[tab.id] = watch ?: Job().apply { complete() }
         if (watch == null) return
         watch.invokeOnCompletion { listening.complete(Unit) }
         watch.start()
         listening.await()
+    }
+
+    /** Returns once [events] hears the tab [chromeId] commit or close, as [watchLate] says. */
+    private suspend fun hearLate(
+        events: TabEvents,
+        chromeId: String,
+        navigate: Boolean,
+        incognito: Boolean,
+    ) {
+        val first = if (navigate) events.now(chromeId).title else null
+        val done: (TabHeard) -> Boolean = { it.closed || (it.titled && it.title != first) }
+        if (incognito) events.await(chromeId, done)
+        else events.cancellingPdf(chromeId) { events.await(chromeId, done) }
     }
 
     /**

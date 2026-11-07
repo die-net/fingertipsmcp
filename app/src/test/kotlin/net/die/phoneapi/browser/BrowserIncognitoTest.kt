@@ -1,5 +1,8 @@
 package net.die.phoneapi.browser
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -206,6 +209,39 @@ class BrowserIncognitoTest {
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a page's title ends the watch`() {
+        // The new tab page set its title with no event, so the open last heard another. The open's
+        // own session closing then shows that title with the URL still loading. Taken for the
+        // commit, it let a wait connect and match that page, on Chrome 109.
+        val page = harness.switched() + harness.serverTextFrame("""{"id":1,"result":{}}""")
+        val late =
+            harness.socket(
+                harness.switched() +
+                    harness.announced(1, "inc", NTP, NTP_TITLE) +
+                    harness.serverTextFrame("""{"id":1,"result":{}}""") +
+                    harness.serverTextFrame("""{"id":2,"result":{}}""")
+            )
+        val scope = CoroutineScope(harness.clock + SupervisorJob())
+        val service =
+            opening(
+                harness.socket(page),
+                harness.titled("inc", NTP, NTP),
+                scope = scope,
+                after = late,
+            )
+        harness.virtual {
+            val target = service.openTab(PAGE, incognito = true)
+            late.send(harness.titled("inc", PAGE, NTP_TITLE))
+            delay(1_000)
+            assertTrue(service.awaitingPage(target.id))
+            late.send(harness.titled("inc", PAGE))
+            service.awaitAnswer(target.id)
+            assertFalse(service.awaitingPage(target.id))
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `lists incognito tabs`() {
         val replies =
             ArrayDeque(
@@ -237,6 +273,8 @@ class BrowserIncognitoTest {
     private fun opening(
         page: DevtoolsSocket,
         events: ByteArray = byteArrayOf(),
+        scope: CoroutineScope? = null,
+        after: DevtoolsSocket? = null,
     ): BrowserServiceImpl {
         browser = harness.socket(listening() + events)
         replies += browser
@@ -250,12 +288,13 @@ class BrowserIncognitoTest {
                 )
                 .map { harness.socket(it) }
         replies += page
-        replies += closing
+        replies += after ?: closing
         return harness.service(
             byteArrayOf(),
             sockets = BrowserServiceTest.CHROME,
             inFront = { false },
             open = { replies.removeFirst() },
+            scope = scope,
         )
     }
 
@@ -293,5 +332,6 @@ class BrowserIncognitoTest {
     private companion object {
         const val PAGE = "https://example.com/"
         const val NTP = "chrome-native://newtab/"
+        const val NTP_TITLE = "New Incognito Tab"
     }
 }

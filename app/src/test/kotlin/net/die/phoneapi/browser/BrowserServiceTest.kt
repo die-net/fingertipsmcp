@@ -562,17 +562,27 @@ class BrowserServiceTest {
             serverTextFrame("""{"id":2,"result":{"targetId":"$id"}}""")
 
     /** Chrome naming a new target during the command [command], before it answers. */
-    internal fun announced(command: Int, id: String, url: String = ""): ByteArray =
+    internal fun announced(
+        command: Int,
+        id: String,
+        url: String = "",
+        title: String = "",
+    ): ByteArray =
         serverTextFrame(
             """{"afterId":$command,"method":"Target.targetCreated","params":{"targetInfo":""" +
-                """{"targetId":"$id","type":"page","title":"","url":"$url","attached":false}}}"""
+                """{"targetId":"$id","type":"page","title":"$title","url":"$url",""" +
+                """"attached":false}}}"""
         )
 
     /** A browser session hearing the tab [id] get a title, which it first does at its commit. */
-    internal fun titled(id: String = "abc", url: String = "https://example.com/"): ByteArray =
+    internal fun titled(
+        id: String = "abc",
+        url: String = "https://example.com/",
+        title: String = "example.com",
+    ): ByteArray =
         serverTextFrame(
             """{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"$id",""" +
-                """"type":"page","title":"example.com","url":"$url","attached":false}}}"""
+                """"type":"page","title":"$title","url":"$url","attached":false}}}"""
         )
 
     /** A browser session hearing the tab [id] go. */

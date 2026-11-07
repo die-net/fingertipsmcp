@@ -112,6 +112,8 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
 
     override fun awaitingPage(id: String) = id in awaiting
 
+    override suspend fun awaitAnswer(id: String) = Unit
+
     /** Each capture call, as the tab and whether it turned recording on. */
     val captures = mutableListOf<Pair<String, Boolean>>()
 

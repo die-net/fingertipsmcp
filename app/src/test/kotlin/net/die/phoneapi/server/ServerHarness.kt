@@ -541,6 +541,8 @@ internal open class FakeBrowser : BrowserService {
     // Its tab has its page as soon as it opens.
     override fun awaitingPage(id: String) = false
 
+    override suspend fun awaitAnswer(id: String) = Unit
+
     override suspend fun capture(id: String, on: Boolean) =
         BrowserCaptureResult(capturing = on, responses = if (on) 2 else 0)
 
