@@ -90,10 +90,16 @@ class TabProbeTest {
     fun `frozen tab refuses input`() {
         // DevTools script runs in the isolated world, but the page's own message never arrives.
         val page = harness.socket(harness.switched() + world())
-        assertEquals(
-            "tab_frozen",
-            onPage(page) { failure { probe().requireRunning(it, CHROME_SOCKET) } },
-        )
+        val (error, waited) =
+            onPage(page) {
+                val start = clock.now
+                failure { probe().requireRunning(it, CHROME_SOCKET) } to clock.now - start
+            }
+        assertEquals("tab_frozen", error)
+        // As long as any page check, not a delay measured on one device's idle page.
+        assertEquals(TabProbe.PROBE_MS, waited)
+        // A visible tab is never paused, so the check answers for it at once.
+        assertTrue(page.sent().lines()[2].contains("""document.visibilityState === \"visible\""""))
     }
 
     @Test
