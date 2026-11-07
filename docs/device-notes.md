@@ -716,7 +716,6 @@ Seen while checking, and not changed:
 
 - On the Android 10 emulator, 4 of 205 taps before the change and 4 of 160 after it failed `503` `cdp_error`, saying Android 10 reaches DevTools over USB, though the tunnel's forward and reverse were in place. The next tap worked. The table leaves these out.
 - On the Android 16 emulator, the first run after a boot stalled twice, once before the change and once after it. A tap got no reply within 12 s, and the first time adb stopped answering too, until a reboot. It did not happen again in later runs, and the cause is not known.
-- A `browser.element` wait on a background tab did not match an element that script added after the load, 3 of 3 on Chrome 133 and on Chrome 145. Nothing wakes the wait, since a session that took the document at depth 0 hears of no new nodes.
 
 Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each command sent straight over DevTools. All refusals have code -32000.
 
@@ -737,10 +736,68 @@ Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each com
 
 A tab whose server took 14, 18, or 20 s, opened through PhoneAPI at 4a18edd on the Android 11 test phone on 2026-11-07, returned `loading` true at 12.5 to 12.6 s. A `browser.settled` wait then matched within 0.4 s, 4 of 4, and `browser.loaded` within 0.1 s, 1 of 1, though the server had not answered. Until it did, the tab read as `about:blank`, with `document.readyState` `complete`, and `read` returned 200 with no text. Once it had, `read` returned the page.
 
+Element waits on a page that has loaded, on 2026-11-07, on Chrome 133 and 145. A wait with `timeoutMs` 4000 was on a tab behind another (`document.visibilityState` hidden) or on screen, and the page changed 1 s in. Nothing held UiAutomation. The table counts matches. Runs after the change matched 40 to 540 ms after the page changed, and the failures before it timed out at 4 s.
+
+| Condition | Page change | Tab | Before, 133 | Before, 145 | After, 133 | After, 145 |
+|---|---|---|---|---|---|---|
+| `present` css | Element added | Hidden | 0 of 3 | 0 of 3 | 5 of 5 | 7 of 7 |
+| `present` css | Element added | Shown | 0 of 3 | 0 of 3 | 5 of 5 | 7 of 7 |
+| `present` text | Element added | Hidden | 0 of 3 | 0 of 3 | 4 of 5 | 7 of 7 |
+| `present` text | Element added | Shown | 0 of 3 | 0 of 3 | 5 of 5 | 7 of 7 |
+| `visible` | `display: none` removed | Hidden | 0 of 3 | 0 of 3 | 5 of 5 | 7 of 7 |
+| `visible` | `display: none` removed | Shown | 3 of 3 | 3 of 3 | 5 of 5 | 7 of 7 |
+| `absent` | Element removed | Hidden | 3 of 3 | 3 of 3 | 5 of 5 | 7 of 7 |
+| `absent` | Element removed | Shown | 3 of 3 | 3 of 3 | 5 of 5 | 7 of 7 |
+
+A wait that spanned a navigation on a hidden tab matched 10 of 10 on each Chrome after the change, with its looks running through the load.
+
+The "before" builds above held a change to touch input as well, which was on the branch by accident. The waits were run again on Chrome 133 on builds without the fix, and on one with it merged with main. The first two rows started 45 s after an install.
+
+| Build | `present` css | `present` text | `visible`, hidden | `visible`, shown | `absent` |
+|---|---|---|---|---|---|
+| 4a18edd, without the touch change | 4 of 10 | 1 of 10 | 0 of 5 | 5 of 5 | Not run |
+| Main at a8ed3f8, without the fix | 1 of 10 | 1 of 10 | 0 of 5 | 5 of 5 | Not run |
+| With the fix, on main at 87cae01 | 6 of 6 | 4 of 6 | 3 of 3 | 3 of 3 | 6 of 6 |
+
+So a wait without the fix could match by chance, when something else woke it, 0.9 to 2.3 s after the change at 4a18edd. What woke it was not looked into. `visible` on a hidden tab never matched, since a look there could not see the box. The two misses with the fix were `502` at set-up, as below.
+
+What Chrome did, the same on 133 and 145:
+
+- A session that took the document at depth 0, and whose `DOM.querySelector` found nothing, heard no event for a node added to the page.
+- A look that found a node drew `DOM.setChildNodes` for each parent on its path, on every look, because each `DOM.getDocument` forgets what the session was told. Those woke the wait, so a `visible` or `absent` wait on a found node looked about 19 times a second. After the change it looks about 4 times.
+- A change under one of those parents drew an event until the next `DOM.getDocument`, and none after it.
+- After `DOM.getDocument` at depth -1, adding a node, setting an attribute, and setting text each drew an event. `insertRule` on a style sheet drew none, though it can change what has a box.
+- `DOM.getContentQuads` gave no quads for a node added to a hidden tab since its last layout, and none 500 ms later. `DOM.getBoxModel` laid the page out first, even when it refused the node, and so did `DOM.scrollIntoViewIfNeeded`.
+- `DOM.getBoxModel` refused `display: contents` and an `option` in a closed `select`. `DOM.getContentQuads` gave a quad for the first and none for the second. Both gave a box for zero-size, off-screen, and `visibility: hidden` elements.
+
+What each way of hearing about new nodes cost, on a page of `div` rows. The page's cost is 3,000 adds and removes of a `div`, by script, with a session in each state. Rows marked 133 were not run on 145. The host's load average was 5 to 35, so times are loose.
+
+| Measure | 9,005 nodes | 60,005 nodes |
+|---|---|---|
+| `DOM.getDocument` at depth -1 | 2.3 MB in about 80 ms | 15.7 MB in about 510 ms |
+| The page's changes, no session | 6 to 8 ms | 6 to 8 ms |
+| The page's changes, depth 0 | 5 ms | 4 to 5 ms |
+| The page's changes, depth -1 | 20 to 24 ms | 20 to 27 ms |
+| Events at depth -1, with 20 rows changing every 16 ms (133) | 4,700 a second, 680 KB/s | 1,300 a second, 270 KB/s |
+| A look that finds nothing, round trip (133) | 6 to 7 ms | 5 to 9 ms |
+| A look that finds a node under a parent with every row (133) | 21 ms | 108 ms |
+
+A DevTools call that never reaches the page took about 3 ms, so most of a look that finds nothing is the trip. At the 99th percentile, a 4 ms timer in the page ran no later with looks every 250 ms than with none. With looks that found a node every 50 ms on the larger page, its ticks fell from 1,233 to 884 in 5 s. A depth -1 session has to take the document again at each `DOM.documentUpdated`, and a look's `DOM.getDocument` would end its events.
+
+Through PhoneAPI on the larger page, on screen with rows changing, a wait for a node that never came looked 3.6 times a second. `absent` and `visible` looks that found a node ran 1.8 to 2 times a second, against 3 on Chrome 133 before the change, since each takes 250 to 300 ms there.
+
+Seen while checking, and not changed:
+
+- On Chrome 133, 2 of about 90 waits failed `502` `cdp_error` `Could not open Chrome's DevTools socket`, one on the build before the change and one after it, the `present` text miss in the first table. The next wait worked. Chrome 145 had none in about 90. In the runs after them, 4 of about 45 failed the same way or with `DevTools closed the WebSocket`, two on a build with the fix and two without, all within about a minute of an install. The two runs that started 45 s after an install had none in 60. The cause is not known.
+- On Chrome 145, `PUT /json/new` fails with HTTP 500 `Could not create new page`. PhoneAPI's own tab calls work.
+- On Chrome 145, a tab opened while Chrome was behind the home screen reported `visible`, though Chrome wasn't drawing it, and showed no quads for a new node, as a hidden tab does.
+
 ### Still to check
 
 - The hidden-node taps through PhoneAPI on Chrome 109 and 133, whose commands were read only over DevTools, and on the phone's Chrome 156.
 - A browser wait's limit on the Android 10 USB path.
+- That `DOM.getBoxModel` lays out a hidden tab on the phone's Chrome 156, and on Chrome 91 and 109, as it does on 133 and 145. Without it, a `visible` wait on a hidden tab doesn't match a new node, as it didn't before.
+- What a look costs on a phone. The times above are from an emulator on a faster CPU.
 
 ## Page reads and events
 

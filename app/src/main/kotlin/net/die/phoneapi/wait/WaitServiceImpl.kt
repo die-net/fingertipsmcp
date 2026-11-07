@@ -31,7 +31,8 @@ import net.die.phoneapi.tree.TreeSession
  * The single condition engine behind `POST /v1/wait`. Conditions are re-evaluated when something
  * actually changes — accessibility content and window changes, device state, and anything on the
  * event bus — rather than on a polling interval. Conditions that depend only on time passing (an
- * idle UI) ask to be looked at again at a deadline instead.
+ * idle UI), or that can change with nothing to say so (a page's nodes), ask to be looked at again
+ * at a time instead.
  *
  * Browser conditions open a DevTools session for the wait and wake the same loop when Chrome
  * reports a page, network, or target event.
@@ -49,13 +50,6 @@ internal class WaitServiceImpl(
     /** Whether Chrome shows a dialog from a page at this host, for `browser.dialog`. */
     private val dialogFrom: suspend (String) -> Boolean = { false },
 ) : WaitService {
-    private data class Outcome(
-        val matched: Boolean,
-        val matchedAll: List<Int>,
-        val matchedAny: List<Int>,
-        val recheckAtMs: Long?,
-    )
-
     override suspend fun wait(request: WaitRequest, scopes: Set<Scope>): WaitResult {
         requireWaitAccess(request, scopes)
         validate(request)
@@ -87,7 +81,7 @@ internal class WaitServiceImpl(
                     changeSources(browserWatch).collect { changes.trySend(Unit) }
                 }
                 try {
-                    val outcome = await(all, any, deadline, changes)
+                    val outcome = awaitConditions(all, any, deadline, changes)
                     if (outcome.matched) settle(request.settleMs, deadline, changes)
                     result(request, outcome, SystemClock.uptimeMillis() - started, scopes)
                 } finally {
@@ -97,48 +91,6 @@ internal class WaitServiceImpl(
                 browserWatch?.close()
             }
         }
-    }
-
-    private suspend fun await(
-        all: List<ConditionWatcher>,
-        any: List<ConditionWatcher>,
-        deadline: Long,
-        changes: ReceiveChannel<Unit>,
-    ): Outcome {
-        while (true) {
-            val outcome = evaluate(all, any)
-            val now = SystemClock.uptimeMillis()
-            if (outcome.matched || now >= deadline) return outcome
-            val until = minOf(deadline, outcome.recheckAtMs ?: Long.MAX_VALUE)
-            val changed = withTimeoutOrNull((until - now).coerceAtLeast(1)) { changes.receive() }
-            if (changed != null) {
-                // Coalesce the burst of events a single screen transition produces, so the tree is
-                // only searched once per settled change.
-                delay(DEBOUNCE_MS)
-                changes.tryReceive()
-            }
-        }
-    }
-
-    private suspend fun evaluate(
-        all: List<ConditionWatcher>,
-        any: List<ConditionWatcher>,
-    ): Outcome {
-        val matchedAll = ArrayList<Int>(all.size)
-        val matchedAny = ArrayList<Int>(any.size)
-        var recheckAtMs: Long? = null
-        all.forEachIndexed { i, watcher ->
-            val check = watcher.check()
-            if (check.satisfied) matchedAll += i
-            recheckAtMs = earliest(recheckAtMs, check.recheckAtMs)
-        }
-        any.forEachIndexed { i, watcher ->
-            val check = watcher.check()
-            if (check.satisfied) matchedAny += i
-            recheckAtMs = earliest(recheckAtMs, check.recheckAtMs)
-        }
-        val matched = matchedAll.size == all.size && (any.isEmpty() || matchedAny.isNotEmpty())
-        return Outcome(matched, matchedAll, matchedAny, recheckAtMs)
     }
 
     /** Holds the result back until the UI has been quiet for [settleMs], or time runs out. */
@@ -170,7 +122,7 @@ internal class WaitServiceImpl(
     /** The result. [WaitResult.state] names the foreground app, so only observe gets it. */
     private fun result(
         request: WaitRequest,
-        outcome: Outcome,
+        outcome: WaitOutcome,
         elapsedMs: Long,
         scopes: Set<Scope>,
     ): WaitResult =
@@ -209,12 +161,68 @@ internal class WaitServiceImpl(
     }
 
     private companion object {
-        const val DEBOUNCE_MS = 40L
         const val MAX_CONDITIONS = 16
         const val MAX_TIMEOUT_MS = 300_000L
         const val MAX_SETTLE_MS = 30_000L
     }
 }
+
+/** Where a wait's conditions stand. [recheckAtMs] is when one asks to be looked at again. */
+internal data class WaitOutcome(
+    val matched: Boolean,
+    val matchedAll: List<Int>,
+    val matchedAny: List<Int>,
+    val recheckAtMs: Long?,
+)
+
+/**
+ * Looks at the conditions until they match or [deadline] passes, in [now]'s time. It looks when
+ * [changes] says something changed, and when a condition's check asks to be looked at again.
+ */
+internal suspend fun awaitConditions(
+    all: List<ConditionWatcher>,
+    any: List<ConditionWatcher>,
+    deadline: Long,
+    changes: ReceiveChannel<Unit>,
+    now: () -> Long = SystemClock::uptimeMillis,
+): WaitOutcome {
+    while (true) {
+        val outcome = evaluate(all, any)
+        val at = now()
+        if (outcome.matched || at >= deadline) return outcome
+        val until = minOf(deadline, outcome.recheckAtMs ?: Long.MAX_VALUE)
+        val changed = withTimeoutOrNull((until - at).coerceAtLeast(1)) { changes.receive() }
+        if (changed != null) {
+            // Coalesce the burst of events a single screen transition produces, so the tree is
+            // only searched once per settled change.
+            delay(DEBOUNCE_MS)
+            changes.tryReceive()
+        }
+    }
+}
+
+private suspend fun evaluate(
+    all: List<ConditionWatcher>,
+    any: List<ConditionWatcher>,
+): WaitOutcome {
+    val matchedAll = ArrayList<Int>(all.size)
+    val matchedAny = ArrayList<Int>(any.size)
+    var recheckAtMs: Long? = null
+    all.forEachIndexed { i, watcher ->
+        val check = watcher.check()
+        if (check.satisfied) matchedAll += i
+        recheckAtMs = earliest(recheckAtMs, check.recheckAtMs)
+    }
+    any.forEachIndexed { i, watcher ->
+        val check = watcher.check()
+        if (check.satisfied) matchedAny += i
+        recheckAtMs = earliest(recheckAtMs, check.recheckAtMs)
+    }
+    val matched = matchedAll.size == all.size && (any.isEmpty() || matchedAny.isNotEmpty())
+    return WaitOutcome(matched, matchedAll, matchedAny, recheckAtMs)
+}
+
+private const val DEBOUNCE_MS = 40L
 
 private fun earliest(a: Long?, b: Long?): Long? =
     if (a == null || b == null) a ?: b else minOf(a, b)

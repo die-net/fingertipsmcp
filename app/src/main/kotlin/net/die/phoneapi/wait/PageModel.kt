@@ -52,7 +52,12 @@ internal class PageModel(startedMs: Long) {
     fun alreadyLoaded(frameLoader: String?) =
         synchronized(lock) { if (loader == frameLoader) loaded = true }
 
-    fun apply(method: String, params: JsonObject, now: Long) =
+    /**
+     * Takes in an event, and says whether a condition reads it. Chrome sends many that none does,
+     * among them `DOM.setChildNodes`, which it sends because a look found a node, so waking the
+     * wait for those would make each look set off the next.
+     */
+    fun apply(method: String, params: JsonObject, now: Long): Boolean =
         synchronized(lock) {
             when (method) {
                 "Page.frameNavigated" -> frameNavigated(params)
@@ -67,8 +72,9 @@ internal class PageModel(startedMs: Long) {
                 "Network.loadingFailed" -> requestDone(params, now, failed = true)
                 "LayerTree.layerTreeDidChange" -> lastLayerMs = now
                 "Log.entryAdded" -> logAdded(params)
-                else -> Unit
+                else -> return@synchronized false
             }
+            true
         }
 
     fun urlMatches(equals: String?, contains: String?, regex: Regex?): Boolean {
