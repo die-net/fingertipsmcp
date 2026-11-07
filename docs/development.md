@@ -141,6 +141,15 @@ Useful pieces on their own:
 
 Release tags also build a signed release APK (`assembleRelease`) after those checks.
 
+## Which Chrome to test
+
+PhoneAPI is tested back to the oldest Chrome the bundled pdf.js supports, since PDF reads need it. pdf.js 6.4.299 needs Chrome 125, as the `Chrome >=` line in its `gulpfile.mjs` says. A pdf.js update can raise that, so check the line and update this section with it.
+
+- Chrome 125 and newer are supported. The phone's Chrome and the newest emulator get the full checks, and repeated runs when a failure is intermittent.
+- Older Chrome is not supported. It gets only a quick happy-path look, without PDFs, to see if anything is obviously broken with an easy fix. A few tries are enough, and a failure that shows up only there is not a release blocker.
+
+Test a fix on the current Chrome first, with the sequence that failed. Run other Chrome versions only when the code differs by version.
+
 ## Emulator notes
 
 On a debuggable emulator image, Chrome only publishes `@chrome_devtools_remote` after it is started with remote debugging, for example a `/data/local/tmp/chrome-command-line` file containing `chrome --disable-fre --no-first-run --remote-debugging-port=9222`, followed by a force-stop and launch. Adding `--enable-features=AndroidOpenPdfInline` to that line makes Chrome show a PDF in its own viewer, which `browser_read` reads, instead of saving it. Some emulator images also refuse the shell user; `adb root` makes the helper uid 0, which Chrome accepts. `scripts/phoneapi-dev helper` does not change that.

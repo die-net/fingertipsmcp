@@ -2,7 +2,7 @@
 
 This is what Android, Chrome, and the MCP SDK were seen to do, which PhoneAPI's design depends on, and what is still to check. Each section ends with what is still to check on its topic, so an open item goes there, not in a list of its own. [sharing.md](sharing.md) describes the behavior built on it. Each check gives its date. Chrome and Android change between releases, so a check is worth running again after either updates. `scripts/chrome-input-check` checks Chrome's input behavior against an attached phone, as [development.md](development.md) describes.
 
-The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android 16 with Chrome 133, and Android 17 with Chrome 145. The emulator's Chrome is a debug app, and the helper often runs there as root after `adb root`. The test phone runs Android 11 with Chrome 156.0.8078.79.
+The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android 16 with Chrome 133, and Android 17 with Chrome 145. Chrome 91 and 109 are older than PhoneAPI supports, as [development.md](development.md#which-chrome-to-test) says, so what these notes say of them is history. The emulator's Chrome is a debug app, and the helper often runs there as root after `adb root`. The test phone runs Android 11 with Chrome 156.0.8078.79.
 
 ## Last phone run
 
