@@ -72,14 +72,14 @@ internal class PageReader(
                     else -> pdf.read(cdp, id, frame, url)
                 }
             }
-        val extract = decodeExtract(result, selector).copy(reloaded = reloaded)
+        val extract = decodeExtract(result).copy(reloaded = reloaded)
         if (viewer != null) return extract
         val standIn =
             extract.pdf ?: return extract.copy(data = extract.data + capture?.listed(id).orEmpty())
         if (selector != null) throw noSelector()
         val (pdfResult, pdfReloaded) =
             onPage(id) { cdp -> pdf.read(cdp, id, mainFrame(cdp), standIn) }
-        return decodeExtract(pdfResult, null).copy(reloaded = reloaded || pdfReloaded)
+        return decodeExtract(pdfResult).copy(reloaded = reloaded || pdfReloaded)
     }
 
     private fun noSelector() = ApiException.badRequest("A PDF has no elements to select")

@@ -34,6 +34,8 @@ import net.die.phoneapi.model.TextMatch
 @Serializable
 internal data class PageExtract(
     val missing: Boolean = false,
+    /** The selector is not valid CSS, as the page's own selector engine says. */
+    val badSelector: Boolean = false,
     /** Set by PhoneAPI, not the script: Chrome had unloaded the tab, so it was reloaded. */
     val reloaded: Boolean = false,
     val title: String? = null,
@@ -292,11 +294,8 @@ internal fun readScript(source: String, scope: ReadScope, selector: String?): St
 }
 
 /** Decodes what [readScript] returned, turning its failures into API errors. */
-internal fun decodeExtract(result: EvalResult, selector: String?): PageExtract {
+internal fun decodeExtract(result: EvalResult): PageExtract {
     result.exception?.let { message ->
-        if (selector != null && "not a valid selector" in message) {
-            throw ApiException.badRequest("selector is not valid CSS: $message")
-        }
         throw ApiException(BAD_GATEWAY, "page_error", "Reading the page failed: $message")
     }
     val value =
@@ -304,6 +303,7 @@ internal fun decodeExtract(result: EvalResult, selector: String?): PageExtract {
             ?: throw ApiException(BAD_GATEWAY, "page_error", "Reading the page returned nothing")
     // serializer<T>(): detekt can't see the serializer() the plugin generates for this module.
     val extract = ApiJson.decodeFromJsonElement(serializer<PageExtract>(), value)
+    if (extract.badSelector) throw ApiException.badRequest("selector is not valid CSS")
     if (extract.missing) throw ApiException.notFound("No element matches the selector")
     return extract
 }
