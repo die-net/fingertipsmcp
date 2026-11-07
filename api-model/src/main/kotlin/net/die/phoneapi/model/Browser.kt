@@ -261,7 +261,7 @@ public enum class ReadFormat {
 }
 
 public const val READ_SCOPE_DOC: String =
-    "article (default) is the main content, without navigation, footers, and ads, and falls back to page when no article is found. page is all visible text. data is the JSON the page embeds for its scripts, such as __NEXT_DATA__, JSON-LD, or window.__INITIAL_STATE__, or the response itself when it is JSON."
+    "article (default) is the main content, without navigation, footers, and ads; a page that does not read as an article, such as a listing, is read whole and extracted says page. page is all visible text. data is the JSON the page embeds for its scripts, such as __NEXT_DATA__, JSON-LD, or window.__INITIAL_STATE__, or the response itself when it is JSON."
 
 public const val DATA_PATH_DOC: String =
     "With scope data, what to read: a blob name from the outline, then a JSON Pointer into it, such as __NEXT_DATA__/props/pageProps/flight. Array items are numbered from 0, and a / or ~ in a key is written ~1 or ~0. A * segment matches every item or key at its level, so __NEXT_DATA__/props/pageProps/items/*/name reads every item's name, one per line. Omit path and paths for the outline of every blob."
@@ -417,9 +417,9 @@ public enum class FindKind {
 @Serializable
 public data class BrowserFindRequest(
     @Doc(
-        "text (default) finds query in the content. links lists links in the content; in article " +
-            "scope, when none are found, filtered or not, as on a listing page, the whole page is " +
-            "searched and extracted says page."
+        "text (default) finds query in the content. links lists links in the content. In article " +
+            "scope a page that does not read as an article, such as a listing, is searched whole " +
+            "and extracted says page."
     )
     val kind: FindKind = FindKind.TEXT,
     @Doc(FIND_QUERY_DOC) val query: String? = null,
