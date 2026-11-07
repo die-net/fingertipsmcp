@@ -7,7 +7,6 @@ import java.util.LinkedHashMap
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -172,6 +171,8 @@ internal class BrowserServiceImpl(
             close = { id -> closeQuietly(id) },
             savedPdf = { url -> reader.savedPdf(url) },
             loadPdf = { id, url -> reader.loadPdf(id, url) },
+            onBrowser = { socket, block -> onTabEvents(socket, block) },
+            scope = scope,
         )
     @Volatile private var stateSource: String? = null
     private val pageNodes = PageNodes(showPackage) { pkg -> contentBounds(pkg) }
@@ -283,23 +284,32 @@ internal class BrowserServiceImpl(
             // A stand-in holds PhoneAPI's own page, so it has no responses to record.
             if (recording && it == id) capture(it, on = true)
         }
-        if (incognito) {
-            val chromeId =
-                privateTabs.open(chrome, browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE)
-            val id = browserTargetId(chrome.name, chromeId)
-            // An incognito tab opens on Chrome's new tab page, so it loads the page after too.
-            return opener.follow(tab.copy(id = id), true, true, NO_SAVE, hook(id))
-        }
         // A tab opens on its URL, since Chrome opens a PDF it saved in another app, taking the
-        // screen, when a tab navigated to it, and not when a new tab opened on it. So the save is
-        // heard on the browser session, which is listening before the tab exists.
-        return useCdp(chrome.name, "/devtools/browser") { cdp ->
-            withTabSaves(cdp, { newTab(cdp, if (recording) BLANK else pageUrl) }) { given, saves ->
-                val chromeId = listedTab(chrome.name, given)
-                val id = browserTargetId(chrome.name, chromeId)
-                opener.follow(tab.copy(id = id), recording, false, saves.forTab(chromeId), hook(id))
+        // screen, when a tab navigated to it, and not when a new tab opened on it. So all that
+        // follows is heard on the browser session, which is listening before the tab exists.
+        return onTabEvents(chrome.name) { events ->
+            if (incognito) return@onTabEvents openPrivate(chrome, tab, events, ::hook)
+            val chromeId = events.newTab(if (recording) BLANK else pageUrl)
+            val id = browserTargetId(chrome.name, chromeId)
+            events.cancellingPdf(chromeId) {
+                opener.follow(tab.copy(id = id), recording, false, events, hook(id))
             }
         }
+    }
+
+    /**
+     * Opens [tab] in an incognito tab, which starts on Chrome's new tab page, so it loads the page
+     * after too. [hook] gives what runs on each tab the open makes, from the id of the first.
+     */
+    private suspend fun openPrivate(
+        chrome: DevtoolsSocketInfo,
+        tab: BrowserTarget,
+        events: TabEvents,
+        hook: (String) -> suspend (String) -> Unit,
+    ): BrowserTarget {
+        val pkg = browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE
+        val id = browserTargetId(chrome.name, privateTabs.open(chrome, pkg))
+        return opener.follow(tab.copy(id = id), true, true, events, hook(id))
     }
 
     override fun awaitingPage(id: String): Boolean = opener.awaitingPage(id)
@@ -313,45 +323,18 @@ internal class BrowserServiceImpl(
     override suspend fun chromeStopped(): Boolean = noChromeSocket(::socketList)
 
     private suspend fun createTab(socket: String, url: String): String =
-        listedTab(socket, useCdp(socket, "/devtools/browser") { cdp -> newTab(cdp, url) })
+        useCdp(socket, "/devtools/browser") { cdp ->
+            withTabEvents(cdp) { events -> events.newTab(url) }
+        }
 
-    /** Opens a tab on [cdp], a session on the browser, and returns the id Chrome answers with. */
-    private suspend fun newTab(cdp: CdpSession, url: String): String =
-        cdp.call("Target.createTarget", buildJsonObject { put("url", url) })
-            .decodeCdp<CreatedTarget>()
-            ?.targetId ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")
-
-    /** The id Chrome lists the new tab [given] under, closing the tab if that can't be had. */
-    private suspend fun listedTab(socket: String, given: String): String {
-        var listed: String? = null
-        try {
-            return listedId(socket, given).also { listed = it }
-        } finally {
-            // No caller has its id yet, so an unowned tab would stay open for good.
-            if (listed == null) {
-                withContext(NonCancellable) { closeQuietly(browserTargetId(socket, given)) }
+    /** Runs [block] on a browser session hearing tabs and downloads on [socket]. */
+    private suspend fun <T> onTabEvents(socket: String, block: suspend (TabEvents) -> T): T =
+        useCdp(socket, "/devtools/browser") { cdp ->
+            withTabEvents(cdp) { events ->
+                events.hearDownloads()
+                block(events)
             }
         }
-    }
-
-    /**
-     * The id `Target.getTargets` lists the new tab [given] under. Chrome 109 answers
-     * `Target.createTarget` with the Android tab's number and lists the same tab by a hex id, and
-     * everything that compares ids, from who owns a tab to the startup sweep, needs one id per tab.
-     * A page's own connection names its target as the list does, and takes either id. A tab that
-     * has closed already keeps [given], for [TabOpener] to find it gone.
-     */
-    private suspend fun listedId(socket: String, given: String): String {
-        val info =
-            try {
-                usePage(socket, given) { it.call("Target.getTargetInfo") }
-            } catch (e: ApiException) {
-                if (e.error == "not_found") return given
-                throw e
-            }
-        return info.decodeCdp<OwnTarget>()?.targetInfo?.targetId
-            ?: throw ApiException(502, "cdp_error", "Chrome did not name a new tab's target")
-    }
 
     override suspend fun navigate(id: String, url: String): BrowserTarget {
         timers?.clear(id)
@@ -823,13 +806,7 @@ private fun nodeRef(ref: String): String {
     return trimmed
 }
 
-@Serializable private data class CreatedTarget(val targetId: String? = null)
-
 @Serializable private data class ClosedTarget(val success: Boolean? = null)
-
-@Serializable private data class OwnTarget(val targetInfo: OwnTargetInfo? = null)
-
-@Serializable private data class OwnTargetInfo(val targetId: String? = null)
 
 @Serializable private data class NavigateResult(val errorText: String? = null)
 

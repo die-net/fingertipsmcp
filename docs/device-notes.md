@@ -24,7 +24,7 @@ Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `de
 
 On the Android 13 emulator with Chrome 109 on 2026-11-06, `/json/list` named a tab `36`, and `Target.getTargets` named the same tab with 32 hex digits. So `POST /v1/browser/tabs` returned the first, and `GET /v1/browser/targets` listed the tab under the second with `owned` false. Ending the session still closed the tab. Chrome 133 has one id per tab.
 
-The first id is the Android tab's number, and it is what `Target.createTarget` answers with on Chrome 109, while `Target.getTargets` has the second. Measured that day: a page's own connection answers `Target.getTargetInfo` with the listed id on Chrome 109 and 133, reached through either id, and the browser connection's `Target.getTargetInfo` echoes the number back. So PhoneAPI asks the new page. The mismatch had also kept the startup sweep from matching a leftover, made each put-back open a new placeholder, and stopped incognito opens with `Chrome did not say which profile a new tab is in`. With the listed id, on the Android 13 emulator, a session's tab listed `owned` true, a leftover closed at the next start, and an incognito tab opened.
+The first id is the Android tab's number, and it is what `Target.createTarget` answers with on Chrome 109, while `Target.getTargets` has the second. Measured that day: a page's own connection answers `Target.getTargetInfo` with the listed id on Chrome 109 and 133, reached through either id, and the browser connection's `Target.getTargetInfo` echoes the number back. So PhoneAPI asked the new page, until that connection turned out to race Chrome closing the tab. It now reads the id from `Target.targetCreated`, as [Events for a new tab](#events-for-a-new-tab) says. The mismatch had also kept the startup sweep from matching a leftover, made each put-back open a new placeholder, and stopped incognito opens with `Chrome did not say which profile a new tab is in`. With the listed id, on the Android 13 emulator, a session's tab listed `owned` true, a leftover closed at the next start, and an incognito tab opened.
 
 `Target.getTargets` lists only tabs Chrome has loaded. On Chrome 109 that day `/json/list` had 33 tabs, restored from earlier runs, and `Target.getTargets` had 3. A restarted Chrome also gives its tabs new hex ids, as one tab did on the Android 13 emulator that day, so a tab left by a run before Chrome restarted cannot be matched, and the sweep leaves it open.
 
@@ -332,13 +332,22 @@ Checked through MCP on the Android 16 emulator with Chrome 133 on 2026-11-06:
 - A `url` read of a page that first answered 3 s or 8 s in returned the page, with no error at the commit. One that took 40 s said `not loaded after 12 s`.
 - Through Readability, an article kept its byline, published time, paywall flag, and JSON-LD, and text under `display:none` stayed out. A list of 40 links read as a page. `browser_find` found links inside a table.
 
+With a tab's open heard only on the browser session, as [Events for a new tab](#events-for-a-new-tab) says, on 2026-11-07, against a 1 KB PDF from the Mac, which earlier failed 46 of 129 first opens on Chrome 133 and 9 of 40 on Chrome 145:
+
+- On Chrome 133, 45 of 45 first opens in front and 10 of 10 hidden read as `pdf`, in 1.1 to 2.6 s and 0.6 to 0.9 s. Nothing reached Downloads, and `ActivityTaskManager` logged no start of Drive.
+- On Chrome 145, 102 of 115 in front and 10 of 10 hidden did. The 13 that failed were one run of 500 `internal`, as [The listener's socket](#the-listeners-socket) says, and the next 90 had no failure.
+- A PDF on a server that took 14 s came back with `loading` true at 12.1 to 12.7 s, and its save was cancelled when it began. The tab then closed, and nothing reached Downloads, on Chrome 91, 109, 133, and 145, with Chrome hidden and, on Chrome 133, in front.
+- On Chrome 91 and 109 the save is now cancelled too, since `Browser.downloadWillBegin`'s `frameId` is the tab's own target, which `Target.createTarget`'s number never matched. Nothing reached Downloads in 25 first opens on Chrome 109 and 10 on Chrome 91. The read then fails: Chrome 109 lacks `Promise.withResolvers`, which pdf.js needs, and answers `pdf_failed`, and Chrome 91 fails with `page_error` as below.
+- A PDF sent `inline; filename=statement`, with no extension, was named `statement` by `Browser.downloadWillBegin` on Chrome 109, 133, and 145, and saved as `statement.pdf`. So its save was left alone, and on Chrome 133 and 145 a stand-in read it too. `Browser.downloadProgress` gives a type no more than the start does: its `filePath` at the end is a `content://` address.
+- A file sent as `application/octet-stream` failed `pdf_failed`, not `download_saved`, on Chrome 133 and 145, since a stand-in takes that type for a PDF until pdf.js refuses it.
+
 On the Android 10 emulator with Chrome 91 on 2026-11-06, the takeover of an arXiv PDF answered its pause and loaded the stand-in page, and the script then failed with `SyntaxError: Unexpected token '{'`. So Chrome 91 can't run the PDF scripts, which is taken to be syntax newer than it, though the token's place was not looked up.
 
 ### Still to check
 
-- What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
+- What opens Chrome's viewer. On 2026-11-07 neither a new tab nor a navigation reached it, through a 193-byte PDF or arXiv's, on Chrome 133 with `AndroidOpenPdfInline` on, which `chrome://version` showed, or on Chrome 145. Both saved the file, as a new tab on Chrome 145 had before, though both showed the viewer on 2026-11-05.
 - How long a long PDF takes to read on the phone, against DevTools' 15 s call limit. Also `browser_read` end to end through PhoneAPI on Android 17, which was checked only over raw DevTools. Also a PDF from a site whose service worker answers navigations, which may answer before DevTools can pause it.
-- Opening a tab, past what this section says of Chrome 156 on the Android 11 test phone: `Page.downloadWillBegin` for a Chrome 133 PDF save, a PDF sent as an attachment, and Chrome 145's viewer, and whether the viewer's `chrome-native://pdf/link` commit sends `Page.frameNavigated` within 2 s of it. Without that event, a save that leaves the tab on `about:blank` reads as a server that has not answered, as it did before. A Chrome 133 save closing the tab within 2 s of the event, no Drive viewer coming forward, and one file saved. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
+- Opening a tab, past what this section says of Chrome 156 on the Android 11 test phone: a PDF sent as an attachment, and whether the viewer's `chrome-native://pdf/link` commit sends `Target.targetInfoChanged` with a title for a tab opened on its URL, and `Page.frameNavigated` for one that navigates. Without those, a viewer reads as a save, and the file goes to a stand-in or, in an incognito tab, fails `download_saved`. A hidden tab's `document.readyState` read in an isolated world for `browser.settled`, with `Page.loadEventFired` arriving for a load that finishes after it, and on a paused tab.
 - On Chrome 145, `loaderId` from `Page.getFrameTree`, and the PDF takeover. On Chrome 133, whether `Runtime.callFunctionOn` works on a `DOM.resolveNode` handle in the stand-in and `Page.navigate` returns only after the fulfil were not looked at apart from the reads that depend on them. A site whose service worker answers the navigation itself. A quick PDF through Chrome 133's viewer: only the 17 s one was seen to return text, since the two `url` reads of a quick one were cut off in the test's output.
 
 ## Starting Chrome
@@ -356,9 +365,48 @@ The first tab open after a cold boot failed once on each emulator that day: on A
 
 On the Android 11 test phone on 2026-11-06, with Chrome 156, an open with Chrome stopped took 3.3 s and showed no first-run screen. With it running, an open took 0.5 s.
 
+### Events for a new tab
+
+Over raw DevTools on 2026-11-07, on a browser session with `Target.setDiscoverTargets` and, for saves, `Browser.setDownloadBehavior`, against pages and a 193-byte PDF from the Mac. Times are from the call that started it. Chrome 91 got fewer tries, and "Not run" marks what it skipped. [Target events](#target-events) has Chrome 156. A later boot of Chrome 109 had its GPU process crashing, so only order comes from that one.
+
+| | Chrome 91 (Android 10) | Chrome 109 (Android 13) | Chrome 133 (Android 16) | Chrome 145 (Android 17) |
+| --- | --- | --- | --- | --- |
+| `targetCreated` for `createTarget`, blank or a URL | Before the reply, 5 of 5, 6 to 53 ms | Before the reply, 29 of 29, 3 to 87 ms | Before the reply, 29 of 29, 3 to 101 ms | Before the reply, 29 of 29, 3 to 35 ms |
+| `targetId` against the reply | Differs: the reply is the tab's number | Differs: the reply is the tab's number | The same | The same |
+| Targets per tab `createTarget` makes | Two: its own, then its number | Two: its own, then its number | One | One |
+| `url` in its own `targetCreated` | The URL | Empty | Empty | Empty |
+| `targetCreated` for a `VIEW` intent | Not run | 115 to 135 ms, its own target only | 116 to 312 ms | 98 to 139 ms |
+| `targetDestroyed` after `Target.closeTarget` | 33 to 39 ms | 20 to 124 ms | 84 to 276 ms | 25 to 94 ms |
+| `targetDestroyed` after a cancel closes the tab, in front and hidden | 57 to 75 ms, 2 of 2 | 10 to 387 ms, 10 of 10 | 22 to 448 ms, 10 of 10 | 9 to 95 ms, 10 of 10 |
+| `targetDestroyed` after a save with no cancel | Not run | 189 to 388 ms | 174 to 469 ms | 284 to 489 ms |
+| `downloadWillBegin`'s `frameId` | The tab's own target, not the reply | The tab's own target, not the reply | Both, being one id | Both, being one id |
+| `targetInfoChanged` with no connection to the tab | One, at the commit, with a title | One, at the commit, with a title | One, at the commit, with a title | One, at the commit, with a title |
+| The commit of a page that took 1.5 s | 1566 ms | 1532 to 1534 ms | 1529 to 1531 ms | 1527 to 1540 ms |
+
+- A page connection dropped within 6 ms of `targetDestroyed`, on either side of it, on Chrome 109, 133, and 145. After `targetDestroyed`, a new connection was refused, 43 of 43 on all four, and the tab was off `Target.getTargets`.
+- The number is a target of its own: `targetCreated`, `targetInfoChanged` when a connection attaches, and `targetDestroyed` all come for it, and `Target.getTargets` leaves it out. A tab Chrome made itself, such as from an intent or at startup, has no number.
+- Discover replays every tab before its reply, with `attached` false and the page's own title, on all four, numbers included. A second call replays nothing. So the replay has more targets than `Target.getTargets`, and is told from a new tab by coming before the reply.
+- With Chrome 109 and 91 opens running four at a time on separate sessions, the tab's own target came just before its number in each session's order, 60 of 60, checked against which id `Target.getTargets` gave that tab's URL once it loaded. So that order is what names it. `Target.getTargetInfo` on the browser session echoes the number.
+- A connection to the tab adds `targetInfoChanged` as it attaches, with `attached` true and an empty title, 30 to 250 ms in. Its `url` is the one being loaded, so `url` does not mean a commit. A `title` does: only the commit's event had one, on all four and on Chrome 156 from [Target events](#target-events). It is the host until the page sets one, and the page's own title sends nothing.
+- `Target.targetCrashed` came before `targetDestroyed` on Chrome 91 and 109 when a tab with a connection closed, and in some saves. Nothing crashed.
+- A failed load counts as a commit by that event: a refused connection sent it at 224 to 438 ms, with the error page, and a 404 at 250 to 477 ms. A 204 sent nothing, and the tab stayed.
+- On a blank tab that then navigates, with `Page.enable` on, the title came 12 to 57 ms after `Page.frameNavigated` on Chrome 145, and 3 to 23 ms before it on Chrome 109. The blank page's own commit sends one too, at 120 to 610 ms, so it could come after a navigation has started. That is why such a tab goes by `Page.frameNavigated`'s loader id.
+- A new connection to a tab opened on its URL got no answer until the commit, on Chrome 109, 133, and 145, as on Chrome 156. Against a server that took 20 s, `Page.enable` answered at 20.1 s on Chrome 133 and 145, past the 15 s PhoneAPI gives a DevTools call. `Page.frameNavigated` did not reach that session on Chrome 133 and 145, and did on Chrome 109.
+- A save that starts late is heard: with a server that took 14 s, `Browser.downloadWillBegin` reached a session held open at 14.0 to 14.1 s, and `Browser.cancelDownload` then closed the tab.
+- `Page.navigate` on a blank tab for a PDF answered `net::ERR_ABORTED` on Chrome 109, 133, and 145, with `isDownload` true only on Chrome 145, and `downloadWillBegin` came 3 to 128 ms after the reply. That tab stays open after a cancel, since it holds a committed page.
+- An incognito tab reached the browser session like any other on Chrome 109 and 145: `targetCreated` at 309 to 465 ms, `targetInfoChanged` at its commits, and `downloadWillBegin` for a save, with `eventsEnabled` set on the default context. `setDownloadBehavior` with that tab's `browserContextId` failed `Failed to find browser context`.
+
+Through PhoneAPI with its opens built on these events, on 2026-11-07:
+
+- Plain opens read as the page they asked for: 20 of 20 on Chrome 91, 40 of 40 on Chrome 109, 9 of 10 on Chrome 133, and 130 of 130 on Chrome 145, in 0.1 to 1.7 s. On Chrome 91 and 109, where the ids differ, each returned the id `GET /v1/browser/targets` lists. The one that failed was the first on Chrome 133, a 503 while the port lookup ran. A page that took 3 s returned at 3.1 to 3.3 s.
+- A page that took 20 s returned `loading` true at 12.2 to 12.4 s on all four, and read as the page at 21 s.
+- `capture` and incognito opens of a page returned the page on all four. An incognito open of a PDF failed `download_saved` in 2.8 to 3.4 s.
+
 ### Still to check
 
 - Whether a first-run or sign-in screen keeps Chrome from opening its DevTools socket after a tab open starts it.
+- Opens built on the browser session's events on the phone's Chrome 156: the events were read there over raw DevTools, and PhoneAPI's use of them was not run there. That covers first PDF opens with Chrome in front and hidden, a plain open with the screen off, a server over 12 s, and a late save closing Chrome's download dialog.
+- The title at a commit on a Chrome that shows a PDF in its viewer, as under [PDFs](#pdfs).
 
 ## The top task
 
@@ -642,9 +690,15 @@ On the Android 11 test phone on 2026-10-22, the release build's helper restarted
 
 `Os.shutdown` with `SHUT_RDWR` on the listening socket's descriptor does wake that `accept()`, on the Android 10 (kernel 4.14), 13, and 16 emulators on 2026-11-06. Each ran three stops and starts with no client between, where `/proc/net/unix` showed the name gone within a second of `am stopservice` returning, and three more back to back. The host was overloaded, so that time is only an upper bound. The API answered every time, nothing failed to bind, and on Android 16 a client connecting after a stop failed at once rather than hanging. These ran on throwaway AVDs of the same system images, since other work held the named ones.
 
+On the Android 17 emulator on 2026-11-07 the API stopped answering, `GET /v1/device` included, with the app running. 63 of the 64 IO threads were blocked in `listJsonTargets`, reading `/json/list` over wireless debugging from the Google app's two `webview_devtools_remote_*` sockets, which accepted and never answered. Closing such a socket does not wake a read in Kadb's `MessageQueue.take`, so each listing kept a thread. Force-stopping the Google app and restarting PhoneAPI cleared it.
+
+Once that day on the same emulator, 500 `internal` came from every open for the 13 tries left in a run: `ArrayIndexOutOfBoundsException` from `okio.Buffer.read`, with `srcPos=317`, under Kadb's `AdbWriter`, first in `AdbStream.close` and then in `Kadb.open`, its length moving by the 4 bytes each failed write added. So a segment of the buffer shared by the wireless debugging connection had been corrupted, and every later write hit it. It came 63 opens into that app's run. An app restart cleared it, and about 190 more opens did not bring it back. `AdbWriter.write` is synchronized, so what corrupted the segment was not found.
+
 ### Still to check
 
 - That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
+- A WebView socket that never answers, as above: why those two stopped answering, and whether a phone sees it.
+- What corrupts the wireless debugging connection's buffer, and whether main does the same. It is not an `IOException`, so `CdpForward` does not drop the connection for it.
 
 ## Unlocking
 

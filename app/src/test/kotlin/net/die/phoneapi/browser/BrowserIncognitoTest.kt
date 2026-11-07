@@ -2,6 +2,7 @@ package net.die.phoneapi.browser
 
 import net.die.phoneapi.model.ApiException
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -11,6 +12,7 @@ class BrowserIncognitoTest {
     private val harness = BrowserServiceTest()
     private val closing = harness.socket(reply("""{"success":true}"""))
     private val replies = ArrayDeque<DevtoolsSocket>()
+    private lateinit var browser: StallingSocket
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
@@ -19,9 +21,9 @@ class BrowserIncognitoTest {
         val replies =
             ArrayDeque(
                 listOf(
+                    listening(),
                     // A blank tab, to learn the normal tabs' context, and closing it.
-                    created("blank"),
-                    harness.ownTarget("blank"),
+                    harness.created("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
                     reply("""{"success":true}"""),
                     // Before and after the shortcut, then loading the page.
@@ -29,6 +31,7 @@ class BrowserIncognitoTest {
                     targets(page("a", "normal"), page("inc", "private")),
                     loads("L2"),
                     // A second open knows the normal context already.
+                    listening(),
                     targets(page("a", "normal"), page("inc", "private")),
                     targets(page("a", "normal"), page("inc", "private"), page("inc2", "private")),
                     loads("L3"),
@@ -60,8 +63,8 @@ class BrowserIncognitoTest {
         val replies =
             ArrayDeque(
                 listOf(
-                    created("blank"),
-                    harness.ownTarget("blank"),
+                    listening(),
+                    harness.created("blank"),
                     targets(page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(),
@@ -94,11 +97,26 @@ class BrowserIncognitoTest {
         val page =
             harness.switched() +
                 harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                ntp(2) +
                 navigated("L1", NTP) +
-                harness.serverTextFrame("""{"id":3,"result":{"loaderId":"L2"}}""")
+                harness.serverTextFrame("""{"id":2,"result":{"loaderId":"L2"}}""")
         val socket = harness.socket(page)
         val service = opening(socket)
+        val outcome =
+            harness.answering(
+                1_000,
+                { service.openTab(PAGE, incognito = true) },
+                { socket.send(navigated("L2", PAGE)) },
+            )
+        assertNull(outcome.loading)
+        assertEquals(1_000, harness.clock.now)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `an early title is no commit`() {
+        // The tab's first page gets its title while the page PhoneAPI asked for still loads.
+        val socket = harness.socket(navigates("""{"loaderId":"L2"}"""))
+        val service = opening(socket, harness.titled("inc", NTP))
         val outcome =
             harness.answering(
                 1_000,
@@ -115,55 +133,56 @@ class BrowserIncognitoTest {
         // Chrome answers the navigation as a download, with its usual ERR_ABORTED, and the file
         // can't be read in a normal tab, which has the phone's logins.
         val page =
-            harness.switched() +
-                harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                ntp(2) +
-                harness.serverTextFrame(
-                    """{"id":3,"result":{"loaderId":"L2","isDownload":true,""" +
-                        """"errorText":"net::ERR_ABORTED"}}"""
-                ) +
-                ntp(4)
-        val service = opening(harness.socket(page))
+            harness.socket(
+                navigates("""{"loaderId":"L2","isDownload":true,"errorText":"net::ERR_ABORTED"}""")
+            )
+        val service = opening(page, harness.saveStarted("report.pdf", frame = "inc"))
         val error = harness.virtual {
             harness.failure { service.openTab(PAGE, incognito = true) }
         }
         assertEquals("download_saved", error)
         assertTrue(replies.isEmpty())
         assertEquals(listOf("Target.closeTarget"), closing.methods())
+        // No stand-in reads it, so its save is left alone.
+        assertFalse("Browser.cancelDownload" in browser.methods())
     }
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `an aborted load can be a save`() {
-        // Chrome 133 answers with the error alone, and the save's event follows it.
-        val page =
-            harness.switched() +
-                harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                ntp(2) +
-                harness.serverTextFrame("""{"id":3,"result":{"errorText":"net::ERR_ABORTED"}}""") +
-                harness.serverTextFrame(
-                    """{"method":"Page.downloadWillBegin","params":{"frameId":"F","guid":"G",""" +
-                        """"url":"$PAGE","suggestedFilename":"report.pdf"}}"""
-                ) +
-                ntp(4)
-        val service = opening(harness.socket(page))
-        val error = harness.virtual {
-            harness.failure { service.openTab(PAGE, incognito = true) }
-        }
+        // Chrome 109 and 133 answer with the error alone, and the save's event follows it.
+        val page = harness.socket(navigates("""{"errorText":"net::ERR_ABORTED"}"""))
+        val service = opening(page)
+        val error =
+            harness.answering(
+                1_000,
+                { harness.failure { service.openTab(PAGE, incognito = true) } },
+                { browser.send(harness.saveStarted("report.pdf", frame = "inc")) },
+            )
         assertEquals("download_saved", error)
     }
 
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
+    fun `a viewer follows the error`() {
+        // Where Chrome shows PDFs, it answers the navigation as a download and opens its viewer.
+        val socket = harness.socket(navigates("""{"errorText":"net::ERR_ABORTED"}"""))
+        val service = opening(socket, harness.saveStarted("report.pdf", frame = "inc"))
+        val target =
+            harness.answering(
+                1_000,
+                { service.openTab(PAGE, incognito = true) },
+                { socket.send(navigated("L9", "chrome-native://pdf/link?url=x")) },
+            )
+        assertEquals("chrome_devtools_remote~inc", target.id)
+        assertNull(target.loading)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `a failed load is an error`() {
-        val page =
-            harness.switched() +
-                harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                ntp(2) +
-                harness.serverTextFrame(
-                    """{"id":3,"result":{"errorText":"net::ERR_NAME_NOT_RESOLVED"}}"""
-                )
-        val service = opening(harness.socket(page))
+        val page = harness.socket(navigates("""{"errorText":"net::ERR_NAME_NOT_RESOLVED"}"""))
+        val service = opening(page)
         val error = harness.virtual {
             harness.failure { service.openTab(PAGE, incognito = true) }
         }
@@ -176,11 +195,7 @@ class BrowserIncognitoTest {
     fun `a slow navigate is no failure`() {
         // Page.navigate waits for the server, past the wait for it but short of a call's limit, so
         // the tab comes back waiting rather than closed.
-        val page =
-            harness.switched() +
-                harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                ntp(2) +
-                ntp(4)
+        val page = harness.switched() + harness.serverTextFrame("""{"id":1,"result":{}}""")
         val service = opening(harness.socket(page))
         val target = harness.virtual { service.openTab(PAGE, incognito = true) }
         assertEquals(true, target.loading)
@@ -195,8 +210,7 @@ class BrowserIncognitoTest {
         val replies =
             ArrayDeque(
                 listOf(
-                    created("blank"),
-                    harness.ownTarget("blank"),
+                    harness.created("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(page("a", "normal"), page("inc", "private")),
@@ -215,13 +229,20 @@ class BrowserIncognitoTest {
         assertTrue(replies.isEmpty())
     }
 
-    /** A service that opens an incognito tab whose page socket is [page], then closes it. */
+    /**
+     * A service that opens an incognito tab whose page socket is [page], then closes it. [events]
+     * reach [browser], the open's browser session, once it has sent its first two commands.
+     */
     @Suppress("MissingUseCall") // The service closes each socket it opens.
-    private fun opening(page: DevtoolsSocket): BrowserServiceImpl {
+    private fun opening(
+        page: DevtoolsSocket,
+        events: ByteArray = byteArrayOf(),
+    ): BrowserServiceImpl {
+        browser = harness.socket(listening() + events)
+        replies += browser
         replies +=
             listOf(
-                    created("blank"),
-                    harness.ownTarget("blank"),
+                    harness.created("blank"),
                     targets(page("blank", "normal")),
                     reply("""{"success":true}"""),
                     targets(),
@@ -238,18 +259,21 @@ class BrowserIncognitoTest {
         )
     }
 
-    /** A page that answers `Page.navigate` with [loader], and commits it. */
-    private fun loads(loader: String): ByteArray =
+    /** An open's browser session, with target and download events on. */
+    private fun listening(): ByteArray =
         harness.switched() +
             harness.serverTextFrame("""{"id":1,"result":{}}""") +
-            ntp(2) +
-            harness.serverTextFrame("""{"id":3,"result":{"loaderId":"$loader"}}""") +
-            navigated(loader, PAGE)
+            harness.serverTextFrame("""{"id":2,"result":{}}""")
 
-    private fun ntp(id: Int): ByteArray =
-        harness.serverTextFrame(
-            """{"id":$id,"result":{"frameTree":{"frame":{"id":"F","url":"$NTP"}}}}"""
-        )
+    /** A page that answers `Page.navigate` with [loader], and commits it. */
+    private fun loads(loader: String): ByteArray =
+        navigates("""{"loaderId":"$loader"}""") + navigated(loader, PAGE)
+
+    /** A page that answers `Page.navigate` with [reply]. */
+    private fun navigates(reply: String): ByteArray =
+        harness.switched() +
+            harness.serverTextFrame("""{"id":1,"result":{}}""") +
+            harness.serverTextFrame("""{"id":2,"result":$reply}""")
 
     private fun navigated(loader: String, url: String): ByteArray =
         harness.serverTextFrame(
@@ -259,8 +283,6 @@ class BrowserIncognitoTest {
 
     private fun reply(result: String): ByteArray =
         harness.switched() + harness.serverTextFrame("""{"id":1,"result":$result}""")
-
-    private fun created(id: String): ByteArray = reply("""{"targetId":"$id"}""")
 
     private fun targets(vararg pages: String): ByteArray =
         reply("""{"targetInfos":[${pages.joinToString(",")}]}""")
