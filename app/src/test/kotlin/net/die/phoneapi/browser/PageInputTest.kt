@@ -18,7 +18,7 @@ class PageInputTest {
     private val harness = BrowserServiceTest()
 
     private companion object {
-        /** The read of visibilityState before a cdp touch. */
+        /** A read of the page, such as visibilityState before a cdp touch. */
         val SHOWING = listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate")
     }
 
@@ -188,8 +188,9 @@ class PageInputTest {
     fun `cdp key stays in the back`() {
         val frames =
             harness.switched() +
-                harness.serverTextFrame("""{"id":1,"result":{}}""") +
-                harness.serverTextFrame("""{"id":2,"result":{}}""")
+                harness.pageSays(1, false) +
+                harness.serverTextFrame("""{"id":4,"result":{}}""") +
+                harness.serverTextFrame("""{"id":5,"result":{}}""")
         var pressed = false
         val page = harness.socket(frames)
         val service =
@@ -211,7 +212,7 @@ class PageInputTest {
         assertTrue(result.ok)
         assertEquals("cdp", result.backend)
         assertFalse(pressed)
-        assertEquals(listOf("Input.dispatchKeyEvent", "Input.dispatchKeyEvent"), page.methods())
+        assertEquals(SHOWING + "Input.dispatchKeyEvent" + "Input.dispatchKeyEvent", page.methods())
     }
 
     @Test

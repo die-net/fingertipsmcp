@@ -112,13 +112,20 @@ internal class CdpSession(
                 cause = e,
             )
         } catch (e: IOException) {
-            throw ApiException(
-                502,
-                "cdp_error",
-                e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
-                cause = e,
-            )
+            throw connectionFailed(e)
         }
+
+    /**
+     * Sends a command whose answer no one waits for, for one that Chrome may never answer. An
+     * answer that does come is dropped. Commands on one session reach Chrome in the order sent.
+     */
+    fun post(method: String, params: JsonObject? = null) {
+        try {
+            socket.sendText(command(nextId.incrementAndGet(), method, params))
+        } catch (e: IOException) {
+            throw connectionFailed(e)
+        }
+    }
 
     override fun close() {
         socket.close()
@@ -126,6 +133,14 @@ internal class CdpSession(
         // session is marked closed here too.
         failAll(IOException(DEVTOOLS_CLOSED))
     }
+
+    private fun connectionFailed(e: IOException) =
+        ApiException(
+            502,
+            "cdp_error",
+            e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
+            cause = e,
+        )
 
     private suspend fun roundTrip(method: String, params: JsonObject?): CdpReply {
         val id = nextId.incrementAndGet()

@@ -24,10 +24,18 @@ internal suspend fun mainFrameId(cdp: CdpSession): String = mainFrame(cdp).id
 
 /** The page's main frame, with its id, URL, and loader id. */
 internal suspend fun mainFrame(cdp: CdpSession): MainFrame {
-    val frame = cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()?.frameTree?.frame
-    val id = frame?.id ?: throw ApiException(502, "cdp_error", "Chrome did not return a frame")
-    return MainFrame(id, frame.url, frame.loaderId)
+    val node = frameTree(cdp)
+    return MainFrame(frameId(node), node.frame?.url, node.frame?.loaderId)
 }
+
+/** The page's frames, from its main frame down. */
+internal suspend fun frameTree(cdp: CdpSession): FrameNode =
+    cdp.call("Page.getFrameTree").decodeCdp<FrameTreeResult>()?.frameTree ?: throw noFrame()
+
+/** The id of the frame [node] describes. */
+internal fun frameId(node: FrameNode): String = node.frame?.id ?: throw noFrame()
+
+private fun noFrame() = ApiException(502, "cdp_error", "Chrome did not return a frame")
 
 /** A page's main frame. [loaderId] names the document loaded in it, and changes with each load. */
 internal data class MainFrame(val id: String, val url: String?, val loaderId: String? = null)
@@ -74,7 +82,8 @@ private fun worldGone(e: ApiException): Boolean =
 /** A new isolated world on the page's main frame, by its execution context id. */
 internal suspend fun isolatedWorld(cdp: CdpSession): Int = isolatedWorld(cdp, mainFrameId(cdp))
 
-private suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
+/** A new isolated world on the frame [frameId], by its execution context id. */
+internal suspend fun isolatedWorld(cdp: CdpSession, frameId: String): Int =
     cdp.call(
             "Page.createIsolatedWorld",
             buildJsonObject {

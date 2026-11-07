@@ -43,15 +43,20 @@ internal suspend fun dispatchTouchPath(
 /**
  * A left click with `Input.dispatchMouseEvent`: pressed at the path's first point, held for the
  * path's duration, and released at its last point. Chrome delivers these to a hidden tab, where it
- * holds touch events. There is no mouseMoved first: a hidden Chrome delivers it but never answers.
+ * holds touch events, once [pressPastHold] gets the press there. There is no mouseMoved first: a
+ * hidden Chrome delivers it but never answers.
  */
 internal suspend fun dispatchMouseClick(cdp: CdpSession, path: List<TimedPoint>) {
     val down = path.first()
     val up = path.last()
-    cdp.call("Input.dispatchMouseEvent", mouseEvent("mousePressed", down, pressed = true))
+    val landed =
+        pressPastHold(cdp, "pointerdown") {
+            cdp.call("Input.dispatchMouseEvent", mouseEvent("mousePressed", down, pressed = true))
+        }
     val hold = up.tMs - down.tMs
-    if (hold > 0) delay(hold)
+    if (landed && hold > 0) delay(hold)
     cdp.call("Input.dispatchMouseEvent", mouseEvent("mouseReleased", up, pressed = false))
+    if (!landed) throw inputDropped()
 }
 
 /** `Input.insertText`, with an optional select-all clear and Enter. */
@@ -81,9 +86,13 @@ internal suspend fun dispatchDomKey(
 ) {
     val withText = key.text != null && modifiers == 0
     val down = if (withText) "keyDown" else "rawKeyDown"
-    cdp.call("Input.dispatchKeyEvent", keyEvent(down, key, modifiers, withText))
-    if (longPress) delay(LONG_PRESS_MS)
+    val landed =
+        pressPastHold(cdp, "keydown") {
+            cdp.call("Input.dispatchKeyEvent", keyEvent(down, key, modifiers, withText))
+        }
+    if (landed && longPress) delay(LONG_PRESS_MS)
     cdp.call("Input.dispatchKeyEvent", keyEvent("keyUp", key, modifiers, withText = false))
+    if (!landed) throw inputDropped()
 }
 
 private suspend fun playBatch(
