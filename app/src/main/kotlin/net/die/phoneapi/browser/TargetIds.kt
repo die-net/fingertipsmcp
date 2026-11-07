@@ -43,6 +43,20 @@ private const val MAX_URL = 2_000
 /** Whether [e] is DevTools refusing a connection to a target because it has closed. */
 internal fun tabGone(e: ApiException): Boolean = (e.cause as? WebSocketRefused)?.targetGone == true
 
+/**
+ * Whether Chrome refuses [reconnect], a new connection to a tab whose session dropped, because the
+ * tab has closed. A session that drops says nothing of why, since it can drop for other reasons
+ * too, and Chrome's list can still show a tab that is closing. False says only that Chrome did not
+ * refuse.
+ */
+internal suspend fun refused(reconnect: suspend () -> Unit): Boolean =
+    try {
+        reconnect()
+        false
+    } catch (e: ApiException) {
+        tabGone(e)
+    }
+
 /** A tab that closed, whoever closed it. */
 internal fun tabClosed(id: String): ApiException =
     ApiException.notFound(

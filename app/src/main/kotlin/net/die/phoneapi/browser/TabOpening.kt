@@ -1,5 +1,6 @@
 package net.die.phoneapi.browser
 
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -31,14 +32,13 @@ internal enum class TabOpening {
 
 /**
  * Sees a new tab to its page, and decides there what opening it gives back. [onPage] runs a block
- * on a session to a tab, [listed] gives Chrome's tabs, [createBlank] opens a blank tab on a socket
- * and returns its Chrome id, and [close] closes a tab, whether or not it is still there. [savedPdf]
- * and [loadPdf] are [PageReader]'s.
+ * on a session to a tab, [createBlank] opens a blank tab on a socket and returns its Chrome id, and
+ * [close] closes a tab, whether or not it is still there. [savedPdf] and [loadPdf] are
+ * [PageReader]'s.
  */
 internal class TabOpener(
     private val createBlank: suspend (String) -> String,
     private val onPage: suspend (String, suspend (CdpSession) -> TabOpening) -> TabOpening,
-    private val listed: suspend () -> List<BrowserTarget>,
     private val close: suspend (String) -> Unit,
     private val savedPdf: (String) -> Boolean,
     private val loadPdf: suspend (String, String) -> Boolean,
@@ -112,19 +112,8 @@ internal class TabOpener(
         try {
             onPage(id) { awaitCommit(it, url, save.await) }
         } catch (e: ApiException) {
-            if (!save.started() && !closedDuring(id, e)) throw e
+            if (!save.started() && e.error != "not_found") throw e
             TabOpening.SAVED
-        }
-
-    /**
-     * Whether [e] came from the tab [id] closing. A session can end for other reasons too, so a
-     * dropped session counts only once Chrome's list says the tab has gone.
-     */
-    private suspend fun closedDuring(id: String, e: ApiException): Boolean =
-        when {
-            e.error == "not_found" -> true
-            e.error != "cdp_error" || e.rejected != null -> false
-            else -> listed().none { it.id == id }
         }
 
     /**
@@ -386,7 +375,14 @@ internal class OpenWatch {
     /** Waits until [done], failing as a closed session does if the session ends first. */
     suspend fun await(done: (Seen) -> Boolean): Seen {
         val state = seen.first { it.ended || done(it) }
-        if (state.ended) throw ApiException(502, "cdp_error", DEVTOOLS_CLOSED)
+        if (state.ended) {
+            throw ApiException(
+                502,
+                "cdp_error",
+                DEVTOOLS_CLOSED,
+                cause = IOException(DEVTOOLS_CLOSED),
+            )
+        }
         return state
     }
 }

@@ -33,6 +33,10 @@ internal class CdpRejected(val code: Int?, message: String) : Exception(message)
 internal val ApiException.rejected: CdpRejected?
     get() = cause as? CdpRejected
 
+/** Whether this error is the session's connection ending, and not an answer from Chrome. */
+internal val ApiException.dropped: Boolean
+    get() = error == "cdp_error" && cause is IOException
+
 /** A command's result, and how many events the session had read when it came. */
 internal data class CdpReply(val result: JsonObject, val eventsBefore: Long)
 
