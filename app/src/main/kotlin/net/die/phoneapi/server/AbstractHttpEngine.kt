@@ -18,8 +18,8 @@ import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.streams.asByteWriteChannel
 import java.io.IOException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -30,7 +30,6 @@ import kotlinx.coroutines.launch
  * pipeline directly.
  */
 @OptIn(InternalAPI::class)
-@Suppress("InjectDispatcher") // Accept and CIO run on IO; this engine has no injected dispatcher.
 class AbstractHttpEngine(
     environment: ApplicationEnvironment,
     monitor: Events,
@@ -40,9 +39,12 @@ class AbstractHttpEngine(
 ) : BaseApplicationEngine(environment, monitor, developmentMode) {
     class Configuration : BaseApplicationEngine.Configuration() {
         var socketName: String = "phoneapi"
+
+        /** Where connections and CIO's request work run: the graph's I/O dispatcher. */
+        lateinit var dispatcher: CoroutineDispatcher
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + configuration.dispatcher)
     private var server: LocalServerSocket? = null
     private var accept: Thread? = null
     private var stopped = false
@@ -75,11 +77,21 @@ class AbstractHttpEngine(
         return this
     }
 
+    /**
+     * Closes the listening socket and waits, up to [timeoutMillis], for the accept thread to leave
+     * accept(). The abstract name stays bound while that thread is still in the call, so a start
+     * right after a stop that did not wait could fail to bind.
+     */
     override fun stop(gracePeriodMillis: Long, timeoutMillis: Long) {
         stopped = true
         runCatching { server?.close() }
         server = null
-        accept?.join(gracePeriodMillis)
+        accept?.let { thread ->
+            thread.join(timeoutMillis)
+            if (thread.isAlive) {
+                environment.log.error("The accept thread did not stop in $timeoutMillis ms")
+            }
+        }
         accept = null
         // Closing the listening socket only stops new connections. Cancelling the connections
         // closes their sockets too, so streams and keep-alive clients end with the listener.
@@ -114,6 +126,7 @@ class AbstractHttpEngine(
                 request = request,
                 input = scope.input,
                 output = scope.output,
+                io = configuration.dispatcher,
                 upgraded = scope.upgraded,
                 coroutineContext = scope.coroutineContext,
             )
@@ -151,7 +164,6 @@ class AbstractHttpEngine(
  * [io.ktor.server.cio.CIOApplicationCall] is internal. It lives in this APK, so the constructor is
  * reachable by reflection; R8 is told to keep it.
  */
-@Suppress("InjectDispatcher") // CIO runs request work on IO.
 private object CioCalls {
     private val ctor =
         Class.forName("io.ktor.server.cio.CIOApplicationCall")
@@ -171,11 +183,11 @@ private object CioCalls {
         request: Request,
         input: Any?,
         output: Any?,
+        io: CoroutineDispatcher,
         upgraded: Any?,
         coroutineContext: Any?,
-    ): PipelineCall {
-        val io = Dispatchers.IO
-        return ctor.newInstance(
+    ): PipelineCall =
+        ctor.newInstance(
             application,
             request,
             input,
@@ -187,7 +199,6 @@ private object CioCalls {
             null,
             coroutineContext,
         ) as PipelineCall
-    }
 
     fun release(call: PipelineCall) {
         release.invoke(call)
