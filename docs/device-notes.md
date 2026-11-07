@@ -942,6 +942,8 @@ Seen while checking, and not changed:
 
 ## Page reads and events
 
+On 2026-11-07, in desktop Chrome 156 made to look like a phone, MDN's HTTP page drew its main content through a `<main>` with `display: contents`. `checkVisibility()` said that element was not visible, with or without its CSS options, while each child said it was. So `page-read.js` treated it as hidden and read 333 of the page's 11,251 characters, in both scopes. Article scope at v0.3.8 got 9,635, since Readability was then given the whole page. The phone's read of the same page got 347.
+
 ### Still to check
 
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.

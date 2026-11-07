@@ -18,6 +18,14 @@ class Text {
   }
 }
 
+// An element's display: data-hidden stands for a stylesheet's display: none, and data-contents for
+// display: contents.
+function displayOf(attrs) {
+  if (attrs["data-hidden"] !== undefined) return "none";
+  if (attrs["data-contents"] !== undefined) return "contents";
+  return "";
+}
+
 class Element {
   constructor(tag, attrs, children) {
     this.nodeType = 1;
@@ -25,7 +33,7 @@ class Element {
     this.attrs = Object.assign({}, attrs || {});
     this.childNodes = [];
     this.parentNode = null;
-    this.style = { display: this.attrs["data-hidden"] !== undefined ? "none" : "" };
+    this.style = { display: displayOf(this.attrs) };
     for (const child of children || []) this.append(child);
   }
   append(child) {
@@ -94,7 +102,10 @@ class Element {
     for (let node = other; node; node = node.parentNode) if (node === this) return true;
     return false;
   }
+  // As Chrome's: an element with display: contents has no box, so it is not visible itself,
+  // though its children are.
   checkVisibility() {
+    if (this.style.display === "contents") return false;
     for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
       if (node.style.display === "none") return false;
     }
@@ -324,7 +335,7 @@ function page(options, head, body) {
     performance: {
       getEntriesByType: () => [{ responseStatus: options.status || 200, name: doc.baseUrl }],
     },
-    getComputedStyle: () => ({ visibility: "visible" }),
+    getComputedStyle: (el) => ({ visibility: "visible", display: (el && el.style.display) || "block" }),
   };
 }
 
