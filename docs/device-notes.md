@@ -66,6 +66,10 @@ On that emulator, with a page running 3 s tasks back to back, 3 `cdp` keys into 
 
 Chrome refuses a DevTools connection to a closed tab with 500 "No such target id", in Chrome 133 on the emulator and Chrome 155 on the phone, and 404 in some releases. PhoneAPI reports it as `not_found` rather than retrying.
 
+### Script worlds
+
+A world belongs to one document. `Runtime.evaluate` naming a world whose document has gone fails with code -32000 and the message `Cannot find context with specified id`, and runs nothing. A context id that never existed gets the same reply. Chrome gives -32000 for any server error, so PhoneAPI needs the message too, and it is the only thing that names this failure. Checked with Chrome 109 and 145 on the Android 13 and 17 emulators on 2026-11-06, with a reload between making the world and using it.
+
 ## Android's app freezer
 
 On Android 12 and later the cached-app freezer is on by default. On the Android 16 emulator on 2026-10-21, about 2 minutes after Chrome went to the background, every Chrome process was frozen (`isFrozen=true`), and nothing answered, not even the browser endpoint. Android 11 has the freezer but leaves it off by default. On the phone on 2026-10-22, `dumpsys activity` printed "Freezer settings" with `use_freezer=false`, and `cached_apps_freezer` was unset.
