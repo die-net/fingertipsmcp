@@ -49,7 +49,8 @@ internal class PageReader(
             val data = data(id, wantedBlobs(listOfNotNull(request.path)))
             return findData(data, request).copy(reloaded = data.reloaded)
         }
-        return findWithFallback(request) { scope -> page(id, scope, request.selector) }
+        val extract = page(id, request.scope, request.selector)
+        return findInPage(extract, request).copy(reloaded = extract.reloaded)
     }
 
     /**

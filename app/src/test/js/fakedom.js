@@ -79,6 +79,13 @@ class Element {
     if (this.tagName !== "TR") return undefined;
     return this.children.filter((el) => el.tagName === "TD" || el.tagName === "TH");
   }
+  closest(selector) {
+    const list = parseSelector(selector);
+    for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+      if (list.some((complex) => matches(node, complex))) return node;
+    }
+    return null;
+  }
   contains(other) {
     for (let node = other; node; node = node.parentNode) if (node === this) return true;
     return false;

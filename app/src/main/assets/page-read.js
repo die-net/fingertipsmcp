@@ -43,9 +43,8 @@ function walk(roots, live) {
   }
 
   function hidden(el) {
-    if (el.getAttribute("aria-hidden") === "true" || el.hidden) return true;
-    if (!live || !el.checkVisibility) return false;
-    return !el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
+    if (live) return hiddenNow(el);
+    return el.getAttribute("aria-hidden") === "true" || el.hidden;
   }
 
   function cellText(cell) {
@@ -245,6 +244,50 @@ function blocked(status, text) {
 const BLOCK_TEXT =
   /automated (queries|requests|access|traffic)|unusual traffic|verify you are (a )?human|are you (a robot|human)|access (to this page )?has been denied|pardon our interruption/i;
 
+// A block of prose counts toward an article once it has this many characters.
+const PROSE_CHARS = 140;
+// How much prose makes an article: the sum, over blocks of prose, of the square root of each one's
+// characters past PROSE_CHARS, so a few long paragraphs count and many short items do not.
+const ARTICLE_SCORE = 20;
+// Class names and ids of parts of a page that are not its article, unless they also say they are.
+const NOT_ARTICLE =
+  /-ad-|banner|breadcrumbs|combx|comment|community|disqus|extra|footer|gdpr|header|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|pagination|pager|popup/i;
+const MAYBE_ARTICLE = /and|article|body|column|content|main|shadow/i;
+
+// Whether the page reads as an article: it has paragraphs of prose, outside lists and the parts
+// a page names as not its article. Readability picks some part of any page, and on a listing, such
+// as search results, that part is a fragment with a few stray links and none of the results, so a
+// page that is not an article is read whole. The test is modeled on Readability's own
+// isProbablyReaderable.
+function readsAsArticle() {
+  let score = 0;
+  for (const el of document.querySelectorAll("p, pre, article")) {
+    if (el.closest("li") || namedNotArticle(el) || hiddenNow(el)) continue;
+    const chars = el.textContent.trim().length;
+    if (chars < PROSE_CHARS) continue;
+    score += Math.sqrt(chars - PROSE_CHARS);
+    if (score > ARTICLE_SCORE) return true;
+  }
+  return false;
+}
+
+// Whether el, or an element it is in, is named by its class or id as a part of the page that is not
+// its article, such as its comments or sidebar.
+function namedNotArticle(el) {
+  for (let node = el; node && node.nodeType === 1 && node !== document.body; node = node.parentNode) {
+    const named = (node.getAttribute("class") || "") + " " + node.id;
+    if (NOT_ARTICLE.test(named) && !MAYBE_ARTICLE.test(named)) return true;
+  }
+  return false;
+}
+
+// Whether a live element is hidden from a reader of the page.
+function hiddenNow(el) {
+  if (el.getAttribute("aria-hidden") === "true" || el.hidden) return true;
+  if (!el.checkVisibility) return false;
+  return !el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
+}
+
 // The page PhoneAPI puts in place of a PDF holds no text; PhoneAPI reads the PDF instead.
 if (document.querySelector('meta[name="phoneapi-pdf"]')) return { pdf: location.href };
 
@@ -276,7 +319,7 @@ if (options.selector) {
   walked = walk(roots, true);
   extracted = "selector";
   selected = matches.length;
-} else if (options.scope === "article") {
+} else if (options.scope === "article" && readsAsArticle()) {
   try {
     const article = new Readability(document.cloneNode(true), { serializer: (el) => el }).parse();
     if (article && article.content && article.textContent.trim()) {
@@ -290,6 +333,8 @@ if (options.selector) {
     walked = null;
     extracted = "page";
   }
+} else if (options.scope === "article") {
+  extracted = "page";
 }
 if (!walked && document.body) walked = walk([document.body], true);
 if (!walked) walked = { blocks: [], clipped: false };
