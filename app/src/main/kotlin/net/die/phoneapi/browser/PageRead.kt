@@ -374,30 +374,6 @@ internal fun cutPoint(text: CharSequence, start: Int, maxChars: Int): Int {
     return if (Character.isHighSurrogate(text[limit - 1])) limit - 1 else limit
 }
 
-/**
- * [request]'s results from the page [extract] gives for a scope. A links find in article scope that
- * comes back empty, filtered or not, searches the whole page, and its results are used when it has
- * any; `extracted` then says page. On a listing page, Readability can pick a fragment with a few
- * stray links and none of the results.
- */
-internal suspend fun findWithFallback(
-    request: BrowserFindRequest,
-    extract: suspend (ReadScope) -> PageExtract,
-): BrowserFindResult {
-    val first = extract(request.scope)
-    val found = findInPage(first, request).copy(reloaded = first.reloaded)
-    val widen =
-        request.kind == FindKind.LINKS &&
-            request.selector == null &&
-            first.extracted == "article" &&
-            first.links > 0 &&
-            found.total == 0
-    if (!widen) return found
-    val whole = extract(ReadScope.PAGE)
-    val wider = findInPage(whole, request)
-    return if (wider.total > 0) wider.copy(reloaded = first.reloaded || whole.reloaded) else found
-}
-
 internal fun findInPage(extract: PageExtract, request: BrowserFindRequest): BrowserFindResult {
     val page = renderPage(extract.blocks, request.format)
     val base =
