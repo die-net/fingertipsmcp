@@ -496,6 +496,35 @@ On the Android 16 emulator (Chrome 133) on 2026-11-06, with a wait's set-up and 
 
 Before this, a `browser.dialog` wait on a page that did not answer failed `cdp_timeout` at about 15 s, as [Screen hand-offs](#screen-hand-offs) says. The other rows were not run on the build before. After the alert was dismissed, and after `am unfreeze`, a wait on the same tab matched in under 1 s. With `timeoutMs` 0, `browser.url`, `browser.element`, and `browser.settled` on a page that had loaded all matched, in 170 to 990 ms, so a look fits the 1 s a short limit gets.
 
+Selector lookups across a load, on 2026-11-07. Each page held its parser on a script the test server kept back, with the element already parsed, and the test let the script go at a random moment.
+
+- A node id or search taken before `DOMContentLoaded` was refused after it, and one taken before a commit was refused after that, 10 of 10 on Chrome 109 and 20 of 20 on Chrome 133. `DOM.querySelector`, `DOM.scrollIntoViewIfNeeded`, `DOM.getContentQuads`, and `DOM.focus` said `Could not find node with given id`. `DOM.resolveNode` said `No node with given id found`, and `DOM.getSearchResults` said `No search session with given id found`. All three have code -32000, the code of any refusal, so the code doesn't name this one.
+- `DOM.documentUpdated` reached the session before the first refusal, with `DOM.querySelector` sent over and over across the change. That held for every try: 30 at `DOMContentLoaded` and 30 at a commit on Chrome 91, and 20 of each on Chrome 109, 133, and 145. It held without `DOM.enable`, since `DOM.getDocument` enables the domain. At a commit it follows `Page.frameNavigated`. A commit to another site on Chrome 133 and 145 did the same, 20 of 20 each. On Chrome 109 one such try did, and the rest did not run, because the test lost the live tab among that emulator's 53 old ones.
+- A second `DOM.getDocument` sends no `DOM.documentUpdated`, so a lookup does not set off its own retry.
+
+Through PhoneAPI, on the build before `withNodeIds` and on the build with it. A tap on a selector that appears only as the parser finishes polls until it matches. A wait of 0 ms, sent over and over, looks once each time and counts per `DOMContentLoaded`. The third wait was woken by a page fetching every 15 ms, with a `browser.request` condition beside it.
+
+| Check | Chrome | Before | After |
+|---|---|---|---|
+| Tap, polling | 91 | 5 of 205 failed | 0 of 160 |
+| Tap, polling | 133 | 6 of 68 failed | 0 of 100 |
+| Tap, polling | 145 | 4 of 60 failed | 0 of 100 |
+| `browser.element` css, repeated | 91 | 3 of 15 loads failed | 0 of 20 |
+| `browser.element` css, repeated | 133 | 4 of 20 loads failed | 0 of 40 |
+| `browser.element` css, repeated | 145 | 1 of 20 loads failed | 0 of 30 |
+| `browser.element` text, repeated | 145 | 3 of 20 loads failed, and 5 of 386 looks found nothing | 0 of 30 |
+| `browser.element` visible, woken by events | 133 | 1 of 40 failed | 0 of 60 |
+| `browser.element` visible, woken by events | 145 | 0 of 40 failed | not run |
+
+The failures were `cdp_error` with Chrome's words above. A single wait that only sat through the load did not fail: 60 of 60 on Chrome 133. Nothing woke it until `DOM.documentUpdated` had already told it to take new ids. With the change, a tap across a commit worked 25 of 25 times on Chrome 133, and text waits matched 459 of 459 there. A wait spanning a navigation matched 25 of 25 before the change on Chrome 133 and 20 of 20 on Chrome 91, so the failure listed above for Chrome 91 was gone by then.
+
+Seen while checking, and not changed:
+
+- On the Android 10 emulator, 4 of 205 taps before the change and 4 of 160 after it failed `503` `cdp_error`, saying Android 10 reaches DevTools over USB, though the tunnel's forward and reverse were in place. The next tap worked. The table leaves these out.
+- On the Android 16 emulator, the first run after a boot stalled twice, once before the change and once after it. A tap got no reply within 12 s, and the first time adb stopped answering too, until a reboot. It did not happen again in later runs, and the cause is not known.
+- A `browser.element` wait on a background tab did not match an element that script added after the load, 3 of 3 on Chrome 133 and on Chrome 145. Nothing wakes the wait, since a session that took the document at depth 0 hears of no new nodes.
+- A tap on a selector whose element is `display: none` fails at once with `cdp_error` `Node does not have a layout object`, on Chrome 133 and 145, and does not wait out `waitMs`.
+
 ## Still to check on the phone
 
 - That a browser call reconnects after DevTools' idle disconnect on the Android 12 test phone, using the helper's port lookup, and that a helper restart with no mDNS record recovers by turning the setting off and on. Both worked on the Android 13 emulator. Reaching the Android 11 and 12 phones needs a release build, since a dev build beside a running release helper doesn't start its own.
@@ -505,6 +534,7 @@ Before this, a `browser.dialog` wait on a page that did not answer failed `cdp_t
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - What a plain open of a PDF does on a Chrome that shows PDFs in its viewer. Chrome 145 on the Android 17 emulator saved it when opened on its URL, though it showed its viewer on 2026-11-05.
 - That `Page.frameNavigated` reaches the stand-in's session with the navigation's loader id on the phone's Chrome 156, as it does on Chrome 109, 133, and 145. Without it, a takeover fails `page_error` after 5 s. Also that a `backendNodeId` outlives `DOMContentLoaded` there, and that Chrome 156 refuses a connection to a tab that closed during a call.
+- That `DOM.documentUpdated` comes before Chrome refuses a dropped node id on the phone's Chrome 156, as it does on Chrome 91, 109, 133, and 145. Without it, a lookup fails `cdp_error` as it did before `withNodeIds`, and a new call works.
 - That the PIN field and delete key read the same on the Android 11 and 12 phones and any OEM keyguard: a visible node with the password flag whose text length is the digit count. An unlock refuses when no such field is found, so a keyguard that hides it, as a PIN auto-confirm or PIN-shape setting may, can't be unlocked with a stored PIN. Also a real cancelled entry cleared on the phone, and whether 1.5 s covers its bouncer coming up.
 - That the shared mDNS walk finds the pairing dialog and the connect port on the Android 11 and 12 phones, below API 34, where a hung resolve can't be cancelled and `FAILURE_ALREADY_ACTIVE` is what a search waits out. Only the Android 17 emulator has run it. With another device's record on the LAN and the serial known, its record should never be resolved. With the serial not known yet, as on a first pairing, every record is, so a hung foreign one still blocks that search. Also a bare connect to the pairing port leaving the dialog working there, which `pairingPort()` does.
 - That PIN unlock works on the phone, which has only run it on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.

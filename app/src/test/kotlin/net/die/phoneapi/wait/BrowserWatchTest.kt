@@ -20,6 +20,7 @@ import net.die.phoneapi.browser.KeyedSocket
 import net.die.phoneapi.browser.StallingSocket
 import net.die.phoneapi.browser.VirtualIo
 import net.die.phoneapi.model.BrowserTarget
+import net.die.phoneapi.model.ElementBy
 import net.die.phoneapi.model.ElementState
 import net.die.phoneapi.model.WaitCondition
 import net.die.phoneapi.server.FakeBrowser
@@ -414,6 +415,123 @@ class BrowserWatchTest {
         assertEquals(-1, page.input.read())
     }
 
+    @Test
+    fun `a look takes new ids`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    dropped(4, NO_NODE) +
+                    document(5) +
+                    harness.serverTextFrame("""{"id":6,"result":{"nodeId":2}}""")
+            )
+        assertTrue(looked(page, WaitCondition.BrowserElement(target = TAB, selector = "#a")))
+    }
+
+    @Test
+    fun `a changed page is not absent`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    documentUpdated() +
+                    harness.serverTextFrame("""{"id":4,"result":{"nodeId":0}}""") +
+                    document(5) +
+                    harness.serverTextFrame("""{"id":6,"result":{"nodeId":2}}""")
+            )
+        val absent =
+            WaitCondition.BrowserElement(
+                target = TAB,
+                selector = "#a",
+                state = ElementState.ABSENT,
+            )
+        assertFalse(looked(page, absent))
+    }
+
+    @Test
+    fun `a visible look takes new ids`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    harness.serverTextFrame("""{"id":4,"result":{"nodeId":2}}""") +
+                    dropped(5, NO_NODE) +
+                    document(6) +
+                    harness.serverTextFrame("""{"id":7,"result":{"nodeId":2}}""") +
+                    harness.serverTextFrame(harness.quad(8))
+            )
+        val visible =
+            WaitCondition.BrowserElement(
+                target = TAB,
+                selector = "#a",
+                state = ElementState.VISIBLE,
+            )
+        assertTrue(looked(page, visible))
+    }
+
+    @Test
+    fun `no box is not visible`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    harness.serverTextFrame("""{"id":4,"result":{"nodeId":2}}""") +
+                    refused(5, "Could not compute content quads.")
+            )
+        val visible =
+            WaitCondition.BrowserElement(
+                target = TAB,
+                selector = "#a",
+                state = ElementState.VISIBLE,
+            )
+        assertFalse(looked(page, visible))
+    }
+
+    @Test
+    fun `a text look starts over`() = clock.run {
+        val page =
+            lookingPage(
+                document(3) +
+                    search(4) +
+                    dropped(5, "No search session with given id found") +
+                    document(6) +
+                    search(7) +
+                    harness.serverTextFrame("""{"id":8,"result":{"nodeIds":[2]}}""") +
+                    reply(9)
+            )
+        val text = WaitCondition.BrowserElement(target = TAB, selector = "a", by = ElementBy.TEXT)
+        assertTrue(looked(page, text))
+    }
+
+    /** One look at [condition] on [page], within a wait with time left. */
+    private suspend fun looked(page: KeyedSocket, condition: WaitCondition): Boolean {
+        val watch = BrowserWatch(browser, clock, { _, _ -> page }, { clock.now }) { false }
+        watch.open(listOf(condition), timeoutMs = LIMIT_MS)
+        return watch.check(condition).satisfied.also { watch.close() }
+    }
+
+    /** A page that answers a `browser.element` wait's set-up, then with [looks]. */
+    private fun lookingPage(looks: ByteArray) =
+        KeyedSocket(
+            reply(1) +
+                harness.serverTextFrame(
+                    """{"id":2,"result":{"frameTree":{"frame":{"id":"F"}}}}"""
+                ) +
+                looks,
+            clock,
+        )
+
+    private fun document(id: Int) =
+        harness.serverTextFrame("""{"id":$id,"result":{"root":{"nodeId":1}}}""")
+
+    private fun search(id: Int) =
+        harness.serverTextFrame("""{"id":$id,"result":{"searchId":"S","resultCount":1}}""")
+
+    private fun documentUpdated() =
+        harness.serverTextFrame("""{"method":"DOM.documentUpdated","params":{}}""")
+
+    private fun refused(id: Int, message: String) =
+        harness.serverTextFrame("""{"id":$id,"error":{"code":-32000,"message":"$message"}}""")
+
+    /** Chrome drops the session's ids, says so, and refuses command [id], which held one. */
+    private fun dropped(id: Int, message: String) = documentUpdated() + refused(id, message)
+
     /** A page that answers a `browser.element` wait's set-up, then no more. */
     private fun elementPage() =
         KeyedSocket(
@@ -493,6 +611,8 @@ class BrowserWatchTest {
         /** A wait's limit, well under the 15 s a single DevTools call may take. */
         const val LIMIT_MS = 4_000L
         const val MIN_LOOK_MS = 1_000L
+        /** Chrome's refusal of a node id it has dropped. */
+        const val NO_NODE = "Could not find node with given id"
         /** Events in a burst, more than a session could hold for a reader that is behind. */
         const val BURST = 200
     }
