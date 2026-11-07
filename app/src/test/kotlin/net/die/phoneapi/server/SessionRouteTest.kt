@@ -14,7 +14,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
-import kotlinx.coroutines.delay
 import net.die.phoneapi.model.Scope
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -55,7 +54,7 @@ class SessionRouteTest {
                     session(first)
                 }
             assertTrue(released.bodyAsText().contains("Released the screen"))
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             assertEquals(HttpStatusCode.OK, tap(http, second).status)
         }
     }
@@ -112,7 +111,7 @@ class SessionRouteTest {
             val mcp = initialize(http, null).headers["Mcp-Session-Id"]!!
             assertEquals(HttpStatusCode.OK, tap(http, mcp).status)
             // The same holder, so its MCP calls do not wait for the screen.
-            assertTrue(!mcpTap(http, mcp).contains("screen_busy"))
+            assertTrue(mcpTap(http, mcp).contains("isError\":false"))
         }
     }
 
@@ -124,10 +123,9 @@ class SessionRouteTest {
             assertEquals(HttpStatusCode.OK, tap(http, id).status)
             val attached = initialize(http, id)
             assertEquals(id, attached.headers["Mcp-Session-Id"])
-            assertTrue(!mcpTap(http, id).contains("screen_busy"))
+            assertTrue(mcpTap(http, id).contains("isError\":false"))
             // Its MCP DELETE ends it for REST too.
             http.delete("/mcp") { mcpHeaders(id) }
-            settle { tap(http, id).status == HttpStatusCode.NotFound }
             assertEquals(HttpStatusCode.NotFound, tap(http, id).status)
         }
     }
@@ -163,17 +161,8 @@ class SessionRouteTest {
         if (id != null) header("Mcp-Session-Id", id)
     }
 
-    private suspend fun settle(done: suspend () -> Boolean) {
-        repeat(SETTLE_TRIES) {
-            if (done()) return
-            delay(SETTLE_MS)
-        }
-    }
-
     private companion object {
         const val TAP = """{"x":1,"y":2}"""
-        const val SETTLE_TRIES = 50
-        const val SETTLE_MS = 20L
         const val INITIALIZE =
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",""" +
                 """"capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"""

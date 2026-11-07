@@ -7,7 +7,6 @@ import io.ktor.websocket.close
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.Scope
@@ -111,7 +110,8 @@ class StreamRouteTest {
             api.services.copy(
                 video =
                     VideoFeed { session, _ ->
-                        sendUntilClientLeaves(session) { delay(100) }
+                        // The stream ends of its own accord, as when the helper stops.
+                        sendUntilClientLeaves(session) {}
                         session.close(
                             CloseReason(CloseReason.Codes.INTERNAL_ERROR, "The helper stopped")
                         )
@@ -147,8 +147,8 @@ class StreamRouteTest {
                     val reason = closeReason.await()
                     assertEquals(CloseReason.Codes.INTERNAL_ERROR.code, reason?.code)
                     val text = reason?.message.orEmpty()
-                    assertTrue(text.startsWith("x"))
-                    assertTrue(text.toByteArray().size <= 123)
+                    // A close reason holds 123 bytes, and x is one byte in UTF-8.
+                    assertEquals("x".repeat(123), text)
                 }
             }
         }

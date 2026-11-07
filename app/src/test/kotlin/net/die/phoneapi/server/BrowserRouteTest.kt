@@ -9,7 +9,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
-import kotlinx.coroutines.delay
 import net.die.phoneapi.lease.Holder
 import net.die.phoneapi.model.Scope
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -54,7 +53,7 @@ class BrowserRouteTest {
             val incognito = openIncognito(client, browser, session)
             assertEquals(HttpStatusCode.OK, incognito.status)
             assertNull(api.lease.state.value.holder)
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
         }
     }
@@ -77,7 +76,7 @@ class BrowserRouteTest {
                 }
             assertEquals(HttpStatusCode.OK, opened.status)
             assertNull(api.lease.state.value.holder)
-            settle { api.cleanups == 1 }
+            api.awaitCleanups(1)
             assertEquals(1, api.cleanups)
         }
     }
@@ -136,13 +135,6 @@ class BrowserRouteTest {
         }
     }
 
-    private suspend fun settle(done: () -> Boolean) {
-        repeat(SETTLE_TRIES) {
-            if (done()) return
-            delay(SETTLE_MS)
-        }
-    }
-
     private suspend fun openIncognito(client: HttpClient, token: String, session: String) =
         client.post("/v1/browser/tabs") {
             bearer(token)
@@ -151,6 +143,3 @@ class BrowserRouteTest {
             setBody("""{"url":"https://example.com/","incognito":true}""")
         }
 }
-
-private const val SETTLE_TRIES = 50
-private const val SETTLE_MS = 10L
