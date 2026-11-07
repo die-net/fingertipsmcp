@@ -2,7 +2,6 @@ package net.die.phoneapi.core
 
 import kotlinx.coroutines.channels.ReceiveChannel
 import net.die.phoneapi.model.ActionResult
-import net.die.phoneapi.model.ApiException
 import net.die.phoneapi.model.AppInfo
 import net.die.phoneapi.model.BrowserCaptureResult
 import net.die.phoneapi.model.BrowserFindRequest
@@ -183,7 +182,7 @@ interface BrowserService {
      * Whether [id] is a tab whose server had not answered when [openTab] returned. While such a tab
      * shows about:blank, that is its first empty page, not the page it was opened on.
      */
-    fun awaitingPage(id: String): Boolean = false
+    fun awaitingPage(id: String): Boolean
 
     /**
      * Whether Chrome is not running, so opening a tab starts it first. That brings Chrome forward,
@@ -197,7 +196,7 @@ interface BrowserService {
      * The ids of Chrome's incognito tabs, whoever opened them. Only the DevTools browser knows, so
      * the session and shared views, which never need it, have none.
      */
-    suspend fun incognitoTabs(): Set<String> = emptySet()
+    suspend fun incognitoTabs(): Set<String>
 
     /** Closes a tab over DevTools, without bringing it forward. */
     suspend fun closeTab(id: String): ActionResult
@@ -217,13 +216,13 @@ interface BrowserService {
      * Whether Chrome has stopped [id]'s timers, as the check started with its last background input
      * shows, confirmed again now. False when nothing has checked.
      */
-    suspend fun timersStalled(id: String): Boolean = false
+    suspend fun timersStalled(id: String): Boolean
 
     /**
      * Starts a check of [id]'s timers in the background, as background input does, unless one is
      * under way or has found them stopped, so a wait can fail on a tab no input has checked.
      */
-    suspend fun watchTimers(id: String) {}
+    suspend fun watchTimers(id: String)
 
     suspend fun snapshot(
         id: String,
@@ -254,9 +253,5 @@ interface BrowserService {
      * Starts or stops recording the JSON responses [id]'s page fetches, which data reads of it then
      * list. Stopping one that is not recording does nothing.
      */
-    suspend fun capture(id: String, on: Boolean): BrowserCaptureResult =
-        throw ApiException.unavailable(
-            "browser_unavailable",
-            "Recording responses is not available",
-        )
+    suspend fun capture(id: String, on: Boolean): BrowserCaptureResult
 }

@@ -416,6 +416,16 @@ class TabsTest {
     }
 
     @Test
+    fun `views forward awaitingPage`() = runBlocking {
+        val tabs = tabs()
+        val tab = tabs.browserFor(a).openTab("https://example.com/")
+        browser.awaiting += tab.id
+        assertTrue(tabs.shared.awaitingPage(tab.id))
+        assertTrue(tabs.browserFor(a).awaitingPage(tab.id))
+        assertFalse(tabs.browserFor(a).awaitingPage("other"))
+    }
+
+    @Test
     fun `webviews are the holder's`() = runBlocking {
         val tabs = tabs()
         val view = browser.add("p", socket = "webview_devtools_remote_9", pkg = "com.app")
@@ -711,6 +721,11 @@ class TabsTest {
             if (listMs > 0) delay(listMs)
             return open.toList()
         }
+
+        /** The tabs whose server has not answered yet. */
+        val awaiting = mutableSetOf<String>()
+
+        override fun awaitingPage(id: String) = id in awaiting
 
         /** Each capture call, as the tab and whether it turned recording on. */
         val captures = mutableListOf<Pair<String, Boolean>>()
