@@ -73,14 +73,16 @@ internal class TabProbe(
      *
      * A paused page still evaluates DevTools script but runs none of its own tasks, so a message
      * posted to itself never arrives. A page busy running script answers neither, and is let
-     * through.
+     * through. Chrome pauses only hidden tabs, so a visible one answers at once. A hidden one gets
+     * [PROBE_MS] for its message, as long as any page check here, since a task of the page's own
+     * can hold the message up for as long as it runs.
      */
     suspend fun requireRunning(cdp: CdpSession, socket: String) {
         if (socket != CHROME_SOCKET) return
         // In an isolated world, so the page can neither see the check nor fool it by replacing
         // MessageChannel. A page busy running script answers nothing here, and is let through.
         val world = withTimeoutOrNull(PROBE_MS) { isolatedWorld(cdp) } ?: return
-        val ran = withTimeoutOrNull(FROZEN_MS) { evaluateInWorld(cdp, world, SELF_MESSAGE, true) }
+        val ran = withTimeoutOrNull(PROBE_MS) { evaluateInWorld(cdp, world, RUNNING, true) }
         if (ran != null) return
         throw ApiException(
             409,
@@ -125,11 +127,11 @@ internal class TabProbe(
     companion object {
         const val PROBE_MS = 2_000L
         private const val RELOAD_MS = 10_000L
-        /** How long a running page has to deliver a message to itself. */
-        private const val FROZEN_MS = 200L
-        private const val SELF_MESSAGE =
-            "new Promise((done) => { const c = new MessageChannel(); " +
-                "c.port1.onmessage = () => done(true); c.port2.postMessage(0); })"
+        /** True at once for a visible tab, and for a hidden one once a message to itself lands. */
+        private const val RUNNING =
+            "document.visibilityState === \"visible\" || new Promise((done) => { " +
+                "const c = new MessageChannel(); c.port1.onmessage = () => done(true); " +
+                "c.port2.postMessage(0); })"
         private const val POLL_MS = 250L
     }
 }
