@@ -135,6 +135,7 @@ internal class BrowserServiceImpl(
             openPrivateTab = openPrivateTab,
         )
     private val locator = ElementLocator(axTrees)
+    private val unanswered = UnansweredTabs()
     private val timers = scope?.let {
         TimerWatch(
             it,
@@ -173,6 +174,7 @@ internal class BrowserServiceImpl(
             loadPdf = { id, url -> reader.loadPdf(id, url) },
             onBrowser = { socket, block -> onTabEvents(socket, block) },
             scope = scope,
+            unanswered = unanswered,
         )
     @Volatile private var stateSource: String? = null
     private val pageNodes = PageNodes(showPackage) { pkg -> contentBounds(pkg) }
@@ -203,7 +205,7 @@ internal class BrowserServiceImpl(
         val found = queryTargets(sockets)
         val live = found.map { it.id }.toSet()
         axTrees.retain(live)
-        opener.retain(live)
+        unanswered.retain(live)
         return found
     }
 
@@ -312,9 +314,9 @@ internal class BrowserServiceImpl(
         return opener.follow(tab.copy(id = id), true, true, events, hook(id))
     }
 
-    override fun awaitingPage(id: String): Boolean = opener.awaitingPage(id)
+    override fun awaitingPage(id: String): Boolean = unanswered.awaitingPage(id)
 
-    override suspend fun awaitAnswer(id: String) = opener.awaitAnswer(id)
+    override suspend fun awaitAnswer(id: String) = unanswered.awaitAnswer(id)
 
     override suspend fun incognitoTabs(): Set<String> = privateTabs.listed(chromeSocket())
 
@@ -343,7 +345,7 @@ internal class BrowserServiceImpl(
         val pageUrl = webUrl(url)
         val (socket, chromeId) = parseBrowserTargetId(id)
         axTrees.remove(id)
-        opener.forget(id)
+        unanswered.forget(id)
         usePage(socket, chromeId) { cdp ->
             val error =
                 cdp.call("Page.navigate", buildJsonObject { put("url", pageUrl) })
@@ -354,12 +356,14 @@ internal class BrowserServiceImpl(
         return BrowserTarget(id = id, type = "page", url = pageUrl, socket = socket)
     }
 
-    override suspend fun capture(id: String, on: Boolean): BrowserCaptureResult =
-        recorder?.toggle(id, on)
+    override suspend fun capture(id: String, on: Boolean): BrowserCaptureResult {
+        unanswered.requireAnswered(id)
+        return recorder?.toggle(id, on)
             ?: throw ApiException.unavailable(
                 "browser_unavailable",
                 "Recording responses is not available",
             )
+    }
 
     private suspend fun closeQuietly(id: String) {
         try {
@@ -373,7 +377,7 @@ internal class BrowserServiceImpl(
         recorder?.stop(id)
         val closed = onTarget(id, "Target.closeTarget")
         axTrees.remove(id)
-        opener.forget(id)
+        unanswered.forget(id)
         val ok = closed.decodeCdp<ClosedTarget>()?.success != false
         return ActionResult(ok = ok, backend = "cdp", seq = sequence())
     }
@@ -636,13 +640,15 @@ internal class BrowserServiceImpl(
      * Runs [block] on a page. Nothing is tried again: the one failure known to pass, a stale
      * wireless-debugging connection, is reconnected where the socket opens ([CdpForward]), and the
      * rest, such as wireless debugging being off or Chrome refusing a command, would fail the same
-     * way again. A timeout is explained when Chrome shows a dialog or does not answer at all.
+     * way again. A timeout is explained when Chrome shows a dialog or does not answer at all. A tab
+     * still waiting for its server is refused at once, since it has no page to use yet.
      */
     private suspend fun <T> usePage(
         socket: String,
         chromeId: String,
         block: suspend (CdpSession) -> T,
     ): T {
+        unanswered.requireAnswered(browserTargetId(socket, chromeId))
         var started = false
         try {
             return useCdp(socket, "/devtools/page/$chromeId") { cdp ->

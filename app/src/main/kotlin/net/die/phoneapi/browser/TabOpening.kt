@@ -34,12 +34,54 @@ internal enum class TabOpening {
     SAVED,
 }
 
+/** Tabs whose server had not answered when their open returned, each with what watches it. */
+internal class UnansweredTabs {
+    private val tabs = ConcurrentHashMap<String, Job>()
+
+    /** Counts [id] as waiting, heard by [watch] when something can listen for it. */
+    fun add(id: String, watch: Job?) {
+        tabs[id] = watch ?: Job().apply { complete() }
+    }
+
+    /** Whether [id] is a tab that came back still waiting for its server. */
+    fun awaitingPage(id: String): Boolean = tabs.containsKey(id)
+
+    /**
+     * Fails while something still listens for [id]'s server. Unlike [awaitingPage], this ends when
+     * the listening does, since a tab nothing hears any more may well have loaded.
+     */
+    fun requireAnswered(id: String) {
+        if (tabs[id]?.isActive == true) throw tabWaiting(id)
+    }
+
+    /** Returns once nothing is listening for [id]'s server any more, which may be at once. */
+    suspend fun awaitAnswer(id: String) {
+        tabs[id]?.join()
+    }
+
+    /** The server answered, or the tab closed, as the watch running this heard. */
+    fun answered(id: String) {
+        tabs.remove(id)
+    }
+
+    /** Stops counting [id] as waiting, since it closed or was sent elsewhere. */
+    fun forget(id: String) {
+        tabs.remove(id)?.cancel()
+    }
+
+    /** Keeps only the tabs in [live]. */
+    fun retain(live: Set<String>) {
+        (tabs.keys - live).forEach(::forget)
+    }
+}
+
 /**
  * Sees a new tab to its page, and decides there what opening it gives back. [onPage] runs a block
  * on a session to a tab, [createBlank] opens a blank tab on a socket and returns its Chrome id, and
  * [close] closes a tab, whether or not it is still there. [savedPdf] and [loadPdf] are
  * [PageReader]'s. [onBrowser] runs a block on a new browser session hearing tabs and downloads on a
- * socket, and [scope], when there is one, keeps such a session on a tab that came back unanswered.
+ * socket, and [scope], when there is one, keeps such a session on a tab that came back unanswered,
+ * as [unanswered] records.
  */
 internal class TabOpener(
     private val createBlank: suspend (String) -> String,
@@ -49,28 +91,8 @@ internal class TabOpener(
     private val loadPdf: suspend (String, String) -> Boolean,
     private val onBrowser: suspend (String, suspend (TabEvents) -> Unit) -> Unit,
     private val scope: CoroutineScope?,
+    private val unanswered: UnansweredTabs,
 ) {
-    /** Tabs whose server had not answered when their open returned, each with what watches it. */
-    private val unanswered = ConcurrentHashMap<String, Job>()
-
-    /** Whether [id] is a tab that came back still waiting for its server. */
-    fun awaitingPage(id: String): Boolean = unanswered.containsKey(id)
-
-    /** Returns once nothing is listening for [id]'s server any more, which may be at once. */
-    suspend fun awaitAnswer(id: String) {
-        unanswered[id]?.join()
-    }
-
-    /** Stops counting [id] as waiting, since it closed or was sent elsewhere. */
-    fun forget(id: String) {
-        unanswered.remove(id)?.cancel()
-    }
-
-    /** Keeps only the tabs in [live]. */
-    fun retain(live: Set<String>) {
-        (unanswered.keys - live).forEach(::forget)
-    }
-
     /**
      * A stand-in tab shaped like [tab] when Chrome saved its URL before, since opening it would
      * save another copy. Null when it did not, or the URL no longer gives a PDF.
@@ -140,8 +162,8 @@ internal class TabOpener(
 
     /**
      * Keeps a browser session on [tab], which came back unanswered, so that a save starting after
-     * that is treated as one that started before it, and [awaitAnswer] knows when the page came. It
-     * ends when the tab closes, when the page commits, when something calls [forget], or after
+     * that is treated as one that started before it, and [unanswered] knows when the page came. It
+     * ends when the tab closes, when the page commits, when [unanswered] forgets the tab, or after
      * [LATE_MS]. Its session is listening before this returns, since the open's own session closes
      * then.
      *
@@ -165,7 +187,7 @@ internal class TabOpener(
                         onBrowser(tab.socket) { events ->
                             listening.complete(Unit)
                             hearLate(events, chromeId, navigate, incognito)
-                            unanswered.remove(tab.id)
+                            unanswered.answered(tab.id)
                         }
                     }
                 } catch (e: CancellationException) {
@@ -175,7 +197,7 @@ internal class TabOpener(
                     Log.d(TAG, "Stopped watching an unanswered tab: ${e.error}")
                 }
             }
-        unanswered[tab.id] = watch ?: Job().apply { complete() }
+        unanswered.add(tab.id, watch)
         if (watch == null) return
         watch.invokeOnCompletion { listening.complete(Unit) }
         watch.start()
