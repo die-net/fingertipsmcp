@@ -26,6 +26,17 @@ import net.die.phoneapi.model.ApiException
 /** An event, with [seq], its place among the session's events, counting from 0. */
 internal data class CdpEvent(val method: String, val params: JsonObject, val seq: Long = 0)
 
+/**
+ * Chrome answered a command with an error, [code] being its JSON-RPC code when it gave one. It is
+ * the cause of the `cdp_error` the call throws, so a caller can tell a refused command from a
+ * connection that broke without reading the message.
+ */
+internal class CdpRejected(val code: Int?, message: String) : Exception(message)
+
+/** What Chrome said when it refused the command behind this error, or null when it did not. */
+internal val ApiException.rejected: CdpRejected?
+    get() = cause as? CdpRejected
+
 /** A command's result, and how many events the session had read when it came. */
 internal data class CdpReply(val result: JsonObject, val eventsBefore: Long)
 
@@ -182,7 +193,8 @@ internal class CdpSession(
         val error = message.error
         if (error != null) {
             val reason = error.message ?: "DevTools rejected the command"
-            deliver(id, Result.failure(ApiException(502, "cdp_error", reason)))
+            val refusal = CdpRejected(error.code, reason)
+            deliver(id, Result.failure(ApiException(502, "cdp_error", reason, cause = refusal)))
             return
         }
         deliver(id, Result.success(CdpReply(message.result ?: JsonObject(emptyMap()), eventsRead)))
@@ -229,7 +241,7 @@ internal class CdpSession(
         val error: Rejected? = null,
     )
 
-    @Serializable private data class Rejected(val message: String? = null)
+    @Serializable private data class Rejected(val code: Int? = null, val message: String? = null)
 
     private companion object {
         const val CALL_TIMEOUT_MS = 15_000L
