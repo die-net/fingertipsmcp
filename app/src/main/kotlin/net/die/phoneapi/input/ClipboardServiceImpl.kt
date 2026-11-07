@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import net.die.phoneapi.core.ClipImage
 import net.die.phoneapi.core.ClipboardService
 import net.die.phoneapi.core.InputService
+import net.die.phoneapi.core.settled
 import net.die.phoneapi.helper.IHelper
 import net.die.phoneapi.helperclient.HelperConnection
 import net.die.phoneapi.model.ActionResult
@@ -44,14 +45,24 @@ class ClipboardServiceImpl(
 
     override suspend fun read(request: ClipboardReadRequest): ClipboardContent {
         if (!request.copy) return content(call { primaryClip() })
-        val seen = call { awaitClipChange(-1, 0) }
+        val before = call { primaryClipTimestamp() }
         input.key(KeyRequest("KEYCODE_COPY", autoWake = request.autoWake))
-        val now = call { awaitClipChange(seen, COPY_WAIT_MS) }
-        if (now > seen) {
-            settle(now)
-            mark()
-        }
-        return content(call { primaryClip() }).copy(changed = now > seen)
+        val copied =
+            awaitCopied(
+                before,
+                COPY_WAIT_MS,
+                stamp = { call { primaryClipTimestamp() } },
+                read = { call { primaryClip() } },
+                filled = { clip ->
+                    (0 until clip.itemCount).any {
+                        val item = clip.getItemAt(it)
+                        !item.text.isNullOrEmpty() || item.uri != null
+                    }
+                },
+            )
+        if (copied.changed) mark()
+        val clip = if (copied.changed) copied.clip else call { primaryClip() }
+        return content(clip).copy(changed = copied.changed)
     }
 
     override suspend fun write(request: ClipboardWriteRequest): ActionResult {
@@ -136,19 +147,6 @@ class ClipboardServiceImpl(
         return input.key(KeyRequest("KEYCODE_PASTE", autoWake = autoWake)).copy(backend = BACKEND)
     }
 
-    /**
-     * Waits for the clipboard to stop changing. On Android 16, Chrome's first copy after it starts
-     * can read back empty right after the change, and holds the text 100 ms later.
-     */
-    private suspend fun settle(changes: Long) {
-        var last = changes
-        repeat(COPY_WAIT_MS.toInt() / SETTLE_MS.toInt()) {
-            val next = call { awaitClipChange(last, SETTLE_MS) }
-            if (next == last) return
-            last = next
-        }
-    }
-
     private suspend fun readAll(pipe: ParcelFileDescriptor): ByteArray =
         withContext(io) {
             try {
@@ -200,10 +198,36 @@ class ClipboardServiceImpl(
         const val MAX_TEXT = 100_000
         /** How long an app gets to put its selection on the clipboard after KEYCODE_COPY. */
         const val COPY_WAIT_MS = 1_000L
-        /** How long the clipboard has to stay unchanged after a copy before it is read. */
-        const val SETTLE_MS = 100L
         const val BUFFER_BYTES = 64 * 1024
         /** ClipDescription.EXTRA_IS_SENSITIVE, which Android 13 named; apps set it earlier. */
         const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
     }
+}
+
+/** What a copy did: whether a new clip went on the clipboard, and that clip. */
+internal data class Copied<C>(val changed: Boolean, val clip: C?)
+
+/**
+ * Waits up to [timeoutMs] for a clip newer than the one with timestamp [before] that is [filled]. A
+ * copy gives the clip a new timestamp, which [stamp] reads; the change count is no use, since on
+ * Android 16 one write moves it twice, a second apart. On Android 16, Chrome's first copy after it
+ * starts can read back empty right after it lands and hold the text 100 ms later, so an empty new
+ * clip is read again until the deadline.
+ */
+internal suspend fun <C : Any> awaitCopied(
+    before: Long,
+    timeoutMs: Long,
+    stamp: suspend () -> Long,
+    read: suspend () -> C?,
+    filled: (C) -> Boolean,
+): Copied<C> {
+    var changed = false
+    var clip: C? = null
+    settled(timeoutMs) {
+        val now = stamp()
+        changed = now >= 0 && now != before
+        clip = if (changed) read() else null
+        clip?.let(filled) == true
+    }
+    return Copied(changed, clip)
 }
