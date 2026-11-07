@@ -1,7 +1,5 @@
 package net.die.phoneapi.browser
 
-import java.net.URI
-import java.net.URISyntaxException
 import java.util.zip.CRC32
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -496,8 +494,10 @@ internal fun matchesIn(
 }
 
 /**
- * The links whose text has query and whose URL has hrefContains, each URL once, without tracking
- * parameters. A product's image, title, and price often link to the same place.
+ * The links whose text has query and whose URL has hrefContains, each URL once. A product's image,
+ * title, and price often link to the same place, sometimes with different click-tracking
+ * parameters, so links are told apart by [withoutTracking], and each comes back with the URL the
+ * page gave its first one.
  */
 private fun findLinks(
     page: RenderedPage,
@@ -513,12 +513,11 @@ private fun findLinks(
     val found =
         page.links
             .asSequence()
-            .map { it.copy(href = withoutTracking(it.href)) }
             .filter { link ->
                 (text == null || link.text.contains(text, ignoreCase = true)) &&
                     (href == null || link.href.contains(href, ignoreCase = true))
             }
-            .filter { link -> seen.add(link.href).also { if (!it) repeats++ } }
+            .filter { link -> seen.add(withoutTracking(link.href)).also { if (!it) repeats++ } }
             .toList()
     val links =
         found.take(request.limit).map {
@@ -528,43 +527,29 @@ private fun findLinks(
 }
 
 /**
- * [href] without the query parameters that only track a click, such as utm_source, and on Amazon
- * also its /ref= path segment and its search and placement parameters. What is left still opens the
- * same page.
+ * [href] without the query parameters that ad and mail networks add to track a click on any site,
+ * such as utm_source and fbclid, for telling links to one page apart. What is left opens the same
+ * page.
  */
 internal fun withoutTracking(href: String): String {
     val hash = href.indexOf('#')
     val fragment = if (hash < 0) "" else href.substring(hash)
     val beforeHash = if (hash < 0) href else href.substring(0, hash)
     val mark = beforeHash.indexOf('?')
-    var path = if (mark < 0) beforeHash else beforeHash.substring(0, mark)
-    val query = if (mark < 0) null else beforeHash.substring(mark + 1)
-    val amazon = host(path)?.let { AMAZON_HOST.containsMatchIn(it) } == true
-    if (amazon) path = AMAZON_REF.replace(path, "")
+    if (mark < 0) return href
+    val path = beforeHash.substring(0, mark)
     val kept =
-        query
-            ?.split('&')
-            ?.filter { param ->
-                val name = param.substringBefore('=').lowercase()
-                param.isNotEmpty() && !tracking(name) && !(amazon && amazonTracking(name))
-            }
-            .orEmpty()
+        beforeHash.substring(mark + 1).split('&').filter { param ->
+            param.isNotEmpty() && !tracking(param.substringBefore('='))
+        }
     val rebuilt = if (kept.isEmpty()) path else path + "?" + kept.joinToString("&")
     return rebuilt + fragment
 }
 
-private fun host(url: String): String? =
-    try {
-        URI(url).host?.lowercase()
-    } catch (_: URISyntaxException) {
-        null
-    }
-
-private fun tracking(name: String): Boolean =
-    name in TRACKING_PARAMS || TRACKING_PREFIXES.any { name.startsWith(it) }
-
-private fun amazonTracking(name: String): Boolean =
-    name in AMAZON_PARAMS || AMAZON_PREFIXES.any { name.startsWith(it) }
+private fun tracking(name: String): Boolean {
+    val lower = name.lowercase()
+    return lower in TRACKING_PARAMS || TRACKING_PREFIXES.any { lower.startsWith(it) }
+}
 
 private val TRACKING_PARAMS =
     setOf(
@@ -588,46 +573,37 @@ private val TRACKING_PARAMS =
 
 private val TRACKING_PREFIXES = listOf("utm_")
 
-private val AMAZON_PARAMS =
-    setOf(
-        "ref",
-        "ref_",
-        "_encoding",
-        "content-id",
-        "crid",
-        "dib",
-        "dib_tag",
-        "qid",
-        "sprefix",
-        "sr",
-        "linkcode",
-        "tag",
-        "linkid",
-    )
+/**
+ * The origin of [url], as scheme, host, and port, or null for one with no host. [url] is a link's
+ * `href` as Chrome writes it, already absolute with its scheme and host in lower case, so it is cut
+ * apart rather than parsed: `java.net.URI` refuses characters Chrome leaves in a URL, such as `|`
+ * in a query, and would make such a link look cross-origin.
+ */
+internal fun origin(url: String): String? {
+    val schemeEnd = url.indexOf("://")
+    if (schemeEnd <= 0) return null
+    val scheme = url.substring(0, schemeEnd).lowercase()
+    val start = schemeEnd + SCHEME_SEPARATOR
+    val end = url.indexOfAny(AUTHORITY_END, start).let { if (it < 0) url.length else it }
+    val authority = url.substring(start, end).substringAfterLast('@')
+    val portAt =
+        if (authority.startsWith('[')) authority.indexOf("]:").let { if (it < 0) -1 else it + 1 }
+        else authority.lastIndexOf(':')
+    val host = (if (portAt < 0) authority else authority.substring(0, portAt)).lowercase()
+    if (host.isEmpty()) return null
+    val port =
+        if (portAt >= 0) authority.substring(portAt + 1).toIntOrNull() ?: return null
+        else
+            when (scheme) {
+                "https" -> HTTPS_PORT
+                "http" -> HTTP_PORT
+                else -> -1
+            }
+    return "$scheme://$host:$port"
+}
 
-private val AMAZON_PREFIXES = listOf("pd_rd_", "pf_rd_", "sp_")
-
-private val AMAZON_HOST = Regex("""(^|\.)amazon\.[a-z.]+$""")
-
-private val AMAZON_REF = Regex("""/ref=[^/]*""")
-
-private fun origin(url: String): String? =
-    try {
-        val uri = URI(url)
-        val scheme = uri.scheme?.lowercase() ?: return null
-        val host = uri.host?.lowercase() ?: return null
-        val port =
-            if (uri.port != -1) uri.port
-            else
-                when (scheme) {
-                    "https" -> HTTPS_PORT
-                    "http" -> HTTP_PORT
-                    else -> -1
-                }
-        "$scheme://$host:$port"
-    } catch (_: URISyntaxException) {
-        null
-    }
+private val AUTHORITY_END = charArrayOf('/', '?', '#')
+private const val SCHEME_SEPARATOR = 3
 
 private const val MAX_READ_CHARS = 100_000
 private const val MAX_CONTEXT_CHARS = 2_000
