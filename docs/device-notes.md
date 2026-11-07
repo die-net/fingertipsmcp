@@ -178,6 +178,14 @@ On the Android 11 test phone with Chrome 156.0.8078.73 on 2026-11-06, through Ph
 - The stand-in works on this Chrome. `capture` true opens a blank tab and navigates it, which sees `isDownload`. It returned `savedPdf` true in 6 to 9 s, with Chrome hidden and with it in front. No dialog was on screen after it, and Chrome saved the file each time. `read` of the 15-page paper took 2.1 s, `extracted` `pdf`, 38,965 characters, with the right title. A `find` for "attention" took 0.2 s with 90 matches. `read` of the 1810.04805 paper took 1.6 s, 64,220 characters. So the Fetch domain answers the navigation to a PDF here, and the page's fetch is served.
 - A URL PhoneAPI remembers needs no `capture`: `browser_read` with `url` of the first paper then took 8.1 s, and read it.
 
+So every tab now opens blank and is navigated, which is the route `capture` took, and `Page.enable` comes before the navigation. Checked with that build on the Android 16 emulator with Chrome 133 on 2026-11-06, with Chrome hidden, with Google Drive installed:
+
+- Chrome 133 answers `Page.navigate` for a PDF with `net::ERR_ABORTED` and no `isDownload`, and the save follows. So a navigation that fails gets 2 s for the save to show before it is a 400, which a host that does not resolve then waits out.
+- A first plain open of four arXiv PDFs returned `savedPdf` true in 3.5 to 7.2 s, and each read as `pdf` in 0.9 to 2.5 s. The launcher stayed in front each time, so Drive's viewer did not come forward, as it did once when an open tab navigated to a PDF.
+- A plain page opened in 0.6 s, and saw `history.length` 2, as it does after a person types a URL into a new tab. A host that does not resolve was a 400 in 2.3 s, with the tab closed.
+- A second save of a file by the same name, with Chrome hidden, left Chrome's "Download file again?" dialog waiting. It showed when Chrome next came forward, and covered the page until cancelled. PhoneAPI forgets what it saved when it restarts, so this needs a restart between the two opens.
+- A fresh Chrome's "Chrome notifications make things easier" prompt also covered the page when Chrome came forward, and `touch` input got `content_unavailable` until it was dismissed.
+
 Checked through PhoneAPI on the Android 16 emulator, Chrome 133 with `AndroidOpenPdfInline` on, on 2026-11-05, against 22 public PDFs and the scoring in `pdftotext`. Word recall against `pdftotext` was 95 to 100% for papers in one and two columns, menus, the RFC, a Census report whose table pages carry `/Rotate 90`, an IRS form, a Supreme Court opinion, slides, a designed annual report, and Chinese and Arabic reports. Running headers and footers, which `pdftotext` keeps, account for most of the rest.
 - Bookmarks gave the outline where a PDF has real ones: every bookmark of the papers, the RFC, and the RISC-V manual came out as a heading at its depth, and 803 of the RP2350 datasheet's 1168, the rest being past the 2,000,000-character cap. Census and a menu had bookmarks that name nothing on the page, so they used the size and numbering rules.
 - The first read of the 1371-page RP2350 datasheet took 12.4 s in 2 s steps; a find after it took 0.4 s.
@@ -302,6 +310,8 @@ On the Android 11 test phone on 2026-11-06, Gboard typed mixed case and symbols.
 - With the page's nodes present, `clear` emptied the field, in a 3.5 s call that typed 8 characters after it, `setText` worked, and `keyevent` typed `Key Ev3nt!`.
 - `keyboard_show` with a selector raised the keyboard in 0.5 to 1.5 s, both times it was tried.
 
+`KeyMatcher` now knows those two names, and `looksLikeKeyboard` counts every key that types a character, by literal or spoken label. Reading the literal character from a key's child node is not safe: the letter keys' children include the digit they give on a long press, so `q` has `q` and `1`. On the Android 16 emulator with Gboard on 2026-11-06, with that build, `a^b|c` was exact, `50%` then ` d` both typed in `keyboard` mode, and `5%` then ` N7` both typed in `auto`.
+
 `keyboard_show` on the Android 16 emulator on 2026-11-06: without a selector, with a field focused, the keyboard came up in 1.5 s. With a selector, one try said `The keyboard did not appear`, two worked, and three failed `not_found`, the Chrome node collapse above being the likely cause.
 
 ## MCP SDK
@@ -424,6 +434,8 @@ Before this, a `browser.dialog` wait on a page that did not answer failed `cdp_t
 - What happens when mDNS misses the pairing dialog, and `pair()` then looks for the port itself. mDNS found the dialog on Android 11, 12, and 13.
 - That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
+- That a first plain open of a PDF reads on the Android 11 test phone with tabs opened blank, with Chrome in front and hidden, and that Chrome's download dialog stays away, as it did for `capture`. On Chrome 145, which shows PDFs in its viewer, that the same open gives the viewer's tab rather than a stand-in.
+- That `^`, `|`, and typing after `%` work on the Android 11 test phone's Gboard, which so far has run only the build before those fixes.
 - That PIN unlock works on the phone, which has only run it on emulators with these waits. Also how long a keyboard read takes there with `refresh` on each node, and whether Android 11's Gboard goes stale as Android 16's does.
 - How long a tab switch takes on the phone, and whether 2 seconds always covers it. A `touch` tap is refused with `not_visible` past that.
 - That Chrome on the phone opens an incognito tab for `OPEN_PRIVATE_TAB` from the shell user and lists it with its own `browserContextId`, and whether Chrome's "Lock Incognito tabs when you leave Chrome" setting blocks a tab after cleanup sends Chrome home. Also that the viewer shows an incognito tab black there, as on the emulator, and that the phone's Chrome has the Incognito Screenshot flag and it makes the viewer show the tab.
