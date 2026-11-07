@@ -26,8 +26,8 @@ import net.die.phoneapi.model.LaunchRequest
 /**
  * Launching, stopping, clearing and deep-linking apps. Installing is out of scope.
  *
- * Launching goes through the helper's shell when it runs, and through the platform without it;
- * intents, `stop` and `clear` need the helper's shell UID (`apps.manage` in the capability map).
+ * Launching goes through the helper when it runs, and through the platform without it; intents,
+ * `stop` and `clear` need the helper's shell UID (`apps.manage` in the capability map).
  */
 class AppsServiceImpl(
     private val context: Context,
@@ -52,8 +52,8 @@ class AppsServiceImpl(
 
     /**
      * Android drops this app's background activity starts without an error, so the launch goes
-     * through the helper's shell when it runs, as [intent] does. Without the helper it is this
-     * app's own start, which works only while PhoneAPI was on screen in the last few seconds.
+     * through the helper when it runs, as [intent] does. Without the helper it is this app's own
+     * start, which works only while PhoneAPI was on screen in the last few seconds.
      */
     override suspend fun launch(packageName: String, request: LaunchRequest): ActionResult {
         val woke = prepare(true)
@@ -79,7 +79,7 @@ class AppsServiceImpl(
 
     /**
      * Android drops this app's background activity starts without an error, so intents go through
-     * the helper's shell, which is allowed to start them.
+     * the helper, which is allowed to start them.
      */
     override suspend fun intent(request: IntentRequest): IntentStart {
         val component =
@@ -91,8 +91,8 @@ class AppsServiceImpl(
             }
         shell.require()
         val woke = prepare(true)
-        val started = parseAmStart(shell.exec(amStartArgs(request), AM_START_TIMEOUT_MS))
-        started.failure?.let { throw intentFailed(request, it, started.message.orEmpty()) }
+        val started = shell.startActivity(startIntent(request), START_WAIT_MS)
+        started.failure?.let { throw intentFailed(describe(request), it, started.message) }
         val packageName = request.packageName ?: component?.packageName ?: started.activityPackage
         val missing = packageName?.takeIf { !started.chooser && !awaitForeground(it) }
         invalidateSnapshots()
@@ -108,7 +108,7 @@ class AppsServiceImpl(
                             "Several apps handle ${describe(request)}, so Android is showing a " +
                                 "chooser. Name a package to pick one."
                         missing != null ->
-                            "am start accepted ${describe(request)}, but $missing did not come " +
+                            "Android accepted ${describe(request)}, but $missing did not come " +
                                 "to the foreground."
                         else -> started.warning
                     },
@@ -179,21 +179,11 @@ class AppsServiceImpl(
         }
     }
 
-    /** Starts [intent] with the helper's `am start`, which may start activities. */
+    /** Starts [intent] through the helper, which may start activities. */
     private suspend fun startFromShell(intent: Intent) {
-        val request = launchRequest(intent)
-        val started = parseAmStart(shell.exec(amStartArgs(request), AM_START_TIMEOUT_MS))
-        started.failure?.let { throw intentFailed(request, it, started.message.orEmpty()) }
+        val started = shell.startActivity(intent, START_WAIT_MS)
+        started.failure?.let { throw intentFailed(describe(intent), it, started.message) }
     }
-
-    /** [intent], a launch intent with its component set, as the helper's `am start` takes it. */
-    private fun launchRequest(intent: Intent): IntentRequest =
-        IntentRequest(
-            action = intent.action ?: Intent.ACTION_MAIN,
-            component = intent.component?.flattenToShortString(),
-            categories = intent.categories?.toList().orEmpty(),
-            flags = intent.flags,
-        )
 
     private suspend fun awaitForeground(packageName: String): Boolean =
         awaitDeviceState(state, bus, FOREGROUND_WAIT_MS) {
@@ -262,7 +252,7 @@ class AppsServiceImpl(
 
     private companion object {
         const val FOREGROUND_WAIT_MS = 5_000L
-        // am start -W waits for the first frame, and a cold start can take several seconds.
-        const val AM_START_TIMEOUT_MS = 20_000L
+        // A start waits for the first frame, and a cold start can take several seconds.
+        const val START_WAIT_MS = 20_000L
     }
 }

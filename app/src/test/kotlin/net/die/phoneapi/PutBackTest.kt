@@ -1,24 +1,22 @@
 package net.die.phoneapi
 
 import kotlinx.coroutines.test.runTest
-import net.die.phoneapi.helperclient.ShellResult
+import net.die.phoneapi.apps.ActivityStart
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class PutBackTest {
     @Test
-    fun `goes home when am start fails`() = runTest {
+    fun `goes home when the start fails`() = runTest {
         var home = 0
-        // A component whose name holds "Error" started fine.
-        val started = "Starting: Intent { cmp=com.x/.ErrorScreen }"
-        putBack("com.x", { ShellResult(exit = 0, stdout = started) }) { home++ }
+        putBack("com.x", { ActivityStart(code = 0) }) { home++ }
         assertEquals(0, home)
-        // am exits 0 and reports the failure only on stderr.
-        val refused = "java.lang.SecurityException: Permission Denial: starting Intent"
-        putBack("com.x", { ShellResult(exit = 0, stderr = refused) }) { home++ }
+        // Already in front, so nothing new started, but it is back.
+        putBack("com.x", { ActivityStart(code = 2) }) { home++ }
+        assertEquals(0, home)
+        putBack("com.x", { ActivityStart(code = -94, refusal = "Permission Denial") }) { home++ }
         assertEquals(1, home)
-        val unresolved = "Error: Activity not started, unable to resolve Intent"
-        putBack("com.x", { ShellResult(exit = 0, stdout = unresolved) }) { home++ }
+        putBack("com.x", { ActivityStart(code = -91) }) { home++ }
         assertEquals(2, home)
     }
 }

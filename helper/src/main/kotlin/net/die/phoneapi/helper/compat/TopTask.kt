@@ -6,6 +6,18 @@ import android.os.IBinder
 import android.util.Log
 import java.lang.reflect.Method
 
+/** The activity task manager, through its Binder. */
+internal fun activityTaskManager(): Any {
+    val binder =
+        serviceBinder("activity_task")
+            ?: error("The activity task service is not available to this process")
+    return reflective("IActivityTaskManager") {
+        val stub = Class.forName("android.app.IActivityTaskManager\$Stub")
+        val asInterface = stub.getMethod("asInterface", IBinder::class.java)
+        checkNotNull(asInterface.invoke(null, binder)) { "IActivityTaskManager is null" }
+    }
+}
+
 /**
  * The package of the top task, through the activity task manager's Binder: what `dumpsys activity
  * activities` reports, without starting `dumpsys`, which takes about 100 ms on a phone. `getTasks`
@@ -13,19 +25,10 @@ import java.lang.reflect.Method
  * keep its Android 10 meaning: no filtering, every display.
  */
 internal class TopTask {
-    private val manager: Any
+    private val manager = activityTaskManager()
     private val getTasks: Method
 
     init {
-        val binder =
-            serviceBinder("activity_task")
-                ?: error("The activity task service is not available to this process")
-        manager =
-            reflective("IActivityTaskManager") {
-                val stub = Class.forName("android.app.IActivityTaskManager\$Stub")
-                val asInterface = stub.getMethod("asInterface", IBinder::class.java)
-                checkNotNull(asInterface.invoke(null, binder)) { "IActivityTaskManager is null" }
-            }
         getTasks =
             manager.javaClass.methods
                 .filter { method ->

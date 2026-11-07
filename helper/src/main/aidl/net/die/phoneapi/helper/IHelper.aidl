@@ -1,12 +1,14 @@
 package net.die.phoneapi.helper;
 
 import android.content.ClipData;
+import android.content.Intent;
 import android.os.ParcelFileDescriptor;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import net.die.phoneapi.helper.ITreeClient;
 import net.die.phoneapi.helper.ShellResult;
+import net.die.phoneapi.helper.StartResult;
 import net.die.phoneapi.helper.TouchscreenInfo;
 
 // Implemented by the shell-UID helper process. Every method verifies that the caller is the
@@ -58,6 +60,11 @@ interface IHelper {
 
     // The package of the top task, or null when there is none. Cheaper than dumpsys.
     String topPackage() = 60;
+
+    // Starts an activity as the shell user, which may start one from the background. With a
+    // timeoutMs above 0, waits up to that long for it to be drawn, as `am start -W` does, and the
+    // result names the component that took the intent.
+    StartResult startActivity(in Intent intent, long timeoutMs) = 61;
 
     // The primary clip, read as the shell user, which may read it with another app in front. Null
     // when the clipboard is empty.

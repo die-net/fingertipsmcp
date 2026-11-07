@@ -1,6 +1,7 @@
 package net.die.phoneapi
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
 import android.util.Log
@@ -13,9 +14,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.die.phoneapi.apps.ActivityStart
 import net.die.phoneapi.apps.AppsServiceImpl
 import net.die.phoneapi.apps.RESUMED_ACTIVITY_ARGS
-import net.die.phoneapi.apps.parseAmStart
 import net.die.phoneapi.apps.resumedPackage
 import net.die.phoneapi.browser.BrowserServiceImpl
 import net.die.phoneapi.browser.CdpForward
@@ -49,7 +50,6 @@ import net.die.phoneapi.helperclient.HelperStatusNotifier
 import net.die.phoneapi.helperclient.HelperSupervisor
 import net.die.phoneapi.helperclient.KeystorePrivateKeyStore
 import net.die.phoneapi.helperclient.SecureSettings
-import net.die.phoneapi.helperclient.ShellResult
 import net.die.phoneapi.helperclient.WirelessPairing
 import net.die.phoneapi.helperclient.WirelessSetting
 import net.die.phoneapi.helperclient.grantSecureSettings
@@ -327,27 +327,23 @@ class AppGraph(
         return topPackage() == pkg
     }
 
-    private suspend fun launchPackage(pkg: String) =
-        shell.exec(
-            listOf(
-                "am",
-                "start",
-                "-a",
-                "android.intent.action.MAIN",
-                "-c",
-                "android.intent.category.LAUNCHER",
-                "-p",
-                pkg,
-            )
+    private suspend fun launchPackage(pkg: String): ActivityStart =
+        shell.startActivity(
+            Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .setPackage(pkg)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
 
     private suspend fun openPrivateTab(pkg: String) {
         val started =
-            parseAmStart(shell.exec(listOf("am", "start", "-a", OPEN_PRIVATE_TAB, "-p", pkg)))
+            shell.startActivity(
+                Intent(OPEN_PRIVATE_TAB).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         if (started.failure != null) {
             throw ApiException.unavailable(
                 "browser_unavailable",
-                "Chrome would not open an incognito tab: ${started.message ?: started.failure}",
+                "Chrome would not open an incognito tab: ${started.message}",
             )
         }
     }
@@ -504,15 +500,15 @@ class AppGraph(
 }
 
 /**
- * Starts [pkg]'s launcher activity with [launch], and goes [home] when `am start` reports that it
+ * Starts [pkg]'s launcher activity with [launch], and goes [home] when Android reports that it
  * could not, as for a package with no launcher entry.
  */
 internal suspend fun putBack(
     pkg: String,
-    launch: suspend (String) -> ShellResult,
+    launch: suspend (String) -> ActivityStart,
     home: suspend () -> Unit,
 ) {
-    if (parseAmStart(launch(pkg)).failure != null) home()
+    if (launch(pkg).failure != null) home()
 }
 
 private class GraphDevice(private val provider: DeviceInfoProvider) : DeviceFacts {
