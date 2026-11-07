@@ -50,9 +50,8 @@ object Main {
     private var instance: AutoCloseable? = null
 
     private fun run(packageName: String) {
-        // The lock's address type is a hidden class, so the exemption comes first.
-        HiddenApi.exempt()
         holdInstance(packageName)
+        HiddenApi.exempt()
         val helper = HelperImpl()
         helper.pinPackage(packageName)
         val classpath = System.getenv("CLASSPATH").orEmpty()
@@ -70,18 +69,10 @@ object Main {
                         halt(0)
                     }
         } catch (e: IOException) {
-            runUnlocked(e)
-        } catch (e: IllegalStateException) {
-            runUnlocked(e)
+            // Without the lock a second launch could start a second helper, which the app stops
+            // when it registers. Running is still better than leaving the app with none.
+            Log.w(TAG, "Could not take the helper lock", e)
         }
-    }
-
-    /**
-     * Without the lock a second launch could start a second helper, which the app stops when it
-     * registers. Running is still better than leaving the app with none.
-     */
-    private fun runUnlocked(why: Exception) {
-        Log.w(TAG, "Could not take the helper lock", why)
     }
 
     @Suppress("ExitOutsideMain") // This process is the helper, so exit codes are how it reports.
