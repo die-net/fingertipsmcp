@@ -562,7 +562,7 @@ internal class BrowserServiceImpl(
                 val url = loaded?.frameTree?.frame?.url
                 cdp.call("Accessibility.enable")
                 val tree = cdp.call("Accessibility.getFullAXTree")
-                axTrees.put(id, tree)
+                axTrees.put(id, AxSnapshot(tree, loaded?.frameTree?.frame?.loaderId))
                 val text = formatAxTree(tree, url, options)
                 val script = stateSource ?: stateScript(pendingScript()).also { stateSource = it }
                 val state = pageState(cdp, loaded?.frameTree?.frame?.id, script)
@@ -803,15 +803,18 @@ internal const val AX_TREE_CACHE_CAP = 16
 /** Input that brings the tab forward and injects hardware events. */
 internal val TOUCH_INPUTS = setOf(BrowserInput.TOUCH, BrowserInput.AUTO)
 
+/** A snapshot's accessibility tree, and the loader id of the document it read. */
+internal class AxSnapshot(val tree: JsonObject, val loaderId: String?)
+
 /** The last accessibility tree of each target, at most [cap] of them, oldest dropped first. */
 internal class AxTreeCache(cap: Int) {
     private val limit = cap.coerceAtLeast(1)
-    private val map = LinkedHashMap<String, JsonObject>(limit, LOAD, true)
+    private val map = LinkedHashMap<String, AxSnapshot>(limit, LOAD, true)
 
-    @Synchronized fun get(id: String): JsonObject? = map[id]
+    @Synchronized fun get(id: String): AxSnapshot? = map[id]
 
     @Synchronized
-    fun put(id: String, tree: JsonObject) {
+    fun put(id: String, tree: AxSnapshot) {
         map[id] = tree
         trim()
     }

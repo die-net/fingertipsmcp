@@ -112,7 +112,7 @@ Authenticated errors are JSON:
 | 400 | `bad_request` | Bad JSON, enum, or query |
 | 403 | `forbidden` | Missing scope |
 | 404 | `not_found` | Unknown id, tab, session, or package (authenticated), or nothing handles an intent |
-| 404 | `stale_ref` | A UI node ref no longer points at a node; take a new snapshot |
+| 404 | `stale_ref` | A UI node ref no longer points at a node, or a browser snapshot ref is from a document the tab has since replaced, or its node has left the page; take a new snapshot |
 | 404 | *(empty body)* | Missing/invalid Bearer |
 | 409 | `needs_user` | Unlock needs a person: no stored PIN, no keypad found, or the PIN was rejected |
 | 409 | `no_keyboard` | `mode` `keyboard` and no on-screen keyboard keys were found, or the keyboard went away during typing and stayed away |

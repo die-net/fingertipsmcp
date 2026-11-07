@@ -12,8 +12,9 @@ import net.die.phoneapi.model.ApiException
 
 /**
  * Finds the element a tap or focus names on a page: a snapshot ref, through the target's last
- * accessibility tree in [axTrees], or a CSS selector. A ref whose node has gone fetches the tree
- * again.
+ * accessibility tree in [axTrees], or a CSS selector. A ref holds only on the document its snapshot
+ * read, so one from another document, or whose node has gone, is `stale_ref`, never looked up again
+ * by an id that may name another element now.
  */
 internal class ElementLocator(private val axTrees: AxTreeCache) {
     /** The content quads of [target], scrolled into view first. */
@@ -55,16 +56,28 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
     }
 
     private suspend fun refQuads(cdp: CdpSession, targetId: String, ref: String): JsonArray {
-        val backend = cachedBackend(targetId, ref)
-        if (backend != null) {
-            try {
-                return boxed(cdp, backendParams(backend))
-            } catch (e: ApiException) {
-                if (e.error != "cdp_error") throw e
-                axTrees.remove(targetId)
-            }
+        val params = refParams(cdp, targetId, ref)
+        try {
+            return boxed(cdp, params)
+        } catch (e: ApiException) {
+            // Chrome refuses a node id the document no longer has.
+            if (e.rejected == null) throw e
+            throw staleRef(ref, "its node has left the page", e)
         }
-        return boxed(cdp, backendParams(fetchBackend(cdp, targetId, ref)))
+    }
+
+    /**
+     * The DOM params of [ref] from [targetId]'s last snapshot, once the page still has the document
+     * that snapshot read.
+     */
+    private suspend fun refParams(cdp: CdpSession, targetId: String, ref: String): JsonObject {
+        val snapshot =
+            axTrees.get(targetId) ?: throw staleRef(ref, "no snapshot of this tab is kept", null)
+        val loader = mainFrame(cdp).loaderId
+        if (loader == null || loader != snapshot.loaderId) {
+            throw staleRef(ref, "the tab has loaded another document since the snapshot", null)
+        }
+        return backendParams(elementBackendId(snapshot.tree, ref))
     }
 
     private suspend fun boxed(cdp: CdpSession, params: JsonObject): JsonArray {
@@ -72,22 +85,6 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
         val quads = quadsOf(cdp.call("DOM.getContentQuads", params))
         if (quads.isEmpty()) throw ApiException(409, "offscreen", "The node has no box on the page")
         return quads
-    }
-
-    private fun cachedBackend(targetId: String, ref: String): Int? {
-        val tree = axTrees.get(targetId) ?: return null
-        return try {
-            elementBackendId(tree, ref)
-        } catch (_: ApiException) {
-            null
-        }
-    }
-
-    private suspend fun fetchBackend(cdp: CdpSession, targetId: String, ref: String): Int {
-        cdp.call("Accessibility.enable")
-        val tree = cdp.call("Accessibility.getFullAXTree")
-        axTrees.put(targetId, tree)
-        return elementBackendId(tree, ref)
     }
 
     private fun backendParams(backend: Int): JsonObject = buildJsonObject {
@@ -123,8 +120,7 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
     /** The DOM params that name [target], for focusing it. */
     suspend fun focus(cdp: CdpSession, id: String, target: TapTarget): JsonObject =
         when (target) {
-            is TapTarget.Ref ->
-                backendParams(cachedBackend(id, target.id) ?: fetchBackend(cdp, id, target.id))
+            is TapTarget.Ref -> refParams(cdp, id, target.id)
             is TapTarget.Css -> cssNode(cdp, target.selector)
         }
 
@@ -132,6 +128,14 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
         const val ELEMENT_POLL_MS = 200L
     }
 }
+
+private fun staleRef(ref: String, why: String, cause: Throwable?): ApiException =
+    ApiException(
+        404,
+        "stale_ref",
+        "Ref $ref is from an older snapshot: $why. Take a new browser_snapshot.",
+        cause = cause,
+    )
 
 @Serializable private data class DocumentResult(val root: NodeId? = null)
 
