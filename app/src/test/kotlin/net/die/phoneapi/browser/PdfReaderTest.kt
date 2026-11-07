@@ -1,14 +1,5 @@
 package net.die.phoneapi.browser
 
-import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.die.phoneapi.model.ApiException
@@ -21,8 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Reading a PDF a tab shows, by putting PhoneAPI's own page in its place. */
-// Scripted sockets are read on a real dispatcher, and onPage closes each page socket.
-@Suppress("InjectDispatcher", "MissingUseCall")
+@Suppress("MissingUseCall") // onPage closes each page socket.
 class PdfReaderTest {
     private val harness = BrowserServiceTest()
 
@@ -76,11 +66,11 @@ class PdfReaderTest {
             loads++
             "SCRIPT"
         }
-        val result = onPage(page, 15) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        val result = onPage(page) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
         assertEquals(1, loads)
         val extract = result.value?.jsonObject
         assertEquals("pdf", extract?.get("extracted")?.jsonPrimitive?.content)
-        assertEquals(TAKE_OVER + List(7) { CALL }, page.awaitMethods(15))
+        assertEquals(TAKE_OVER + List(7) { CALL }, page.methods())
         val sent = page.sent().lines()
         // The navigation is answered with PhoneAPI's page, never sent to the network.
         assertTrue(sent.any { """"method":"Page.navigate"""" in it && URL in it })
@@ -100,18 +90,40 @@ class PdfReaderTest {
         replies.event("R1", after = 2)
         replies.idTo(3, "{}") // continueRequest R0
         replies.idTo(4, "{}") // fulfillRequest R1
-        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""", after = 4) // Page.navigate
+        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
         replies.idTo(5, "{}") // Fetch.disable
         replies.ready(loader = "L1")
         replies.loaded()
         replies.value("true")
         replies.value(EXTRACT)
         val page = replies.socket()
-        onPage(page, 14) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
         val sent = page.sent().lines()
         assertTrue(sent.any { "Fetch.continueRequest" in it && "R0" in it })
         assertTrue(sent.any { "Fetch.fulfillRequest" in it && "R1" in it })
         assertFalse(sent.any { "Fetch.fulfillRequest" in it && "R0" in it })
+    }
+
+    @Test
+    fun `answers a pause after a burst`() {
+        // A page busy loading sends far more events than the session's replay buffer holds while
+        // the first pause is still being answered, and the second pause must not be lost to them.
+        val replies = Replies()
+        replies.idTo(1, "{}") // Fetch.enable
+        replies.event("R0", after = 2, frame = "SUB", url = "https://example.com/frame")
+        replies.event("R1", after = 2)
+        repeat(100) { replies.noise() }
+        replies.idTo(3, "{}") // continueRequest R0
+        replies.idTo(4, "{}") // fulfillRequest R1
+        replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
+        replies.idTo(5, "{}") // Fetch.disable
+        replies.ready(loader = "L1")
+        replies.loaded()
+        replies.value("true")
+        replies.value(EXTRACT)
+        val page = replies.socket()
+        onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        assertTrue(page.sent().lines().any { "Fetch.fulfillRequest" in it && "R1" in it })
     }
 
     @Test
@@ -124,15 +136,15 @@ class PdfReaderTest {
         replies.value(EXTRACT)
         val page = replies.socket()
         val url = "HTTPS://Example.com/report.pdf"
-        onPage(page, 13) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), url) }
+        onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), url) }
         assertTrue(page.sent().lines().any { "Fetch.fulfillRequest" in it && "R1" in it })
     }
 
     @Test
     fun `fails when nothing pauses`() {
         // A service worker answers the navigation, so it never reaches the network, and
-        // Page.navigate
-        // returns with no pause to answer. The read fails at once rather than waiting for one.
+        // Page.navigate returns with no pause to answer. The read fails at once rather than
+        // waiting for one.
         val replies = Replies()
         replies.idTo(1, "{}") // Fetch.enable
         replies.idTo(2, """{"frameId":"F","loaderId":"L1"}""") // Page.navigate
@@ -140,11 +152,7 @@ class PdfReaderTest {
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
-                onPage(page, 3) {
-                    withTimeout(SAFETY_MS) {
-                        PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL)
-                    }
-                }
+                onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
             }
         assertEquals(PDF_FAILED, error.error)
         assertTrue("service worker" in error.message.orEmpty())
@@ -163,16 +171,16 @@ class PdfReaderTest {
         first.loaded()
         first.value("true")
         first.value(EXTRACT)
-        onPage(first.socket(), 13) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        onPage(first.socket()) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
         val again = Replies()
         again.handle(loader = "L1")
         again.value("\"parsed\"") // state
         again.value("true") // step
         again.value(EXTRACT)
         val page = again.socket()
-        onPage(page, 6) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
+        onPage(page) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
         assertEquals(1, loads)
-        assertEquals(HANDLE + List(3) { CALL }, page.awaitMethods(6))
+        assertEquals(HANDLE + List(3) { CALL }, page.methods())
         assertTrue(page.sent().lines().any { "phoneapiPdf.state" in it })
     }
 
@@ -188,7 +196,7 @@ class PdfReaderTest {
         repeat(30) { first.value("""{"pending":true}""") }
         val error =
             assertThrows(ApiException::class.java) {
-                onPage(first.socket(), 40) {
+                onPage(first.socket()) {
                     reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL)
                 }
             }
@@ -201,10 +209,10 @@ class PdfReaderTest {
         again.value("true") // step
         again.value(EXTRACT)
         val page = again.socket()
-        val result = onPage(page, 7) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
+        val result = onPage(page) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
         val extracted = result.value?.jsonObject?.get("extracted")
         assertEquals("pdf", extracted?.jsonPrimitive?.content)
-        assertEquals(HANDLE + List(4) { CALL }, page.awaitMethods(7))
+        assertEquals(HANDLE + List(4) { CALL }, page.methods())
     }
 
     @Test
@@ -217,8 +225,8 @@ class PdfReaderTest {
         replies.value("true")
         replies.value(EXTRACT)
         val page = replies.socket()
-        onPage(page, 13) { PdfReader { "" }.read(it, "t", MainFrame("F", URL, "L9"), URL) }
-        assertEquals("Fetch.enable", page.awaitMethods(13).first())
+        onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", URL, "L9"), URL) }
+        assertEquals("Fetch.enable", page.methods().first())
     }
 
     @Test
@@ -231,7 +239,7 @@ class PdfReaderTest {
         first.loaded()
         first.value("true")
         first.value(EXTRACT)
-        onPage(first.socket(), 13) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
+        onPage(first.socket()) { reader.read(it, "t", MainFrame("F", VIEWER, "L0"), URL) }
         val again = Replies()
         again.handle(loader = "L7")
         again.takeOver(loader = "L8", first = 4)
@@ -239,8 +247,8 @@ class PdfReaderTest {
         again.value("true")
         again.value(EXTRACT)
         val page = again.socket()
-        onPage(page, 16) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
-        val methods = page.awaitMethods(16)
+        onPage(page) { reader.read(it, "t", MainFrame("F", URL, "L1"), URL) }
+        val methods = page.methods()
         assertEquals(HANDLE + TAKE_OVER, methods.take(11))
         assertFalse(page.sent().lines().any { "phoneapiPdf.state" in it })
     }
@@ -313,22 +321,18 @@ class PdfReaderTest {
         replies.result("{}") // Fetch.enable
         replies.event("R1", after = 2)
         replies.idTo(3, "{}") // fulfillRequest
-        replies.idTo(
-            2,
-            """{"frameId":"F","loaderId":"L1","errorText":"net::ERR_ABORTED"}""",
-            after = 3,
-        )
+        replies.idTo(2, """{"frameId":"F","loaderId":"L1","errorText":"net::ERR_ABORTED"}""")
         replies.idTo(4, "{}") // Fetch.disable
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
-                onPage(page, 4) {
+                onPage(page) {
                     PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL)
                 }
             }
         assertEquals("Chrome did not open the PDF's page: net::ERR_ABORTED", error.message)
         assertEquals("page_error", error.error)
-        assertEquals("Fetch.disable", page.awaitMethods(4).last())
+        assertEquals("Fetch.disable", page.methods().last())
     }
 
     @Test
@@ -341,7 +345,7 @@ class PdfReaderTest {
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
-                onPage(page, 9) {
+                onPage(page) {
                     PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), URL)
                 }
             }
@@ -353,7 +357,7 @@ class PdfReaderTest {
         val page = Replies().socket()
         val error =
             assertThrows(ApiException::class.java) {
-                onPage(page, 0) {
+                onPage(page) {
                     PdfReader { "" }
                         .read(it, "t", MainFrame("F", VIEWER, "L0"), "file:///sdcard/a.pdf")
                 }
@@ -363,7 +367,7 @@ class PdfReaderTest {
     }
 
     @Test
-    fun `reads the PDF a viewer shows`() = runBlocking {
+    fun `reads the PDF a viewer shows`() = harness.virtual {
         val replies = Replies()
         replies.result("""{"frameTree":{"frame":{"id":"F","url":"$VIEWER","loaderId":"L0"}}}""")
         replies.takeOver(loader = "L1", first = 2)
@@ -371,14 +375,14 @@ class PdfReaderTest {
         replies.value("true")
         replies.value(EXTRACT)
         val page = replies.socket()
-        val read = reader(page, 14).read("t", BrowserReadRequest()).result
+        val read = reader(page).read("t", BrowserReadRequest()).result
         assertEquals("pdf", read.extracted)
         assertEquals("Hello PDF", read.content)
-        assertFalse("Page.createIsolatedWorld" in page.awaitMethods(14))
+        assertFalse("Page.createIsolatedWorld" in page.methods())
     }
 
     @Test
-    fun `knows its page by its loader`() = runBlocking {
+    fun `knows its page by its loader`() = harness.virtual {
         // The first read takes the viewer's tab over. The second finds PhoneAPI's page by its
         // loader and reads the PDF without page-read.js. The third finds a page at the PDF's URL
         // with another loader, as a site's page that copies PhoneAPI's would have, and reads it as
@@ -399,20 +403,19 @@ class PdfReaderTest {
         third.result("""{"frameTree":{"frame":{"id":"F","url":"$URL","loaderId":"L9"}}}""")
         third.result("""{"executionContextId":2}""")
         third.value(EXTRACT.replace("\"pdf\"", "\"page\""))
-        val sockets = listOf(first.socket() to 14, second.socket() to 7, third.socket() to 3)
+        val sockets = listOf(first.socket(), second.socket(), third.socket())
         val pages = ArrayDeque(sockets)
         val reader =
             PageReader({ "" }, { "" }, { "" }, null) { _, run ->
-                val (page, sent) = pages.removeFirst()
-                Evaluated(onPage(page, sent) { run(it) }, reloaded = false)
+                Evaluated(session(pages.removeFirst()) { run(it) }, reloaded = false)
             }
         assertEquals("pdf", reader.read("t", BrowserReadRequest()).result.extracted)
         assertEquals("pdf", reader.read("t", BrowserReadRequest()).result.extracted)
-        assertEquals(listOf("Page.getFrameTree") + HANDLE, sockets[1].first.methods().take(4))
+        assertEquals(listOf("Page.getFrameTree") + HANDLE, sockets[1].methods().take(4))
         assertEquals("page", reader.read("t", BrowserReadRequest()).result.extracted)
         assertEquals(
             listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"),
-            sockets[2].first.awaitMethods(3),
+            sockets[2].methods(),
         )
     }
 
@@ -423,24 +426,24 @@ class PdfReaderTest {
         val page = replies.socket()
         val error =
             assertThrows(ApiException::class.java) {
-                runBlocking { reader(page, 1).read("t", BrowserReadRequest(selector = "p")) }
+                harness.virtual { reader(page).read("t", BrowserReadRequest(selector = "p")) }
             }
         assertEquals("bad_request", error.error)
-        assertEquals(listOf("Page.getFrameTree"), page.awaitMethods(1))
+        assertEquals(listOf("Page.getFrameTree"), page.methods())
     }
 
     @Test
-    fun `reads HTML in isolation`() = runBlocking {
+    fun `reads HTML in isolation`() = harness.virtual {
         val replies = Replies()
         replies.result("""{"frameTree":{"frame":{"id":"F","url":"$URL"}}}""")
         replies.result("""{"executionContextId":2}""")
         replies.value(EXTRACT.replace("\"pdf\"", "\"page\""))
         val page = replies.socket()
-        val read = reader(page, 3).read("t", BrowserReadRequest()).result
+        val read = reader(page).read("t", BrowserReadRequest()).result
         assertEquals("page", read.extracted)
         assertEquals(
             listOf("Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate"),
-            page.awaitMethods(3),
+            page.methods(),
         )
     }
 
@@ -452,7 +455,7 @@ class PdfReaderTest {
         replies.value("\"object\"")
         replies.value("null")
         replies.value(loaded)
-        return onPage(replies.socket(), 12) { reader.open(it, "t", url) }
+        return onPage(replies.socket()) { reader.open(it, "t", url) }
     }
 
     /** A load from the viewer of [url] whose wait answers [loaded]. */
@@ -464,69 +467,68 @@ class PdfReaderTest {
         replies.value(loaded)
         val page = replies.socket()
         return assertThrows(ApiException::class.java) {
-            onPage(page, 11) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), url) }
+            onPage(page) { PdfReader { "" }.read(it, "t", MainFrame("F", VIEWER, "L0"), url) }
         }
     }
 
     /** A [PageReader] whose one DevTools session plays [page]. */
-    private fun reader(page: CausalSocket, sent: Int) =
+    private fun reader(page: StallingSocket) =
         PageReader({ "" }, { "" }, { "" }, null) { _, run ->
-            Evaluated(onPage(page, sent) { run(it) }, reloaded = false)
+            Evaluated(session(page) { run(it) }, reloaded = false)
+        }
+
+    /** Runs [block] on a session to [page], on the virtual clock. */
+    private fun <T> onPage(page: StallingSocket, block: suspend (CdpSession) -> T): T =
+        harness.virtual {
+            session(page, block)
+        }
+
+    /** Runs [block] on a session to [page]. */
+    private suspend fun <T> session(page: StallingSocket, block: suspend (CdpSession) -> T): T =
+        try {
+            CdpSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
+                .use { cdp ->
+                    cdp.open("/devtools/page/t")
+                    block(cdp)
+                }
+        } finally {
+            page.close()
         }
 
     /**
-     * Runs [block] on a session to [page], and before closing it waits until [sent] commands are
-     * written. A reply is scripted, so it can come before its command is written, and closing the
-     * session would then drop that command.
-     */
-    private fun <T> onPage(page: CausalSocket, sent: Int, block: suspend (CdpSession) -> T): T =
-        runBlocking {
-            try {
-                CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
-                    .use { cdp ->
-                        cdp.open("/devtools/page/t")
-                        try {
-                            block(cdp)
-                        } finally {
-                            page.awaitMethods(sent)
-                        }
-                    }
-            } finally {
-                page.close()
-            }
-        }
-
-    /**
-     * Chrome's replies to a session's commands, numbered in the order they are added. Each reply is
-     * played once its command is sent, and an event once the command it follows is sent, as Chrome
-     * answers only what it was asked.
+     * Chrome's replies to a session's commands, numbered in the order they are added. Each reply
+     * goes out once its command is sent, and an event once the command it follows is sent, as
+     * Chrome answers only what it was asked.
      */
     private inner class Replies {
-        private val steps = mutableListOf(0 to harness.switched())
+        private var script = harness.switched()
         private var id = 0
 
         fun result(json: String) = idTo(++id, json)
 
-        /**
-         * A reply to the command with id [to], played once [after] commands are sent, which also
-         * moves the numbering past it.
-         */
-        fun idTo(to: Int, json: String, after: Int = to) {
+        /** A reply to the command with id [to], which also moves the numbering past it. */
+        fun idTo(to: Int, json: String) {
             id = maxOf(id, to)
-            steps += after to harness.serverTextFrame("""{"id":$to,"result":$json}""")
+            script += harness.serverTextFrame("""{"id":$to,"result":$json}""")
         }
 
         /**
-         * A `Fetch.requestPaused` event for a document in [frame], which takes no id, played once
-         * [after] commands are sent.
+         * A `Fetch.requestPaused` event for a document in [frame], which takes no id, sent once
+         * command [after] is.
          */
         fun event(request: String, after: Int, frame: String = "F", url: String = URL) {
             val params =
                 """{"requestId":"$request","frameId":"$frame","resourceType":"Document",""" +
                     """"request":{"url":"$url"}}"""
-            steps +=
-                after to
-                    harness.serverTextFrame("""{"method":"Fetch.requestPaused","params":$params}""")
+            script +=
+                harness.serverTextFrame(
+                    """{"method":"Fetch.requestPaused","afterId":$after,"params":$params}"""
+                )
+        }
+
+        /** An event that has nothing to do with the takeover. */
+        fun noise() {
+            script += harness.serverTextFrame("""{"method":"Page.frameResized","params":{}}""")
         }
 
         /** A `Runtime.callFunctionOn` result of [json]. */
@@ -561,83 +563,12 @@ class PdfReaderTest {
             idTo(first, "{}")
             event("R1", after = first + 1, url = pausedUrl)
             idTo(first + 2, "{}")
-            idTo(first + 1, """{"frameId":"F","loaderId":"$loader"}""", after = first + 2)
+            idTo(first + 1, """{"frameId":"F","loaderId":"$loader"}""")
             idTo(first + 3, "{}")
             ready(loader)
         }
 
-        fun socket() = CausalSocket(steps.toList())
-    }
-
-    /**
-     * A page that plays each of [steps], in order, once the client has sent as many commands as the
-     * step names, then reads nothing until closed.
-     */
-    private class CausalSocket(steps: List<Pair<Int, ByteArray>>) : DevtoolsSocket {
-        private val sink = StallingSocket(ByteArray(0))
-        private val lock = ReentrantLock()
-        private val written = lock.newCondition()
-        override val output: OutputStream =
-            object : OutputStream() {
-                override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
-
-                override fun write(b: ByteArray, off: Int, len: Int) = lock.withLock {
-                    sink.output.write(b, off, len)
-                    written.signalAll()
-                }
-            }
-
-        /**
-         * Waits, as each write wakes it, until [count] commands are sent; false if they never are.
-         */
-        private fun sentAtLeast(count: Int): Boolean = lock.withLock {
-            var left = TimeUnit.SECONDS.toNanos(STALL_S)
-            while (sink.methods().size < count) {
-                if (left <= 0) return false
-                left = written.awaitNanos(left)
-            }
-            true
-        }
-
-        override val input: InputStream =
-            object : InputStream() {
-                private var step = 0
-                private var at = 0
-
-                override fun read(): Int {
-                    val one = ByteArray(1)
-                    return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and BYTE
-                }
-
-                override fun read(b: ByteArray, off: Int, len: Int): Int {
-                    while (step < steps.size) {
-                        val (after, bytes) = steps[step]
-                        if (at < bytes.size) {
-                            if (!sentAtLeast(after)) {
-                                throw IOException("$after commands were never sent")
-                            }
-                            val n = minOf(len, bytes.size - at)
-                            bytes.copyInto(b, off, at, at + n)
-                            at += n
-                            return n
-                        }
-                        step++
-                        at = 0
-                    }
-                    return sink.input.read(b, off, len)
-                }
-            }
-
-        override fun close() = sink.close()
-
-        fun methods() = sink.methods()
-
-        fun awaitMethods(count: Int): List<String> {
-            sentAtLeast(count)
-            return methods()
-        }
-
-        fun sent() = sink.sent()
+        fun socket() = harness.socket(script)
     }
 
     private companion object {
@@ -646,13 +577,6 @@ class PdfReaderTest {
         const val EXTRACT =
             """{"url":"$URL","extracted":"pdf","blocks":[{"k":"p","r":[{"t":"Hello PDF"}]}]}"""
         const val CALL = "Runtime.callFunctionOn"
-        const val BYTE = 0xFF
-
-        /** Only for a command that is never sent; a passing test's come at once. */
-        const val STALL_S = 10L
-
-        /** Only for a takeover that hangs; a passing one takes milliseconds. */
-        const val SAFETY_MS = 10_000L
 
         /** The commands that take a handle on the tab's document and check its loader. */
         val HANDLE = listOf("DOM.getDocument", "DOM.resolveNode", "Page.getFrameTree")
