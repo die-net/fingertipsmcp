@@ -38,9 +38,6 @@ internal class ImeShow(
 
     private suspend fun tapUp(node: UiNode): ActionResult {
         val outcome = touch.tap(tree.touchTarget(node.ref, force = false))
-        if (!outcome.ok) {
-            throw ApiException(409, "gesture_cancelled", "The system cancelled the touch")
-        }
         val shown =
             state.ime.visible ||
                 withTimeoutOrNull(SHOW_WAIT_MS) { state.state.first { it.ime.visible } } != null

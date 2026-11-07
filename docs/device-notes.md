@@ -704,8 +704,9 @@ Nodes with no box, on 2026-11-07, on Chrome 91, 109, 133, and 145, with each com
 
 `chrome-input-check` on Chrome 156 on the Android 11 test phone on 2026-11-06: all ten checks gave what the script expects, in 28 s.
 
-On the same phone that day, one swipe sent right after `BACK`, as the window changed, returned 200 with `ok` false and `The system cancelled the gesture`. The error table's 409 `gesture_cancelled` did not come.
+On the same phone that day, the system cancelled one swipe sent right after `BACK`, as the window changed.
 
 ### Still to check
 
+- That a swipe the system cancels on a phone fails 409 `gesture_cancelled`, as the unit tests show. It came up once in ordinary use on the Android 11 test phone, right after `BACK`.
 - `chrome-input-check` on a phone newer than the Android 11 test phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.

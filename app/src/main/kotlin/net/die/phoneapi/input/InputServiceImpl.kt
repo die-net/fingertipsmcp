@@ -52,8 +52,7 @@ class InputServiceImpl(
             val target =
                 request.selector?.let { nodeTarget(it, request.force) }
                     ?: pointTarget(request.x, request.y, request.humanize)
-            val outcome = touch.tap(target, request.count, request.holdMs, request.humanize)
-            result(outcome)
+            touch.tap(target, request.count, request.holdMs, request.humanize).asResult()
         }
 
     override suspend fun swipe(request: SwipeRequest): ActionResult =
@@ -63,7 +62,7 @@ class InputServiceImpl(
             }
             val (from, to) = swipeEnds(request)
             val spec = SwipeSpec(request.durationMs, request.fling, request.humanize)
-            result(touch.swipe(from, to, spec))
+            touch.swipe(from, to, spec).asResult()
         }
 
     override suspend fun gesture(request: GestureRequest): ActionResult =
@@ -77,7 +76,7 @@ class InputServiceImpl(
             }
             if (pointers.any { path -> path.any { it.tMs < 0 } })
                 throw ApiException.badRequest("tMs must be >= 0")
-            result(touch.gesture(pointers, request.humanize))
+            touch.gesture(pointers, request.humanize).asResult()
         }
 
     override suspend fun pointer(frames: ReceiveChannel<PointerFrame>) {
@@ -172,18 +171,14 @@ class InputServiceImpl(
     private suspend fun action(autoWake: Boolean, block: suspend () -> ActionResult): ActionResult {
         val woke = prepare(autoWake)
         val result =
-            withContext(io) { pageNodes.restoring(state.current.foregroundPackage) { block() } }
-        tree.invalidate()
+            try {
+                withContext(io) { pageNodes.restoring(state.current.foregroundPackage) { block() } }
+            } finally {
+                // A touch the system cancelled partway may still have changed the screen.
+                tree.invalidate()
+            }
         return result.copy(woke = woke, seq = seq.value)
     }
-
-    private fun result(outcome: TouchOutcome) =
-        ActionResult(
-            ok = outcome.ok,
-            backend = outcome.backend,
-            points = outcome.points,
-            message = if (outcome.ok) null else "The system cancelled the gesture",
-        )
 
     private fun nodeTarget(selector: NodeSelector, force: Boolean): Rect {
         val node =
