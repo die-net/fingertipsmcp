@@ -1,9 +1,7 @@
 package net.die.phoneapi.browser
 
 import java.util.Collections
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -13,40 +11,38 @@ import net.die.phoneapi.model.ConsoleResult
 
 /**
  * Collects a page's console and browser log entries for [timeoutMs], skipping the replayed ones.
+ * Enabling the domains replays Chrome's buffer before the reply, so the entries kept are those the
+ * session read after Log.enable's reply, by their place in the session's events.
  */
 internal suspend fun collectLogs(session: CdpSession, timeoutMs: Long): ConsoleResult {
-    val entries = Collections.synchronizedList(mutableListOf<ConsoleEntry>())
-    coroutineScope {
-        val job = launch { session.events.collect { event -> appendLog(entries, event) } }
-        try {
+    val entries = Collections.synchronizedList(mutableListOf<Pair<Long, ConsoleEntry>>())
+    session
+        .listen { event -> logEntry(event)?.let { entries += event.seq to it } }
+        .use {
             session.call("Runtime.enable")
-            session.call("Log.enable")
-            // Enabling replays Chrome's buffer. The wait starts after that.
-            synchronized(entries) { entries.clear() }
+            val replayed = session.callCounted("Log.enable").eventsBefore
             delay(timeoutMs)
-        } finally {
-            job.cancel()
+            val kept = synchronized(entries) { entries.filter { it.first >= replayed } }
+            return ConsoleResult(kept.map { it.second })
         }
-    }
-    return ConsoleResult(synchronized(entries) { entries.toList() })
 }
 
-private fun appendLog(entries: MutableList<ConsoleEntry>, event: CdpEvent) {
+private fun logEntry(event: CdpEvent): ConsoleEntry? =
     when (event.method) {
         "Runtime.consoleAPICalled" -> {
-            val call = event.params.decodeCdp<ConsoleCall>() ?: return
-            val text = consoleText(call.args) ?: return
-            entries += ConsoleEntry(call.type ?: "log", text)
+            val call = event.params.decodeCdp<ConsoleCall>()
+            call?.let { consoleText(it.args) }?.let { ConsoleEntry(call.type ?: "log", it) }
         }
         "Log.entryAdded" -> {
-            val entry = event.params.decodeCdp<LogAdded>()?.entry ?: return
+            val entry = event.params.decodeCdp<LogAdded>()?.entry
             // console.log also arrives as Runtime.consoleAPICalled.
-            if (entry.source == "console-api") return
-            val text = entry.text ?: return
-            entries += ConsoleEntry(entry.level ?: "info", text)
+            entry
+                ?.takeIf { it.source != "console-api" }
+                ?.text
+                ?.let { ConsoleEntry(entry.level ?: "info", it) }
         }
+        else -> null
     }
-}
 
 private fun consoleText(args: List<ConsoleArg>): String? {
     val text = args.mapNotNull(::argText).joinToString(" ").trim()

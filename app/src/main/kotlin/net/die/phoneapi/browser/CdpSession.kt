@@ -23,7 +23,11 @@ import kotlinx.serialization.json.put
 import net.die.phoneapi.core.ApiJson
 import net.die.phoneapi.model.ApiException
 
-internal data class CdpEvent(val method: String, val params: JsonObject)
+/** An event, with [seq], its place among the session's events, counting from 0. */
+internal data class CdpEvent(val method: String, val params: JsonObject, val seq: Long = 0)
+
+/** A command's result, and how many events the session had read when it came. */
+internal data class CdpReply(val result: JsonObject, val eventsBefore: Long)
 
 /**
  * One DevTools WebSocket. Commands are matched by id; everything without an id is an event, for
@@ -36,14 +40,16 @@ internal class CdpSession(
     newKey: () -> String = ::websocketKey,
 ) : Closeable {
     private val socket = ChromeSocket(input, output, dispatcher, newKey)
-    private val pending = HashMap<Int, CompletableDeferred<JsonObject>>()
-    private val early = HashMap<Int, Result<JsonObject>>()
+    private val pending = HashMap<Int, CompletableDeferred<CdpReply>>()
+    private val early = HashMap<Int, Result<CdpReply>>()
     private val gate = Any()
     // Set once the reader stops, so a later command fails instead of waiting for its timeout.
     private var closedBy: IOException? = null
     private val nextId = AtomicInteger(0)
     private val stopped = CompletableDeferred<Unit>()
     private val listeners = CopyOnWriteArrayList<(CdpEvent) -> Unit>()
+    /** Events read so far. Only the reader touches it. */
+    private var eventsRead = 0L
     private val eventsFlow =
         MutableSharedFlow<CdpEvent>(
             replay = EVENT_BUFFER,
@@ -84,6 +90,14 @@ internal class CdpSession(
     }
 
     suspend fun call(method: String, params: JsonObject? = null): JsonObject =
+        callCounted(method, params).result
+
+    /**
+     * [call], also saying how many events came before the reply, in the order the session read
+     * them. Chrome sends what a command replays, such as the console's buffer on Runtime.enable,
+     * before it answers, so those events have a [CdpEvent.seq] below [CdpReply.eventsBefore].
+     */
+    suspend fun callCounted(method: String, params: JsonObject? = null): CdpReply =
         try {
             // Only this call's own timeout is cdp_timeout. A caller's shorter one stays a
             // cancellation, so withTimeoutOrNull around a call works.
@@ -116,9 +130,9 @@ internal class CdpSession(
         failAll(IOException(DEVTOOLS_CLOSED))
     }
 
-    private suspend fun roundTrip(method: String, params: JsonObject?): JsonObject {
+    private suspend fun roundTrip(method: String, params: JsonObject?): CdpReply {
         val id = nextId.incrementAndGet()
-        val deferred = CompletableDeferred<JsonObject>()
+        val deferred = CompletableDeferred<CdpReply>()
         val ready =
             synchronized(gate) {
                 early.remove(id)
@@ -160,7 +174,7 @@ internal class CdpSession(
         val id = message.id
         if (id == null) {
             val method = message.method ?: return
-            val event = CdpEvent(method, message.params ?: JsonObject(emptyMap()))
+            val event = CdpEvent(method, message.params ?: JsonObject(emptyMap()), eventsRead++)
             listeners.forEach { it(event) }
             eventsFlow.emit(event)
             return
@@ -171,10 +185,10 @@ internal class CdpSession(
             deliver(id, Result.failure(ApiException(502, "cdp_error", reason)))
             return
         }
-        deliver(id, Result.success(message.result ?: JsonObject(emptyMap())))
+        deliver(id, Result.success(CdpReply(message.result ?: JsonObject(emptyMap()), eventsRead)))
     }
 
-    private fun deliver(id: Int, result: Result<JsonObject>) {
+    private fun deliver(id: Int, result: Result<CdpReply>) {
         val waiter =
             synchronized(gate) {
                 pending.remove(id)
