@@ -107,16 +107,14 @@ class BrowserServiceTest {
             switched() +
                 serverTextFrame("""{"id":1,"result":{}}""") +
                 visibility(2, "visible") +
-                serverTextFrame("""{"id":5,"result":{}}""") +
+                frameTree(5) +
+                serverTextFrame("""{"id":6,"result":{}}""") +
                 serverTextFrame(
-                    """{"id":6,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
+                    """{"id":7,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
                 ) +
-                serverTextFrame("""{"id":7,"result":{}}""") +
-                serverTextFrame(
-                    """{"id":8,"result":{"quads":[[165.619049,453.68454,246.56548,453.68454,246.56548,479.27979,165.61905,479.27979]]}}"""
-                ) +
-                serverTextFrame(metrics(9))
+                serverTextFrame(metrics(8))
         var touched = Rect(0, 0, 0, 0)
+        val sockets = ArrayDeque(listOf(snapshotFrames(), frames))
         val service =
             service(
                 frames,
@@ -126,8 +124,10 @@ class BrowserServiceTest {
                     touched = rect
                     ActionResult(ok = true, backend = "inject")
                 },
+                open = { socket(sockets.removeFirst()) },
             )
         val result = virtual {
+            service.snapshot(TAB)
             service.tap(
                 "chrome_devtools_remote~abc",
                 BrowserTapRequest(ref = "9", humanize = false),
@@ -141,23 +141,20 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes the socket it opens.
     fun `cdp tap leaves the tab behind`() {
-        // ids 1-3 read visibilityState. id 4 is Accessibility.enable: bringToFront would take that
-        // slot and the ref lookup would fail. The last two empty results are touchStart and
-        // touchEnd.
+        // ids 1-3 read visibilityState, 4 checks the snapshot's document is still there, and the
+        // last two empty results are touchStart and touchEnd.
         val frames =
             switched() +
                 showing() +
-                serverTextFrame("""{"id":4,"result":{}}""") +
-                serverTextFrame(
-                    """{"id":5,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
-                ) +
-                serverTextFrame("""{"id":6,"result":{}}""") +
-                serverTextFrame(quad(7)) +
-                serverTextFrame(metrics(8)) +
-                serverTextFrame("""{"id":9,"result":{}}""") +
-                serverTextFrame("""{"id":10,"result":{}}""")
+                frameTree(4) +
+                serverTextFrame("""{"id":5,"result":{}}""") +
+                serverTextFrame(quad(6)) +
+                serverTextFrame(metrics(7)) +
+                serverTextFrame("""{"id":8,"result":{}}""") +
+                serverTextFrame("""{"id":9,"result":{}}""")
         var touched = false
         val socket = socket(frames)
+        val sockets = ArrayDeque(listOf(socket(snapshotFrames()), socket))
         val service =
             service(
                 frames,
@@ -166,9 +163,10 @@ class BrowserServiceTest {
                     touched = true
                     ActionResult(ok = false, backend = "inject")
                 },
-                open = { socket },
+                open = { sockets.removeFirst() },
             )
         val result = virtual {
+            service.snapshot(TAB)
             service.tap(
                 "chrome_devtools_remote~abc",
                 BrowserTapRequest(ref = "9", humanize = false, input = BrowserInput.CDP),
@@ -184,8 +182,7 @@ class BrowserServiceTest {
                 "Page.getFrameTree",
                 "Page.createIsolatedWorld",
                 "Runtime.evaluate",
-                "Accessibility.enable",
-                "Accessibility.getFullAXTree",
+                "Page.getFrameTree",
                 "DOM.scrollIntoViewIfNeeded",
                 "DOM.getContentQuads",
                 "Page.getLayoutMetrics",
@@ -463,12 +460,20 @@ class BrowserServiceTest {
     internal fun snapshotFrames(): ByteArray =
         switched() +
             serverTextFrame(
-                """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/"}}}}"""
+                """{"id":1,"result":{"frameTree":{"frame":{"url":"https://example.com/",""" +
+                    """"loaderId":"L1"}}}}"""
             ) +
             serverTextFrame("""{"id":2,"result":{}}""") +
             serverTextFrame(
                 """{"id":3,"result":{"nodes":[{"nodeId":"9","role":{"value":"link"},"backendDOMNodeId":9}]}}"""
             )
+
+    /** Chrome's reply [id] to Page.getFrameTree, with the main frame's document [loader]. */
+    internal fun frameTree(id: Int, loader: String = "L1"): ByteArray =
+        serverTextFrame(
+            """{"id":$id,"result":{"frameTree":{"frame":{"id":"F","url":"https://example.com/",""" +
+                """"loaderId":"$loader"}}}}"""
+        )
 
     /** Replies to a visibilityState read: frame, world, and [state]. */
     internal fun visibility(firstId: Int, state: String): ByteArray =
