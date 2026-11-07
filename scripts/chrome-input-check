@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // chrome-input-check checks the Chrome DevTools behavior that PhoneAPI's browser input relies on,
 // straight against Chrome on the attached phone, so a Chrome update that changes it shows up.
-// It opens its own tabs, closes them, and puts the screen and foreground app back afterwards.
+// It opens its own tabs on a page it serves itself through `adb reverse`, since a document Chrome
+// loaded from a server is held in a way about:blank and data: are not. It closes them, and puts the
+// screen and foreground app back afterwards.
 //
 // Usage: scripts/chrome-input-check [--hidden-only]
 //   --hidden-only  Skip the checks that wake the screen and bring Chrome to the front.
@@ -10,15 +12,24 @@
 // checks that need Chrome on screen from running.
 
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
 
 const ANSWER_MS = 3_000;
 const DEADLINE_MS = 120_000;
 const hiddenOnly = process.argv.includes('--hidden-only');
 
-// The behavior PhoneAPI was written against (Chrome 155, Android 11).
+// The behavior PhoneAPI was written against (Chrome 109, 133, and 145). Chrome 91 has no hold on a
+// first paint, so the checks of dropped input differ there, which PhoneAPI handles.
 const EXPECTED = [
   ['touch while Chrome is hidden', 'no answer, not delivered'],
-  ['mouse click while Chrome is hidden', 'answered, delivered'],
+  ['mouse click on a page Chrome has not drawn', 'answered, not delivered'],
+  ['key on a page Chrome has not drawn', 'answered, not delivered'],
+  ['inserted text on a page Chrome has not drawn', 'delivered'],
+  ['mouse click after inserted text', 'answered, not delivered'],
+  ['mouse click after a screenshot request', 'one click'],
+  ['key after a screenshot request', 'delivered'],
+  ['page after a screenshot request', 'no frame, no paint'],
+  ['mouse click on about:blank Chrome has not drawn', 'answered, delivered'],
   ['mouseMoved while Chrome is hidden', 'no answer'],
   ['mouse wheel while Chrome is hidden', 'no answer'],
   ['Target.closeTarget', 'tab gone within 5s'],
@@ -27,16 +38,24 @@ const EXPECTED = [
   ['touch on the tab Chrome shows', 'answered, delivered'],
   ['touch on a background tab while Chrome shows', 'no answer, not delivered'],
   ['mouse click on a background tab while Chrome shows', 'answered, delivered'],
+  ['mouse click on a drawn tab after Chrome hides', 'answered, delivered'],
+  ['mouse click after that tab loads a new page', 'answered, not delivered'],
 ];
 
-const SETUP = `
-  document.body.innerHTML = '<button id=b style="width:200px;height:120px;margin:40px">go</button>';
-  document.body.style.height = '5000px';
+const PAGE = `<!doctype html>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<body style="height:5000px;margin:0">
+<button style="width:200px;height:120px;margin:40px">go</button>
+<input id=f style="display:block;margin:40px">
+<script>
   window.hits = [];
-  for (const t of ['touchstart', 'pointerdown', 'pointermove', 'click', 'wheel'])
+  window.drawn = 0;
+  for (const t of ['touchstart', 'pointerdown', 'pointermove', 'click', 'wheel', 'keydown'])
     document.addEventListener(t, (e) => hits.push(t), true);
-  'ready'`;
+  requestAnimationFrame(function tick() { drawn++; requestAnimationFrame(tick); });
+</script>`;
 const AT = { x: 140, y: 100 };
+const KEY = { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -99,8 +118,10 @@ async function connect(port, path) {
 }
 
 const answered = (reply) => (reply.timedOut ? 'no answer' : reply.error ? 'error' : 'answered');
+const both = (first, second) => (first === second ? first : `${first}/${second}`);
+const delivered = (hits, event) => (hits.split(' ').includes(event) ? 'delivered' : 'not delivered');
 
-async function main(port, observed) {
+async function main(port, pageUrl, observed) {
   const json = async (path) =>
     (await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(ANSWER_MS) })).json();
   const version = await json('/json/version');
@@ -108,15 +129,25 @@ async function main(port, observed) {
   const browser = await connect(port, new URL(version.webSocketDebuggerUrl).pathname);
   const opened = new Set();
 
-  async function newPage() {
-    const reply = await browser.call('Target.createTarget', { url: 'about:blank' });
+  async function newPage(url = pageUrl) {
+    const reply = await browser.call('Target.createTarget', { url });
     if (!reply.result) throw new Error(`Target.createTarget: ${JSON.stringify(reply)}`);
     const id = reply.result.targetId;
     opened.add(id);
     const page = await connect(port, `/devtools/page/${id}`);
-    await read(page, SETUP);
+    await loaded(page, url);
     return { id, page };
   }
+  const loaded = (page, url) =>
+    until(
+      // A page still loading may not answer yet, which is why this is not read().
+      async () => {
+        const expression = `location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`;
+        return (await page.call('Runtime.evaluate', { expression, returnByValue: true }, 1_000)).result?.result?.value === true;
+      },
+      10_000,
+      `${url} to load`,
+    );
   // A read that fails must stop the run: an empty answer is what several checks expect.
   const read = async (page, expression, awaitPromise = false) => {
     const reply = await page.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise });
@@ -129,6 +160,13 @@ async function main(port, observed) {
     page.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [AT] });
   const mouse = (page, type, buttons) =>
     page.call('Input.dispatchMouseEvent', { type, ...AT, button: 'left', buttons, clickCount: 1 });
+  const key = async (page) => {
+    const down = await page.call('Input.dispatchKeyEvent', { type: 'keyDown', ...KEY, text: 'a' });
+    await page.call('Input.dispatchKeyEvent', { type: 'keyUp', ...KEY });
+    return answered(down);
+  };
+  // Chrome never answers this on a page it has not drawn.
+  const screenshot = (page) => page.call('Page.captureScreenshot', { format: 'jpeg', quality: 0 }, 0);
   const closeAll = async () => {
     for (const id of opened) await browser.call('Target.closeTarget', { targetId: id });
     opened.clear();
@@ -140,16 +178,47 @@ async function main(port, observed) {
 
     let { page, id } = await newPage();
     const touched = answered(await touch(page));
-    observed.set(EXPECTED[0][0], `${touched}, ${(await hits(page)).includes('touchstart') ? 'delivered' : 'not delivered'}`);
+    observed.set('touch while Chrome is hidden', `${touched}, ${delivered(await hits(page), 'touchstart')}`);
     page.close();
 
     ({ page } = await newPage());
     const pressed = answered(await mouse(page, 'mousePressed', 1));
     const released = answered(await mouse(page, 'mouseReleased', 0));
-    const clicked = (await hits(page)).includes('click');
-    observed.set(EXPECTED[1][0], `${pressed === released ? pressed : `${pressed}/${released}`}, ${clicked ? 'delivered' : 'not delivered'}`);
-    observed.set(EXPECTED[2][0], answered(await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...AT })));
-    observed.set(EXPECTED[3][0], answered(await page.call('Input.dispatchMouseEvent', { type: 'mouseWheel', ...AT, deltaX: 0, deltaY: 300 })));
+    observed.set('mouse click on a page Chrome has not drawn', `${both(pressed, released)}, ${delivered(await hits(page), 'click')}`);
+    await read(page, `document.getElementById('f').focus(), 'focused'`);
+    const pressedKey = await key(page);
+    observed.set('key on a page Chrome has not drawn', `${pressedKey}, ${delivered(await hits(page), 'keydown')}`);
+    await page.call('Input.insertText', { text: 'x' });
+    observed.set('inserted text on a page Chrome has not drawn', (await read(page, `document.getElementById('f').value`)) === 'x' ? 'delivered' : 'not delivered');
+
+    // Inserted text gives the page user activation, but Chrome still drops a click.
+    const textDown = answered(await mouse(page, 'mousePressed', 1));
+    const textUp = answered(await mouse(page, 'mouseReleased', 0));
+    observed.set('mouse click after inserted text', `${both(textDown, textUp)}, ${delivered(await hits(page), 'click')}`);
+
+    // What PhoneAPI does: ask for a screenshot, then press until one lands.
+    await screenshot(page);
+    await until(async () => {
+      await mouse(page, 'mousePressed', 1);
+      return (await hits(page)).includes('pointerdown');
+    }, 2_000, 'a press to land').catch(() => {});
+    await mouse(page, 'mouseReleased', 0);
+    const clicks = (await hits(page)).split(' ');
+    const once = clicks.filter((t) => t === 'pointerdown').length === 1 && clicks.includes('click');
+    observed.set('mouse click after a screenshot request', once ? 'one click' : `hits: ${clicks.join(' ')}`);
+    await key(page);
+    observed.set('key after a screenshot request', delivered(await hits(page), 'keydown'));
+    const drew = await read(page, `drawn > 0 || performance.getEntriesByType('paint').length > 0`);
+    observed.set('page after a screenshot request', drew ? 'drew' : 'no frame, no paint');
+    observed.set('mouseMoved while Chrome is hidden', answered(await page.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...AT })));
+    observed.set('mouse wheel while Chrome is hidden', answered(await page.call('Input.dispatchMouseEvent', { type: 'mouseWheel', ...AT, deltaX: 0, deltaY: 300 })));
+    page.close();
+
+    ({ page } = await newPage('about:blank'));
+    await read(page, `window.hits = []; document.addEventListener('click', () => hits.push('click'), true); 'ready'`);
+    const blankDown = answered(await mouse(page, 'mousePressed', 1));
+    const blankUp = answered(await mouse(page, 'mouseReleased', 0));
+    observed.set('mouse click on about:blank Chrome has not drawn', `${both(blankDown, blankUp)}, ${delivered(await hits(page), 'click')}`);
     page.close();
 
     ({ id } = await newPage());
@@ -158,7 +227,7 @@ async function main(port, observed) {
     let gone = true;
     await until(async () => !(await json('/json/list')).some((t) => t.id === id), 5_000, 'the tab to close')
       .catch(() => (gone = false));
-    observed.set(EXPECTED[4][0], gone ? 'tab gone within 5s' : 'still listed after 5s');
+    observed.set('Target.closeTarget', gone ? 'tab gone within 5s' : 'still listed after 5s');
     await closeAll();
 
     if (hiddenOnly) return;
@@ -173,7 +242,7 @@ async function main(port, observed) {
       console.log('The keyguard is up, so the checks that need Chrome on screen could not run.');
       return 'skipped';
     }
-    adb('shell', 'monkey', '-p', 'com.android.chrome', '-c', 'android.intent.category.LAUNCHER', '1');
+    adb('shell', 'am', 'start', '-n', 'com.android.chrome/com.google.android.apps.chrome.Main');
     await until(() => phone().resumed.startsWith('com.android.chrome/'), 5_000, 'Chrome to come to the front');
     await browser.call('Target.activateTarget', { targetId: id });
     const again = await connect(port, `/devtools/page/${id}`);
@@ -181,18 +250,19 @@ async function main(port, observed) {
     // A page's event loop runs queued input before its animation frame callbacks, so a held touch
     // that Chrome sends once the tab shows has landed by the second frame after that.
     await read(again, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', true);
-    observed.set(EXPECTED[5][0], (await hits(again)).includes('touchstart') ? 'played once shown' : 'dropped');
+    observed.set('held touch after its session closes', (await hits(again)).includes('touchstart') ? 'played once shown' : 'dropped');
     again.close();
 
     // The newest tab is in front, so the first one is a background tab in a visible Chrome.
     const first = await newPage();
     const second = await newPage();
     const firstState = await read(first.page, 'document.visibilityState');
-    observed.set(EXPECTED[6][0], firstState === 'hidden' ? 'Chrome switches to it' : 'stays behind');
-    for (const [check, { page }] of [[EXPECTED[7][0], second], [EXPECTED[8][0], first]]) {
+    observed.set('new tab while Chrome shows', firstState === 'hidden' ? 'Chrome switches to it' : 'stays behind');
+    const touches = [['touch on the tab Chrome shows', second], ['touch on a background tab while Chrome shows', first]];
+    for (const [check, { page }] of touches) {
       const reply = answered(await touch(page));
       await page.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      observed.set(check, `${reply}, ${(await hits(page)).includes('touchstart') ? 'delivered' : 'not delivered'}`);
+      observed.set(check, `${reply}, ${delivered(await hits(page), 'touchstart')}`);
     }
     // A held touch on the first tab must not count as the click below, so start a fresh session.
     first.page.close();
@@ -200,10 +270,24 @@ async function main(port, observed) {
     await behind.call('Runtime.evaluate', { expression: 'hits.length = 0' });
     const down = answered(await mouse(behind, 'mousePressed', 1));
     const up = answered(await mouse(behind, 'mouseReleased', 0));
-    const landed = (await hits(behind)).includes('click');
-    observed.set(EXPECTED[9][0], `${down === up ? down : `${down}/${up}`}, ${landed ? 'delivered' : 'not delivered'}`);
+    observed.set('mouse click on a background tab while Chrome shows', `${both(down, up)}, ${delivered(await hits(behind), 'click')}`);
     behind.close();
-    second.page.close();
+
+    // A tab Chrome has drawn takes a click after Chrome hides, until it loads another document.
+    adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
+    const drawn = second.page;
+    // Chrome draws until the tab reports hidden, which comes after Android moves on.
+    await until(async () => (await read(drawn, 'document.visibilityState')) === 'hidden', 5_000, 'the tab to hide');
+    const hiddenDown = answered(await mouse(drawn, 'mousePressed', 1));
+    const hiddenUp = answered(await mouse(drawn, 'mouseReleased', 0));
+    observed.set('mouse click on a drawn tab after Chrome hides', `${both(hiddenDown, hiddenUp)}, ${delivered(await hits(drawn), 'click')}`);
+    const next = `${pageUrl}?next`;
+    await drawn.call('Page.navigate', { url: next });
+    await loaded(drawn, next);
+    const nextDown = answered(await mouse(drawn, 'mousePressed', 1));
+    const nextUp = answered(await mouse(drawn, 'mouseReleased', 0));
+    observed.set('mouse click after that tab loads a new page', `${both(nextDown, nextUp)}, ${delivered(await hits(drawn), 'click')}`);
+    drawn.close();
   } finally {
     await closeAll().catch(() => {});
     browser.close();
@@ -215,8 +299,15 @@ if (typeof WebSocket === 'undefined') {
   process.exit(2);
 }
 
+const server = createServer((_, response) => {
+  response.setHeader('Content-Type', 'text/html');
+  response.end(PAGE);
+});
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
 const before = phone();
 const port = adb('forward', 'tcp:0', 'localabstract:chrome_devtools_remote');
+const pagePort = adb('reverse', 'tcp:0', `tcp:${server.address().port}`);
 let restored = false;
 function restore() {
   if (restored) return;
@@ -230,6 +321,8 @@ function restore() {
     if (before.awake && !phone().awake) adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
   } finally {
     adb('forward', '--remove', `tcp:${port}`);
+    adb('reverse', '--remove', `tcp:${pagePort}`);
+    server.close();
   }
 }
 const deadline = setTimeout(() => {
@@ -242,7 +335,7 @@ const observed = new Map();
 let code = 0;
 try {
   // Checks that could not run leave Chrome's behavior unknown, so the run did not finish.
-  if ((await main(port, observed)) === 'skipped') code = 2;
+  if ((await main(port, `http://127.0.0.1:${pagePort}/`, observed)) === 'skipped') code = 2;
 } catch (e) {
   console.error(e.message);
   code = 2;

@@ -90,7 +90,7 @@ public enum class BrowserInputKind {
 }
 
 public const val BROWSER_INPUT_DOC: String =
-    "touch brings the tab to the front and uses the screen. cdp sends touch events over DevTools without bringing the tab forward, but only to the tab Chrome is showing, on screen. Keys and text with cdp reach a background tab. cdp-mouse taps with a mouse click, which reaches a background tab even with Chrome hidden and the screen off, but the page sees a mouse, not a finger. auto (default) is touch for a caller that holds the screen, and otherwise cdp-mouse for a tap and cdp for keys and text, so it does not take a free screen; a swipe or gesture uses touch. Touch keys need the control scope too, so auto keys use cdp for a token without it."
+    "touch brings the tab to the front and uses the screen. cdp sends touch events over DevTools without bringing the tab forward, but only to the tab Chrome is showing, on screen. Keys and text with cdp reach a background tab. cdp-mouse taps with a mouse click, which reaches a background tab even with Chrome hidden and the screen off, but the page sees a mouse, not a finger. Chrome drops clicks and keys on a page it has not drawn; PhoneAPI gets them through, and fails with not_visible if one did not land. auto (default) is touch for a caller that holds the screen, and otherwise cdp-mouse for a tap and cdp for keys and text, so it does not take a free screen; a swipe or gesture uses touch. Touch keys need the control scope too, so auto keys use cdp for a token without it."
 
 public const val BROWSER_WAKE_DOC: String =
     "Turn the screen on first when input is touch. cdp and cdp-mouse never wake it. Defaults to true."

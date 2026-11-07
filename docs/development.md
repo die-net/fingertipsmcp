@@ -113,7 +113,7 @@ scripts/phoneapi-dev papi POST /v1/browser/targets/TARGET/evaluate '{"expression
 scripts/phoneapi-dev papi POST /v1/browser/targets/TARGET/close
 ```
 
-PhoneAPI's browser input depends on how Chrome treats DevTools input on the phone: touch is held for any tab Chrome is not showing, mouse clicks reach background tabs, and a new tab takes the screen while Chrome is in front. After a Chrome update, check that this still holds. The script opens and closes its own tabs, wakes the screen and brings Chrome forward unless given `--hidden-only`, and puts the screen and foreground app back. It needs Node 22 or later.
+PhoneAPI's browser input depends on how Chrome treats DevTools input on the phone: touch is held for any tab Chrome is not showing, mouse clicks reach background tabs, clicks and keys are dropped on a page Chrome has not drawn until a screenshot request, and a new tab takes the screen while Chrome is in front. After a Chrome update, check that this still holds. The script serves its own test page through `adb reverse`, opens and closes its own tabs, wakes the screen and brings Chrome forward unless given `--hidden-only`, and puts the screen and foreground app back. It needs Node 22 or later.
 
 ```sh
 scripts/chrome-input-check

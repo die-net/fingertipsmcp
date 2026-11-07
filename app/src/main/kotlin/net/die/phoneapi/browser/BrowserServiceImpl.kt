@@ -872,7 +872,11 @@ private fun dialogOpen(cause: ApiException) =
 
 @Serializable internal data class FrameTreeResult(val frameTree: FrameNode? = null)
 
-@Serializable internal data class FrameNode(val frame: FrameInfo? = null)
+@Serializable
+internal data class FrameNode(
+    val frame: FrameInfo? = null,
+    val childFrames: List<FrameNode> = emptyList(),
+)
 
 @Serializable
 internal data class FrameInfo(

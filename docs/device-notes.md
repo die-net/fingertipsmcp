@@ -908,7 +908,37 @@ Seen while checking, and not changed:
 
 On the same phone that day, the system cancelled one swipe sent right after `BACK`, as the window changed.
 
+### Pages Chrome has not drawn
+
+On Chrome 109, 133, and 145 on the emulators on 2026-11-07, Chrome dropped mouse clicks and key events on a page it had not drawn, and answered `ok`. Chrome 156 on the Android 11 test phone did the same that day for clicks, 0 of 10. Chrome 91 delivered them.
+
+- Over raw DevTools, with Chrome behind HOME, a click on a tab opened with `Target.createTarget` never reached the page. `visibilityState` read `visible`. On the phone, a tab that had never been shown read `hidden` with Chrome in front on another tab, and dropped clicks too, so `visibilityState` does not tell.
+- Waiting does not help: not after 8 s on Chrome 133, nor 6 s on the phone.
+- `Input.dispatchKeyEvent` is dropped the same way, on all three emulator Chromes. `Input.insertText` lands.
+- `Input.dispatchTouchEvent`, `Input.synthesizeTapGesture`, `mouseMoved`, and `mouseWheel` got no answer on Chrome 133 and 145, so none of them is a way in.
+- A tab that has been drawn takes clicks after Chrome goes behind HOME, until it loads another document. That one drops them again, on Chrome 109, 133, and 145. So whether a tab was ever shown does not say what it will do.
+- `about:blank` takes clicks, and a `data:` page did on Chrome 133, so Chrome does not hold those. `about:blank` then `Page.navigate`, a same-site navigation, and `Page.reload` all dropped clicks on Chrome 133, and on the phone.
+
+Chromium's source gives the cause. `WidgetInputHandlerManager::DispatchEvent` drops everything but mouse moves while main frame updates or commits are deferred for a first paint, and acknowledges the event. `ProxyMain::BeginMainFrame` is what ends that deferral when its timeout passes, and a page Chrome is not drawing gets no main frames. With `--allow-pre-commit-input`, which skips the drop, the same click and key landed on Chrome 133, one try each.
+
+`Page.captureScreenshot` ends the hold, and Chrome never answers it on such a page. Measured with raw DevTools, on a tab Chrome had not drawn:
+
+- A click after it landed in 12 of 12 tries on each of Chrome 109, 133, and 145, on a new tab each time. There is no signal for the end of the hold, so the first press can be too soon, and the page saw only the press that got through. A second press was needed in 1, 7, and 1 of the 12, and the press landed within 60 ms.
+- The hold stays off for that document. It does not need the request to stay open: closing the socket 100 ms after sending it, then clicking up to 3 s later, landed 4 of 4 on Chrome 133 and 145. A new document needs a new request.
+- It worked with the screen off, and on a page reading `hidden`, on Chrome 133 and 145.
+- The page saw nothing on Chrome 133 and 145: no animation frame, paint entry, `visibilitychange`, `resize`, focus event, or intersection or resize observer callback. Chrome 109 showed no animation frame or paint either. Why the deferral ends with no frame is not known. The request holds a capture on the tab that asks to keep the device awake, and `dumpsys power` showed no lock from Chrome while it was open, on Chrome 133 and 145.
+- The tab drew normally when it came forward later.
+- `Page.startScreencast` sent no frames and left clicks dropped, on Chrome 133 and 145. So did `LayerTree.enable` and the FPS overlay on Chrome 133. On the phone, `Page.bringToFront` with Chrome staying hidden, `Page.reload`, and `Page.setWebLifecycleState` did nothing, nor did `Emulation` overrides, which PhoneAPI does not use. `Page.setWebLifecycleState` to `frozen` and back to `active` also turned the page `hidden` on Chrome 133, which a page can see.
+
+`Input.synthesizeTapGesture` opens the way too on the phone, 15 of 15, on Chrome 156. Its own tap got no answer and never showed on the page. PhoneAPI does not use it, since that leaves a gesture pending that could still play.
+
+User activation does not say the hold is over. `Input.insertText` gives a held page activation, and the next click is dropped, on Chrome 133. On Chrome 145 `hasBeenActive` carried over a same-origin link or script navigation to a new document, which was held and dropped the next click. It did not carry over `Page.navigate` or to another origin, or at all on Chrome 133. So only a paint says the hold is over. New activation does show a press landed, and it comes up from a frame inside the page. Escape and modifier keys give none, on Chrome 133 and 145, though a listener hears them. A listener in the top frame does not hear a press in an iframe: an earlier build that relied on one repeated a press there 17 times on Chrome 109, so each frame gets one. A frame in another process does not, so a press there on a page with activation from before cannot show it landed. PhoneAPI repeats it for 1 s and fails with `not_visible`. This was not seen, since Chrome keeps most frames in one process on Android.
+
+Chromium has a check, behind the `CDPScreenshotNewSurface` feature, that crashes the browser on a screenshot of a hidden page. The feature is off by default in Chrome 145 and in Chromium's main branch.
+
 ### Still to check
 
 - That a swipe the system cancels on a phone fails 409 `gesture_cancelled`, as the unit tests show. It came up once in ordinary use on the Android 11 test phone, right after `BACK`.
-- `chrome-input-check` on a phone newer than the Android 11 test phone. On the Android 16 emulator its hidden checks passed, then `monkey` refused to run (`SYS_KEYS has no physical keys`), so the checks with Chrome on screen need a phone.
+- `chrome-input-check` on a phone, since it now tests a page from a server. It passed on the Android 13, 16, and 17 emulators on 2026-11-07, with Chrome on screen too. On Chrome 91 six checks differ, since that Chrome has no hold.
+- That `Page.captureScreenshot` ends the hold on Chrome 156 on the Android 11 test phone. It was not tried there. If it does not, a tap on a page Chrome has not drawn fails with `not_visible`.
+- Whether Chrome ever turns on `CDPScreenshotNewSurface`. PhoneAPI sends a screenshot request to a `hidden` page that dropped a press, which that check would crash on.
