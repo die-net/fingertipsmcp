@@ -2,6 +2,7 @@ package net.die.phoneapi.browser
 
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -50,7 +51,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab`() {
-        val sockets = ArrayDeque(listOf(opened(), ownTarget(), committedPage()))
+        val sockets = ArrayDeque(listOf(opened() + titled()))
         val service =
             service(byteArrayOf(), sockets = CHROME, open = { socket(sockets.removeFirst()) })
         val target = virtual { service.openTab("https://example.com/") }
@@ -62,7 +63,7 @@ class BrowserServiceTest {
     @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `opens a tab behind`() {
-        val sockets = ArrayDeque(listOf(opened(), ownTarget(), committedPage()))
+        val sockets = ArrayDeque(listOf(opened() + titled()))
         val service =
             service(
                 byteArrayOf(),
@@ -516,6 +517,7 @@ class BrowserServiceTest {
         touchscreen: suspend () -> TouchscreenInfo = { fallbackTouchscreen() },
         listSockets: () -> String = { sockets },
         io: CoroutineDispatcher = clock,
+        scope: CoroutineScope? = null,
     ) =
         BrowserServiceImpl(
             io = io,
@@ -538,27 +540,52 @@ class BrowserServiceTest {
             openPrivateTab = openPrivateTab,
             openProbe = openProbe?.let { probe -> { name: String -> probe(name) } },
             touchscreen = touchscreen,
+            scope = scope,
         )
 
-    /** A browser socket's replies to an open: download events on, then the new tab [id]. */
+    /**
+     * A browser socket's replies to an open: target events on, download events on, then the new tab
+     * [id], which Chrome announces before it answers.
+     */
     internal fun opened(id: String = "abc"): ByteArray =
         switched() +
             serverTextFrame("""{"id":1,"result":{}}""") +
+            serverTextFrame("""{"id":2,"result":{}}""") +
+            announced(3, id) +
+            serverTextFrame("""{"id":3,"result":{"targetId":"$id"}}""")
+
+    /** A browser socket's replies to opening a blank tab with Chrome id [id]. */
+    internal fun created(id: String = "abc"): ByteArray =
+        switched() +
+            serverTextFrame("""{"id":1,"result":{}}""") +
+            announced(2, id) +
             serverTextFrame("""{"id":2,"result":{"targetId":"$id"}}""")
 
-    /** A browser socket's reply to `Target.createTarget`, for a tab with Chrome id [id]. */
-    internal fun created(id: String = "abc"): ByteArray =
-        switched() + serverTextFrame("""{"id":1,"result":{"targetId":"$id"}}""")
+    /** Chrome naming a new target during the command [command], before it answers. */
+    internal fun announced(command: Int, id: String, url: String = ""): ByteArray =
+        serverTextFrame(
+            """{"afterId":$command,"method":"Target.targetCreated","params":{"targetInfo":""" +
+                """{"targetId":"$id","type":"page","title":"","url":"$url","attached":false}}}"""
+        )
 
-    /** A new tab's own connection, naming the target `Target.getTargets` lists it under. */
-    internal fun ownTarget(id: String = "abc"): ByteArray =
-        switched() + serverTextFrame("""{"id":1,"result":{"targetInfo":{"targetId":"$id"}}}""")
+    /** A browser session hearing the tab [id] get a title, which it first does at its commit. */
+    internal fun titled(id: String = "abc", url: String = "https://example.com/"): ByteArray =
+        serverTextFrame(
+            """{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"$id",""" +
+                """"type":"page","title":"example.com","url":"$url","attached":false}}}"""
+        )
 
-    /** A new tab's page socket, on a page already committed when the service attaches. */
-    internal fun committedPage(): ByteArray =
-        switched() + serverTextFrame("""{"id":1,"result":{}}""") + frameTree(2)
+    /** A browser session hearing the tab [id] go. */
+    internal fun destroyed(id: String = "abc"): ByteArray =
+        serverTextFrame("""{"method":"Target.targetDestroyed","params":{"targetId":"$id"}}""")
 
-    /** Replies to a snapshot whose tree has link 9. */
+    /** A browser session hearing that Chrome began saving [name] in the tab [frame]. */
+    internal fun saveStarted(name: String, frame: String = "abc"): ByteArray =
+        serverTextFrame(
+            """{"method":"Browser.downloadWillBegin","params":{"frameId":"$frame","guid":"G",""" +
+                """"url":"https://example.com/","suggestedFilename":"$name"}}"""
+        )
+
     internal fun snapshotFrames(): ByteArray =
         switched() +
             serverTextFrame(
