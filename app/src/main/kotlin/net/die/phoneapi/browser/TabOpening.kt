@@ -65,14 +65,14 @@ internal class TabOpener(
         if (savedPdf(tab.url.orEmpty())) standIn(tab, created) else null
 
     /**
-     * Takes the just-made [tab] to its page, first running [created] on it, and navigating it when
-     * [navigate] is set. A failure closes the tab, since no caller has its id yet. A URL Chrome
-     * saves moves to a stand-in tab, except when [incognito], since a normal tab would read the
-     * file with the phone's logins.
+     * Takes the just-made [tab], which holds no page of its URL yet, to that URL, first running
+     * [created] on it. A failure closes the tab, since no caller has its id yet. A URL Chrome saves
+     * moves to a stand-in tab, except when [incognito], since a normal tab would read the file with
+     * the phone's logins. An incognito tab opens on Chrome's new tab page, so even a blank URL
+     * loads there.
      */
     suspend fun follow(
         tab: BrowserTarget,
-        navigate: Boolean,
         incognito: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
@@ -80,10 +80,10 @@ internal class TabOpener(
         val opening =
             closingOnFailure(tab.id) {
                 created(tab.id)
-                when {
-                    navigate -> awaitOpening(tab.id, url)
-                    url == BLANK_PAGE -> TabOpening.COMMITTED
-                    else -> awaitOpening(tab.id, null)
+                if (url == BLANK_PAGE && !incognito) {
+                    TabOpening.COMMITTED
+                } else {
+                    awaitOpening(tab.id, url)
                 }
             }
         return when (opening) {
@@ -104,7 +104,7 @@ internal class TabOpener(
      * Follows the new tab [id]'s navigation, as [awaitCommit] says. A tab that goes meanwhile
      * counts as saved, since that is why Chrome closes a tab it just opened.
      */
-    private suspend fun awaitOpening(id: String, url: String?): TabOpening =
+    private suspend fun awaitOpening(id: String, url: String): TabOpening =
         try {
             onPage(id) { awaitCommit(it, url) }
         } catch (e: ApiException) {
@@ -164,17 +164,12 @@ private fun downloadSaved() =
     )
 
 /**
- * Follows a new tab's navigation on [cdp], a session on the tab, until it commits, turns out to be
- * a download, or [COMMIT_MS] pass. With [url], the navigation is started here, for a tab that had
- * to open on another page. Without it, the tab opened on its URL, since Chrome was seen to bring
- * Google Drive's PDF viewer forward when it saved a PDF an open tab navigated to, and not for a new
- * tab, so this only watches.
- *
- * Without [url], a save that happens before `Page.enable` is not seen. One that closes the tab
- * still fails this, but one that leaves it on about:blank reads as [TabOpening.UNANSWERED]. The
- * session ending fails this with `cdp_error`, as it does when Chrome closes the tab.
+ * Starts a new tab's navigation to [url] on [cdp], a session on the tab, and follows it until it
+ * commits, turns out to be a download, or [COMMIT_MS] pass. `Page.enable` comes first, so no save
+ * or commit can happen unseen. The session ending fails this with `cdp_error`, as it does when
+ * Chrome closes the tab.
  */
-internal suspend fun awaitCommit(cdp: CdpSession, url: String?): TabOpening = coroutineScope {
+internal suspend fun awaitCommit(cdp: CdpSession, url: String): TabOpening = coroutineScope {
     val watch = OpenWatch()
     val closing = launch {
         cdp.awaitClosed()
@@ -187,15 +182,13 @@ internal suspend fun awaitCommit(cdp: CdpSession, url: String?): TabOpening = co
     }
 }
 
-private suspend fun follow(cdp: CdpSession, watch: OpenWatch, url: String?): TabOpening {
+private suspend fun follow(cdp: CdpSession, watch: OpenWatch, url: String): TabOpening {
     cdp.call("Page.enable")
     val first = mainFrame(cdp).url
-    // The commit came before Page.enable, so its event was not sent.
-    if (url == null && first != BLANK_PAGE) return TabOpening.COMMITTED
     watch.startedOn(first)
     val seen =
         withTimeoutOrNull(COMMIT_MS) {
-            if (url != null) navigate(cdp, watch, url)
+            navigate(cdp, watch, url)
             watch.await { it.download || watch.committed(it) }
         } ?: watch.now()
     if (watch.committed(seen)) return TabOpening.COMMITTED
@@ -220,8 +213,14 @@ private suspend fun navigate(cdp: CdpSession, watch: OpenWatch, url: String) {
         return
     }
     val error = reply?.errorText
-    if (!error.isNullOrBlank()) throw ApiException.badRequest(error)
-    watch.navigatedAs(reply?.loaderId)
+    if (error.isNullOrBlank()) {
+        watch.navigatedAs(reply?.loaderId)
+        return
+    }
+    // Chrome 133 answers a save with an error and no isDownload. The save's event, or the tab
+    // closing, says what it was, so a load that really failed waits out SAVE_MS to be told apart.
+    withTimeoutOrNull(SAVE_MS) { watch.await { it.download } }
+        ?: throw ApiException.badRequest(error)
 }
 
 /** What a tab's main frame has done, from the session's events. */
@@ -293,7 +292,10 @@ private data class Navigation(
  */
 internal const val COMMIT_MS = 12_000L
 
-/** How long after a download starts Chrome has to close the tab or show its viewer in it. */
+/**
+ * How long Chrome has to close the tab or show its viewer once a download starts, and to say a
+ * failed navigation was a download.
+ */
 private const val SAVE_MS = 2_000L
 
 private const val BLANK_PAGE = "about:blank"
