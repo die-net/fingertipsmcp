@@ -2,11 +2,11 @@ package com.fingertipsmcp.server.routes
 
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
-import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.VIEWER_COOKIE
 import com.fingertipsmcp.server.VIEWER_PATH
+import com.fingertipsmcp.server.ViewerControls
 import com.fingertipsmcp.server.scoped
 import com.fingertipsmcp.stream.DEFAULT_BIT_RATE
 import com.fingertipsmcp.stream.DEFAULT_FPS
@@ -32,15 +32,19 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
-/** WebCodecs viewer, plus the video and audio websockets it plays. */
-fun Route.streamRoutes(
-    services: ServerServices,
-    phone: PhoneServices,
-    streams: StreamServices,
-) {
-    val viewer = CachedBytes(streams.viewerHtml)
+/**
+ * The WebCodecs viewer, the video and audio websockets it plays, and `WS /v1/input/pointer`, its
+ * input, which the product's [StreamServices.controls] carry out.
+ */
+fun Route.streamRoutes(services: ServerServices, streams: StreamServices) {
+    val viewer = CachedBytes { withContext(services.ioDispatcher) { viewerPage() } }
+    val controls = streams.controls
+    scoped(Scope.CONTROL) {
+        webSocket("/v1/input/pointer") { serveViewer(services, controls, this) }
+    }
     scoped(Scope.STREAM) {
         get(VIEWER_PATH) {
             val presented =
@@ -53,7 +57,7 @@ fun Route.streamRoutes(
             call.respondBytes(viewer.bytes(), ContentType.Text.Html)
         }
         webSocket("/v1/stream/video") {
-            phone.serveStream(
+            controls.serveStream(
                 this,
                 available = services.device.capabilities().streamVideoMirror,
                 refused = "Video needs the shell helper",
@@ -63,7 +67,7 @@ fun Route.streamRoutes(
             }
         }
         webSocket("/v1/stream/audio") {
-            phone.serveStream(
+            controls.serveStream(
                 this,
                 available = services.device.capabilities().streamAudioSubmix,
                 refused = "Audio needs Android 11 or later and the shell helper",
@@ -80,7 +84,7 @@ fun Route.streamRoutes(
  * all, not [available], closes it with CANNOT_ACCEPT and [refused], which the viewer takes as
  * final. A stream that fails to start closes with its error's message, or [failed].
  */
-private suspend fun PhoneServices.serveStream(
+private suspend fun ViewerControls.serveStream(
     session: DefaultWebSocketServerSession,
     available: Boolean,
     refused: String,
@@ -92,7 +96,7 @@ private suspend fun PhoneServices.serveStream(
         return
     }
     try {
-        power.wake()
+        wake()
         serve()
     } catch (e: ApiException) {
         failStream(session, e, failed)
@@ -123,6 +127,13 @@ private fun ApplicationCall.viewerPathWithoutAccessToken(): String {
 }
 
 /** A bundled page, read once the first time a client asks for it. */
+/** The viewer page, which every product serves from this module's resources. */
+private fun viewerPage(): ByteArray =
+    checkNotNull(StreamServices::class.java.getResourceAsStream("viewer.html")) {
+            "viewer.html is missing from the server's resources"
+        }
+        .use { it.readBytes() }
+
 internal class CachedBytes(private val load: suspend () -> ByteArray) {
     private val gate = Mutex()
 

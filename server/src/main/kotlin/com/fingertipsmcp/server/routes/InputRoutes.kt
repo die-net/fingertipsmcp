@@ -24,13 +24,12 @@ import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
-import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.readBuffer
 import kotlinx.io.readByteArray
 
 /**
- * `POST /v1/input/tap|swipe|gesture|key|text`, `WS /v1/input/pointer`, `POST /v1/ime/hide|show`,
- * `POST /v1/clipboard/read|write`, and `GET|POST /v1/clipboard/image`.
+ * `POST /v1/input/tap|swipe|gesture|key|text`, `POST /v1/ime/hide|show`, `POST
+ * /v1/clipboard/read|write`, and `GET|POST /v1/clipboard/image`.
  */
 fun Route.inputRoutes(services: ServerServices, phone: PhoneServices) {
     scoped(Scope.CONTROL) {
@@ -46,7 +45,6 @@ fun Route.inputRoutes(services: ServerServices, phone: PhoneServices) {
             val request = call.receive<GestureRequest>()
             call.respond(withScreen(call, services) { phone.input.gesture(request) })
         }
-        webSocket("/v1/input/pointer") { serveViewer(services, phone, this) }
         post("/v1/input/key") {
             val request = call.receive<KeyRequest>()
             call.respond(withScreen(call, services) { phone.input.key(request) })

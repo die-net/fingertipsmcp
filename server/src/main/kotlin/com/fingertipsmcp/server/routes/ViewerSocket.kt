@@ -4,7 +4,6 @@ import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.lease.Holder
 import com.fingertipsmcp.lease.LeaseState
 import com.fingertipsmcp.model.ApiException
-import com.fingertipsmcp.model.ClipboardReadRequest
 import com.fingertipsmcp.model.ClipboardWriteRequest
 import com.fingertipsmcp.model.KeyRequest
 import com.fingertipsmcp.model.OrientationRequest
@@ -14,12 +13,14 @@ import com.fingertipsmcp.model.TextRequest
 import com.fingertipsmcp.model.ViewerClipboard
 import com.fingertipsmcp.model.ViewerError
 import com.fingertipsmcp.model.ViewerHolder
+import com.fingertipsmcp.model.ViewerHover
 import com.fingertipsmcp.model.ViewerLease
 import com.fingertipsmcp.model.ViewerMessage
 import com.fingertipsmcp.model.ViewerTake
-import com.fingertipsmcp.server.PhoneServices
+import com.fingertipsmcp.model.ViewerWheel
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.SessionsKey
+import com.fingertipsmcp.server.ViewerControls
 import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
@@ -51,11 +52,11 @@ private val viewers = AtomicLong()
  */
 internal suspend fun serveViewer(
     services: ServerServices,
-    phone: PhoneServices,
+    controls: ViewerControls,
     session: DefaultWebSocketServerSession,
 ) {
     val viewer = Holder.Viewer(viewers.incrementAndGet())
-    val socket = ViewerSocket(services, phone, session, viewer)
+    val socket = ViewerSocket(services, controls, session, viewer)
     try {
         socket.run()
     } finally {
@@ -65,7 +66,7 @@ internal suspend fun serveViewer(
 
 private class ViewerSocket(
     services: ServerServices,
-    private val phone: PhoneServices,
+    private val controls: ViewerControls,
     private val session: DefaultWebSocketServerSession,
     private val viewer: Holder.Viewer,
 ) {
@@ -87,7 +88,7 @@ private class ViewerSocket(
             }
         }
         // The service cancels any contact still down when the channel closes.
-        phone.input.pointer(frames)
+        controls.contacts(frames)
         status.cancel()
         idle.cancel()
     }
@@ -122,19 +123,16 @@ private class ViewerSocket(
             "take" -> {
                 touched()
                 lease.takeOver(viewer)
-                act(op, id) {
-                    phone.power.prepareForAction(decode<ViewerTake>(message).autoWake)
-                }
+                act(op, id) { controls.take(decode<ViewerTake>(message).autoWake) }
             }
-            "key" -> act(op, id) { phone.input.key(decode<KeyRequest>(message)) }
-            "text" -> act(op, id) { phone.input.text(decode<TextRequest>(message)) }
+            "key" -> act(op, id) { controls.key(decode<KeyRequest>(message)) }
+            "text" -> act(op, id) { controls.text(decode<TextRequest>(message)) }
             "orientation" ->
-                act(op, id) { phone.power.orientation(decode<OrientationRequest>(message)) }
-            "paste" ->
-                act(op, id) {
-                    phone.clipboard.write(decode<ClipboardWriteRequest>(message).copy(paste = true))
-                }
+                act(op, id) { controls.orientation(decode<OrientationRequest>(message)) }
+            "paste" -> act(op, id) { controls.paste(decode<ClipboardWriteRequest>(message)) }
             "copy" -> act(op, id) { copy(id) }
+            "hover" -> hover(op, id, message)
+            "wheel" -> act(op, id) { controls.wheel(decode<ViewerWheel>(message)) }
             "release" -> {
                 touched()
                 lease.release(viewer)
@@ -186,23 +184,27 @@ private class ViewerSocket(
         }
     }
 
-    /** Copies the phone's selection, or reads its clipboard when nothing is selected. */
+    /**
+     * Moves a mouse with no button down. It takes no screen, since a person resting the pointer on
+     * the picture is not using it, so it reaches the page only while this viewer holds the screen.
+     */
+    private suspend fun hover(op: String, id: JsonElement?, message: JsonObject) {
+        if (!lease.holds(viewer)) return
+        act(op, id) { controls.hover(decode<ViewerHover>(message)) }
+    }
+
+    /** Copies the selection, or reads the clipboard when nothing is selected. */
     private suspend fun copy(id: JsonElement?) {
-        val clip = phone.clipboard.read(ClipboardReadRequest(copy = true))
-        val image =
-            if (clip.text == null && clip.mimeTypes.any { it.startsWith("image/") }) {
-                phone.clipboard.image()
-            } else {
-                null
-            }
-        send(ViewerClipboard(id, clip.text, image?.mimeType, changed = clip.changed == true))
+        val clip = controls.copy()
+        val image = clip.image
+        send(ViewerClipboard(id, clip.text, image?.mimeType, changed = clip.changed))
         // The only binary frame this socket sends, so the page takes the next one as the image.
         if (image != null) session.outgoing.send(Frame.Binary(true, image.bytes))
     }
 
     /** A binary frame is an image to paste. */
     private suspend fun pasteImage(bytes: ByteArray) {
-        act("paste", null) { phone.clipboard.writeImage(bytes, paste = true) }
+        act("paste", null) { controls.pasteImage(bytes) }
     }
 
     private suspend fun onLease(state: LeaseState) {

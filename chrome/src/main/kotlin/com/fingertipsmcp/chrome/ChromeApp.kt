@@ -13,6 +13,7 @@ import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.server.Product
 import com.fingertipsmcp.server.ServerServices
+import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.TokenStore
 import com.fingertipsmcp.server.fingertipsModule
 import com.fingertipsmcp.server.mcpSessions
@@ -99,6 +100,16 @@ class ChromeApp(
             chrome = DESKTOP_ENDPOINT,
         )
     private val shots = TabScreenshots(browser, devtools)
+    @Suppress("MissingUseCall") // The supervisor owns the browser connection.
+    private val viewer =
+        ChromeViewer(
+            connection = { supervisor.connection() },
+            browser = browser,
+            extensionHome = paths.data,
+            scope = scope,
+        )
+    /** The TCP port HTTP listens on, for the viewer's address; null until then, or with none. */
+    @Volatile private var viewerPort: Int? = null
     val services =
         ServerServices(
             waits = BrowserWaits(browser, devtools, io),
@@ -114,6 +125,13 @@ class ChromeApp(
                 ForegroundWatch(lease, scope, top = { null }, bringBack = {}, report = { _, _ -> }),
             product = Product.CHROME,
             screenshots = shots::png,
+            streams =
+                StreamServices(
+                    video = viewer.video,
+                    audio = viewer.audio,
+                    viewerText = ::viewerText,
+                    controls = viewer.controls,
+                ),
         )
     private val sessions = mcpSessions(services, scope)
 
@@ -132,6 +150,7 @@ class ChromeApp(
             if (socket.exists()) socket.delete()
         } else {
             requirePortFree(port)
+            viewerPort = port
         }
         val server =
             embeddedServer(
@@ -172,6 +191,17 @@ class ChromeApp(
             logger.info("fingertips-chrome listening on http://{}:{}", options.host, port)
         }
         Thread.currentThread().join()
+    }
+
+    /** How to open the viewer, for the MCP resource. */
+    private fun viewerText(): String {
+        val port =
+            viewerPort
+                ?: return "The viewer needs FingertipsMCP for Chrome serving HTTP on a TCP port."
+        return "http://127.0.0.1:$port/viewer?access_token=TOKEN\n" +
+            "Replace TOKEN with a token that has the stream scope, and the control scope to use " +
+            "the tab. That URL sets a cookie and redirects to /viewer without the token. The " +
+            "viewer shows the tab Chrome shows, with its sound, and takes the mouse and keyboard."
     }
 
     /**

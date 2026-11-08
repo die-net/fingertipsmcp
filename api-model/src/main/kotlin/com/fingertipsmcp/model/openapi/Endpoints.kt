@@ -68,7 +68,7 @@ public enum class ApiGroup {
     /** Android's screen, input, apps, power, clipboard, and lock-screen PIN. */
     PHONE,
     BROWSER,
-    /** The viewer page and its media sockets. */
+    /** The viewer page, its media sockets, and its input socket. */
     STREAMS,
     SCREENSHOTS,
 }
@@ -593,7 +593,8 @@ private fun groupOf(path: String): ApiGroup =
     when {
         path == "/v1/screenshot" -> ApiGroup.SCREENSHOTS
         path.startsWith("/v1/browser/") -> ApiGroup.BROWSER
-        path == "/viewer" || path.startsWith("/v1/stream/") -> ApiGroup.STREAMS
+        path == "/viewer" || path == "/v1/input/pointer" || path.startsWith("/v1/stream/") ->
+            ApiGroup.STREAMS
         path.startsWith("/v1/tokens") || path.startsWith("/v1/sessions") -> ApiGroup.CORE
         // Literals rather than a set: fingertipsEndpoints is built before a property below it.
         path == "/v1/device" ||

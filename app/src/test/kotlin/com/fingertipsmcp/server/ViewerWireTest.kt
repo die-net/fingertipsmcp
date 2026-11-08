@@ -53,7 +53,7 @@ class ViewerWireTest {
     fun `stream headers`() {
         assertEquals(
             """{"codec":"avc","width":288,"height":640,"fps":30,"bitRate":4000000,""" +
-                """"displayWidth":1080,"displayHeight":2400}""",
+                """"displayWidth":1080,"displayHeight":2400,"pointer":"touch"}""",
             videoHeader(
                 288,
                 640,

@@ -224,6 +224,111 @@ internal class FakeApi(
             report = { _, pkg -> synchronized(tookScreen) { tookScreen += pkg } },
         )
 
+    val phone =
+        PhoneServices(
+            ui =
+                object : UiService {
+                    override suspend fun snapshot(options: SnapshotOptions): UiSnapshot {
+                        snapshotOptions = options
+                        return snapshot
+                    }
+
+                    override suspend fun find(request: FindRequest): FindResult {
+                        findRequest = request
+                        return FindResult(seq = 1, matches = emptyList())
+                    }
+
+                    override suspend fun act(ref: String, request: NodeActionRequest) = acted()
+                },
+            input =
+                object : InputService {
+                    override suspend fun tap(request: TapRequest): ActionResult {
+                        inputTaps++
+                        return acted()
+                    }
+
+                    override suspend fun swipe(request: SwipeRequest) = acted()
+
+                    override suspend fun gesture(request: GestureRequest) = acted()
+
+                    override suspend fun pointer(frames: ReceiveChannel<PointerFrame>) {
+                        val seen = mutableListOf<PointerFrame>()
+                        for (frame in frames) seen.add(frame)
+                        afterPointer()
+                        pointerSessions.send(seen)
+                    }
+
+                    override suspend fun key(request: KeyRequest) = acted()
+
+                    override suspend fun text(request: TextRequest) = acted()
+
+                    override suspend fun hideIme() = acted()
+
+                    override suspend fun showIme(request: ImeShowRequest): ActionResult {
+                        imeShow = request
+                        return acted()
+                    }
+                },
+            apps = FakeApps { intentApp },
+            power =
+                object : PowerService by FakePower {
+                    override suspend fun orientation(request: OrientationRequest): ActionResult {
+                        this@FakeApi.orientation = request
+                        return acted()
+                    }
+
+                    override suspend fun prepareForAction(autoWake: Boolean): Boolean {
+                        prepared = autoWake
+                        return autoWake
+                    }
+                },
+            clipboard =
+                object : ClipboardService {
+                    override suspend fun read(request: ClipboardReadRequest): ClipboardContent {
+                        clipRead = request
+                        return ClipboardContent(
+                            text = clip,
+                            mimeTypes =
+                                listOfNotNull(
+                                    clip?.let { "text/plain" },
+                                    clipImage?.mimeType,
+                                ),
+                            changed = if (request.copy) false else null,
+                        )
+                    }
+
+                    override suspend fun write(request: ClipboardWriteRequest): ActionResult {
+                        clipWrite = request
+                        clip = request.text
+                        clipImage = null
+                        return acted()
+                    }
+
+                    override suspend fun image(): ClipImage? = clipImage
+
+                    override suspend fun writeImage(
+                        bytes: ByteArray,
+                        paste: Boolean,
+                    ): ActionResult {
+                        clip = null
+                        clipImage = ClipImage(bytes, "image/png")
+                        clipPasted = paste
+                        return acted()
+                    }
+
+                    override suspend fun clearOwn(): ActionResult = acted()
+
+                    override suspend fun clear(): ActionResult {
+                        clip = null
+                        clipImage = null
+                        return acted()
+                    }
+                },
+            writePin = { _ -> },
+            shell = { _ -> ShellResult(exit = 0, stdout = "log") },
+            logcat = LogcatFeed { _ -> emptyFlow() },
+        )
+
     val services: ServerServices =
         ServerServices(
             waits = waits,
@@ -240,123 +345,13 @@ internal class FakeApi(
                 },
             screenshots = { _ -> byteArrayOf(1, 2, 3) },
             events = emptyFlow(),
-            phone =
-                PhoneServices(
-                    ui =
-                        object : UiService {
-                            override suspend fun snapshot(options: SnapshotOptions): UiSnapshot {
-                                snapshotOptions = options
-                                return snapshot
-                            }
-
-                            override suspend fun find(request: FindRequest): FindResult {
-                                findRequest = request
-                                return FindResult(seq = 1, matches = emptyList())
-                            }
-
-                            override suspend fun act(ref: String, request: NodeActionRequest) =
-                                acted()
-                        },
-                    input =
-                        object : InputService {
-                            override suspend fun tap(request: TapRequest): ActionResult {
-                                inputTaps++
-                                return acted()
-                            }
-
-                            override suspend fun swipe(request: SwipeRequest) = acted()
-
-                            override suspend fun gesture(request: GestureRequest) = acted()
-
-                            override suspend fun pointer(frames: ReceiveChannel<PointerFrame>) {
-                                val seen = mutableListOf<PointerFrame>()
-                                for (frame in frames) seen.add(frame)
-                                afterPointer()
-                                pointerSessions.send(seen)
-                            }
-
-                            override suspend fun key(request: KeyRequest) = acted()
-
-                            override suspend fun text(request: TextRequest) = acted()
-
-                            override suspend fun hideIme() = acted()
-
-                            override suspend fun showIme(request: ImeShowRequest): ActionResult {
-                                imeShow = request
-                                return acted()
-                            }
-                        },
-                    apps = FakeApps { intentApp },
-                    power =
-                        object : PowerService by FakePower {
-                            override suspend fun orientation(
-                                request: OrientationRequest
-                            ): ActionResult {
-                                this@FakeApi.orientation = request
-                                return acted()
-                            }
-
-                            override suspend fun prepareForAction(autoWake: Boolean): Boolean {
-                                prepared = autoWake
-                                return autoWake
-                            }
-                        },
-                    clipboard =
-                        object : ClipboardService {
-                            override suspend fun read(
-                                request: ClipboardReadRequest
-                            ): ClipboardContent {
-                                clipRead = request
-                                return ClipboardContent(
-                                    text = clip,
-                                    mimeTypes =
-                                        listOfNotNull(
-                                            clip?.let { "text/plain" },
-                                            clipImage?.mimeType,
-                                        ),
-                                    changed = if (request.copy) false else null,
-                                )
-                            }
-
-                            override suspend fun write(
-                                request: ClipboardWriteRequest
-                            ): ActionResult {
-                                clipWrite = request
-                                clip = request.text
-                                clipImage = null
-                                return acted()
-                            }
-
-                            override suspend fun image(): ClipImage? = clipImage
-
-                            override suspend fun writeImage(
-                                bytes: ByteArray,
-                                paste: Boolean,
-                            ): ActionResult {
-                                clip = null
-                                clipImage = ClipImage(bytes, "image/png")
-                                clipPasted = paste
-                                return acted()
-                            }
-
-                            override suspend fun clearOwn(): ActionResult = acted()
-
-                            override suspend fun clear(): ActionResult {
-                                clip = null
-                                clipImage = null
-                                return acted()
-                            }
-                        },
-                    writePin = { _ -> },
-                    shell = { _ -> ShellResult(exit = 0, stdout = "log") },
-                    logcat = LogcatFeed { _ -> emptyFlow() },
-                ),
+            phone = phone,
             streams =
                 StreamServices(
                     video = VideoFeed { _, _ -> },
                     audio = AudioFeed { _ -> },
-                    viewerHtml = { VIEWER_HTML },
                     viewerText = { "http://127.0.0.1:1/viewer?access_token=TOKEN" },
+                    controls = PhoneViewerControls(phone),
                 ),
             lease = lease,
             tabs =
@@ -625,8 +620,6 @@ private object FakePower : PowerService {
 
     override suspend fun prepareForAction(autoWake: Boolean) = false
 }
-
-private val VIEWER_HTML = "<html>viewer</html>".encodeToByteArray()
 
 internal class MemoryTabStore : TabStore {
     var ids: Set<String> = emptySet()

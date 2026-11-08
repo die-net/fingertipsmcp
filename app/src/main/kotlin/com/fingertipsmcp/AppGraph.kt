@@ -74,6 +74,7 @@ import com.fingertipsmcp.server.AudioFeed
 import com.fingertipsmcp.server.DeviceFacts
 import com.fingertipsmcp.server.NetworkWatcher
 import com.fingertipsmcp.server.PhoneServices
+import com.fingertipsmcp.server.PhoneViewerControls
 import com.fingertipsmcp.server.ServerController
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.StreamServices
@@ -301,6 +302,18 @@ class AppGraph(
         )
     internal val audio = AudioStream(StreamLease(context, settings), helper, ioDispatcher)
 
+    private val phone =
+        PhoneServices(
+            ui = ui,
+            input = input,
+            apps = apps,
+            power = power,
+            clipboard = clipboard,
+            writePin = { pin -> pins.write(pin) },
+            shell = { argv -> this.shell.exec(argv) },
+            logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
+        )
+
     val services =
         ServerServices(
             waits = waits,
@@ -309,23 +322,13 @@ class AppGraph(
             ioDispatcher = ioDispatcher,
             device = GraphDevice(deviceInfo),
             events = bus.events,
-            phone =
-                PhoneServices(
-                    ui = ui,
-                    input = input,
-                    apps = apps,
-                    power = power,
-                    clipboard = clipboard,
-                    writePin = { pin -> pins.write(pin) },
-                    shell = { argv -> this.shell.exec(argv) },
-                    logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
-                ),
+            phone = phone,
             streams =
                 StreamServices(
                     video = VideoFeed { session, spec -> this.video.serve(session, spec) },
                     audio = AudioFeed { session -> this.audio.serve(session) },
-                    viewerHtml = { asset("viewer.html") },
                     viewerText = { viewerLink() },
+                    controls = PhoneViewerControls(phone),
                 ),
             screenshots = { scale -> this.screenshots.png(scale) },
             lease = screenLease,
@@ -342,9 +345,6 @@ class AppGraph(
 
     val server = ApiServer(context.packageName, ioDispatcher) { fingertipsModule(services) }
     val serverController = ServerController(scope, server::start, server::stop)
-
-    private suspend fun asset(name: String): ByteArray =
-        withContext(ioDispatcher) { context.assets.open(name).use { it.readBytes() } }
 
     @Suppress("MissingUseCall") // The caller closes the socket.
     private suspend fun openDevtools(name: String, readTimeoutMs: Long): DevtoolsSocket =

@@ -20,7 +20,7 @@ FingertipsMCP lets an AI agent use your Android phone the way you would: read th
 
 It also launches and stops apps, sends intents, wakes the phone and unlocks it with a stored PIN, reads and writes the clipboard, and waits for windows, screen elements, page loads, or network requests.
 
-**Drives desktop Chrome too.** `fingertipsmcp-chrome-vX.Y.Z.jar`, in the same releases, starts Google Chrome on a Linux or macOS computer and serves the same browser API and `browser_*` tools, with mouse and keyboard input shaped like a person's. One MCP client can use a phone and a desktop browser side by side. See [FingertipsMCP for Chrome](docs/chrome.md).
+**Drives desktop Chrome too.** `fingertipsmcp-chrome-vX.Y.Z.jar`, in the same releases, starts Google Chrome on a Linux or macOS computer and serves the same browser API and `browser_*` tools, with mouse and keyboard input shaped like a person's. A person can watch and use that browser in the same viewer as the phone's. One MCP client can use a phone and a desktop browser side by side. See [FingertipsMCP for Chrome](docs/chrome.md).
 
 ## Get started
 

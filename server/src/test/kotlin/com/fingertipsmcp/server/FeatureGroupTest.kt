@@ -21,6 +21,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import kotlin.coroutines.cancellation.CancellationException
@@ -48,6 +50,24 @@ class FeatureGroupTest {
     fun `groups follow the services`() {
         assertEquals(ApiGroup.entries.toSet(), api.services.groups)
         assertEquals(setOf(ApiGroup.CORE, ApiGroup.BROWSER, ApiGroup.SCREENSHOTS), desk.groups)
+    }
+
+    @Test
+    fun `a viewer needs no phone`() = testApplication {
+        // A desktop browser has a viewer and its input socket, with no phone behind them.
+        val viewer = desk.copy(streams = api.services.streams)
+        assertEquals(
+            setOf(ApiGroup.CORE, ApiGroup.BROWSER, ApiGroup.SCREENSHOTS, ApiGroup.STREAMS),
+            viewer.groups,
+        )
+        val all = api.tokens.issue("all", Scope.entries.toSet())
+        application { fingertipsModule(viewer) }
+        apiClient().use { client ->
+            assertEquals(HttpStatusCode.OK, client.get("/viewer") { bearer(all) }.status)
+            client.webSocket("/v1/input/pointer", { bearer(all) }) {
+                assertTrue((incoming.receive() as Frame.Text).readText().contains("\"lease\""))
+            }
+        }
     }
 
     @Test
