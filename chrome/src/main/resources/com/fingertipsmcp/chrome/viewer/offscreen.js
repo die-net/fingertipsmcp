@@ -1,6 +1,6 @@
 // The viewer extension's offscreen document, where the tab is captured and encoded. FingertipsMCP
 // drives it over DevTools: it adds the binding fingertipsViewerSend, through which this hands back
-// frames and news, and calls fingertipsViewer.capture, configure, keyFrame, and stop.
+// frames and news, and calls fingertipsViewer.capture, window, configure, keyFrame, and stop.
 //
 // Each frame goes out as the viewer's sockets carry it: a type byte (1 codec config, 2 key, 3
 // delta), the timestamp in microseconds as 8 big-endian bytes, then H.264 in Annex B or an Opus
@@ -351,6 +351,17 @@ globalThis.fingertipsViewer = {
       });
       current = new Capture(stream, settings.id);
       return { ok: true };
+    } catch (e) {
+      return { error: String((e && e.message) || e) };
+    }
+  },
+  // The type of the window with DevTools' id id, which chrome.windows uses too: {type}, with type
+  // null when the extension can't see the window, or {error} when the worker did not answer.
+  async window(id) {
+    try {
+      const answer = await chrome.runtime.sendMessage({ op: "window", id: id });
+      if (answer && "type" in answer) return { type: answer.type };
+      return { error: "The extension's worker gave no answer" };
     } catch (e) {
       return { error: String((e && e.message) || e) };
     }

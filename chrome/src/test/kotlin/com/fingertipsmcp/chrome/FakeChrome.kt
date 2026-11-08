@@ -23,7 +23,9 @@ import kotlinx.serialization.json.putJsonObject
  * DevTools for a Chrome whose tabs hold one page each, as [tabs] lists them, with the viewer's
  * extension, whose offscreen document is DOC. Each command is answered once it is sent, after any
  * event it causes, as Chrome does. The extension's capture answers with [captureError], or ok, and
- * a key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does.
+ * a key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does. Each page is
+ * in a window of [windows], and running the extension's action on a tab in a window that is not
+ * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does.
  */
 internal class FakeChrome : CdpTransport {
     private val out = Channel<String>(Channel.UNLIMITED)
@@ -32,6 +34,15 @@ internal class FakeChrome : CdpTransport {
     /** Tab target id to the page in it, or null for a tab that reports none. */
     val tabs = linkedMapOf<String, String?>("TAB" to "PAGE")
     var viewport = 600 to 1000
+    /** Page target id to the id of its window, [NORMAL] for a page not listed. */
+    val windowOf = mutableMapOf<String, Int>()
+    /**
+     * Window id to its type as `chrome.windows` gives it. A window not listed is one of another
+     * profile, which the extension can't see.
+     */
+    val windows = mutableMapOf(NORMAL to "normal")
+    /** Whether Chrome crashed, which closed DevTools. */
+    var crashed = false
     var captureError: String? = null
     /** Whether the offscreen document has opened, which it does when the extension loads. */
     private var documentOpen = false
@@ -92,9 +103,14 @@ internal class FakeChrome : CdpTransport {
                     }
                 }
             "Extensions.triggerAction" -> {
-                actionTab = params.getValue("targetId").jsonPrimitive.content
+                val tab = params.getValue("targetId").jsonPrimitive.content
+                if (windows[window(tabs[tab])] != "normal") crash() else actionTab = tab
                 empty()
             }
+            "Browser.getWindowForTarget" ->
+                buildJsonObject {
+                    put("windowId", window(params.getValue("targetId").jsonPrimitive.content))
+                }
             "Runtime.evaluate" -> evaluate(params.getValue("expression").jsonPrimitive.content)
             else -> empty()
         }
@@ -122,8 +138,22 @@ internal class FakeChrome : CdpTransport {
         return empty()
     }
 
+    private fun window(page: String?): Int = windowOf[page] ?: NORMAL
+
+    /** Chrome exits, and DevTools closes with no answer to the command that crashed it. */
+    private fun crash() {
+        crashed = true
+        out.close()
+    }
+
     private fun evaluate(expression: String): JsonElement {
         evaluated += expression
+        if (expression.startsWith("fingertipsViewer.window(")) {
+            val id = expression.substringAfter("(").substringBefore(")").toInt()
+            return buildJsonObject {
+                putJsonObject("result") { putJsonObject("value") { put("type", windows[id]) } }
+            }
+        }
         if (expression == "fingertipsViewer.keyFrame()") keyNext = true
         if (expression == "fingertipsViewer.stop()") capturing = null
         var error: String? = null
@@ -250,6 +280,7 @@ internal class FakeChrome : CdpTransport {
 
     companion object {
         const val BROWSER = "browser"
+        const val NORMAL = 1
         const val DOCUMENT = "DOC"
         const val DOCUMENT_URL = "chrome-extension://ext/offscreen.html"
         const val ACTIVE_STREAM = "Cannot capture a tab with an active stream."
@@ -259,10 +290,11 @@ internal class FakeChrome : CdpTransport {
 }
 
 /**
- * A browser whose page targets are [pages], with [shown] the one Chrome shows. The viewer asks only
- * which pages there are and which shows, so the rest is [TabBrowser]'s, which fails the test.
+ * A browser whose page targets are [pages], with [shown] the ones Chrome shows, one in each window.
+ * The viewer asks only which pages there are and which show; anything else is not something it
+ * calls.
  */
-internal class ShowingBrowser(var pages: List<String>, var shown: String) : TabBrowser() {
+internal class ShowingBrowser(var pages: List<String>, var shown: Set<String>) : TabBrowser() {
     /** Calls to [targets], which start Chrome when it is not running. */
     var listed = 0
 
@@ -271,5 +303,5 @@ internal class ShowingBrowser(var pages: List<String>, var shown: String) : TabB
         return pages.map { BrowserTarget(id = "chrome~$it", type = "page", socket = "chrome") }
     }
 
-    override suspend fun showing(id: String): Boolean = id == "chrome~$shown"
+    override suspend fun showing(id: String): Boolean = id.removePrefix("chrome~") in shown
 }

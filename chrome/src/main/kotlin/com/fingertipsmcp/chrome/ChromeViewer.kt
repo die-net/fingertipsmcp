@@ -204,7 +204,7 @@ class ChromeViewer(
     /** Loads the extension if this browser lacks it, and captures the tab Chrome shows. */
     private suspend fun start() {
         val ext = load()
-        capture(ext, showingTab() ?: throw nothingShown())
+        capture(ext, showingTab(ext) ?: throw nothingCapturable())
     }
 
     @Suppress("MissingUseCall") // Loaded owns the target watch, which ends with its connection.
@@ -293,21 +293,65 @@ class ChromeViewer(
     }
 
     /**
-     * The tab Chrome shows. A captured tab reports itself visible whatever Chrome shows, so while
-     * one is captured, another tab that is visible is the one Chrome shows now, and the captured
-     * tab stays when there is none.
+     * The tab Chrome shows that the viewer can capture. A captured tab reports itself visible
+     * whatever Chrome shows, so while one is captured, another tab that is visible is the one
+     * Chrome shows now, and the captured tab stays when there is none. A tab in a window without
+     * the extension's action, such as a popup, is passed over, as [hasAction] says why.
      */
-    private suspend fun showingTab(): String? {
+    private suspend fun showingTab(ext: Loaded): String? {
         val pages = browser.targets().filter { it.type == "page" }.map { it.id }
         val now = captured?.pageId?.takeIf { it in pages }
-        return pages.firstOrNull { it != now && browser.showing(it) == true } ?: now
+        for (page in pages) {
+            if (page == now || browser.showing(page) != true) continue
+            if (hasAction(ext, page)) return page
+            log.info("Not capturing {}, whose window has no extension action", page)
+        }
+        return now
+    }
+
+    /**
+     * Whether [pageId] is in a window with the extension's action, which only a normal window the
+     * extension can see has. A popup's has no toolbar, and a window of another profile has no
+     * action for this extension. Chrome 156 runs `Extensions.triggerAction` on such a tab without
+     * checking for either, and crashes; Chromium's main branch checks and refuses. The extension's
+     * worker knows each window's type, under the id `Browser.getWindowForTarget` gives.
+     */
+    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
+    private suspend fun hasAction(ext: Loaded, pageId: String): Boolean {
+        val (_, chromeId) = parseBrowserTargetId(pageId)
+        val window =
+            ext.connection.root
+                .call("Browser.getWindowForTarget", buildJsonObject { put("targetId", chromeId) })
+                .decodeCdp<WindowForTarget>()
+                ?.windowId
+                ?: throw ApiException.unavailable(
+                    "capture_failed",
+                    "Chrome did not say which window holds the tab",
+                )
+        val reply =
+            offscreenSession(ext)
+                .call("Runtime.evaluate", evaluation("fingertipsViewer.window($window)"))
+                .decodeCdp<EvalReply>()
+                ?.result
+                ?.value
+                ?.decodeCdp<WindowType>()
+        if (reply == null || reply.error != null) {
+            throw ApiException.unavailable(
+                "capture_failed",
+                "The viewer extension did not say what window the tab is in: " +
+                    (reply?.error ?: "no answer"),
+            )
+        }
+        return reply.type == NORMAL_WINDOW
     }
 
     /**
      * Captures [pageId]. The extension stops what it captured before it starts on another tab, so
      * once it is asked, [captured] names this capture, and it is cleared if the capture fails. A
      * failure before that leaves the capture running and [captured] as it was, unless the tab is
-     * the one captured, whose capture stops before the action runs.
+     * the one captured, whose capture stops before the action runs. [pageId] is one [showingTab]
+     * chose, or the one captured, so its window has the extension's action, which the action needs
+     * so as not to crash Chrome; Chrome moves no tab into a popup.
      */
     @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun capture(ext: Loaded, pageId: String) {
@@ -503,7 +547,7 @@ class ChromeViewer(
                 name(null)
             }
             try {
-                val shown = showingTab() ?: throw nothingShown()
+                val shown = showingTab(ext) ?: throw nothingCapturable()
                 if (shown == captured?.pageId) return
                 capture(ext, shown)
             } catch (e: CancellationException) {
@@ -676,6 +720,11 @@ class ChromeViewer(
     @Serializable
     private data class CaptureOutcome(val ok: Boolean? = null, val error: String? = null)
 
+    @Serializable private data class WindowForTarget(val windowId: Long? = null)
+
+    /** A window's type as `chrome.windows` names it, null when the extension can't see it. */
+    @Serializable private data class WindowType(val type: String? = null, val error: String? = null)
+
     /** News from the offscreen document, with the capture it is about when it is about one. */
     @Serializable
     private data class News(
@@ -702,6 +751,8 @@ class ChromeViewer(
         const val AUDIO_QUEUE = 8
         val DEFAULT_SPEC = VideoSpec(DEFAULT_MAX_SIZE, DEFAULT_FPS, DEFAULT_BIT_RATE)
         const val CHROME_STOPPED = "Chrome stopped"
+        /** The `chrome.windows` type of a window with a toolbar, and so the extension's action. */
+        const val NORMAL_WINDOW = "normal"
         const val NANOS_PER_MS = 1_000_000L
     }
 }
@@ -732,5 +783,12 @@ private fun evaluation(expression: String) = buildJsonObject {
 
 private fun nothingShown() =
     ApiException.unavailable("capture_failed", "Chrome is showing no tab for the viewer.")
+
+/** No tab shows that [ChromeViewer] can capture, which a tab in a popup window alone is not. */
+private fun nothingCapturable() =
+    ApiException.unavailable(
+        "capture_failed",
+        "Chrome is showing no tab the viewer can capture. It can't capture a popup window's tab.",
+    )
 
 private val log = LoggerFactory.getLogger("FingertipsChrome.Viewer")
