@@ -28,7 +28,7 @@ class DesktopKeyboardTest {
             val steps = typingSteps(text, TypingModel(Random(seed)), 40, 140)
             val typed = steps.filterIsInstance<KeyStep.Down>().mapNotNull { it.key.text }
             assertEquals(text, typed.joinToString(""))
-            val ups = steps.filterIsInstance<KeyStep.Up>().count { it.key != SHIFT_KEY }
+            val ups = steps.filterIsInstance<KeyStep.Up>().count { it.key != CdpModifier.SHIFT.key }
             assertEquals(text.length, ups)
             assertTrue(steps.zipWithNext().all { (a, b) -> b.tMs >= a.tMs })
         }
@@ -40,7 +40,7 @@ class DesktopKeyboardTest {
             val steps = typingSteps("aBCd", TypingModel(Random(seed)), 40, 140)
             assertFalse(checkShift(steps), "Shift comes up at the end")
             // One Shift press covers both capitals.
-            assertEquals(1, steps.count { it is KeyStep.Down && it.key == SHIFT_KEY })
+            assertEquals(1, steps.count { it is KeyStep.Down && it.key == CdpModifier.SHIFT.key })
         }
     }
 
@@ -48,7 +48,7 @@ class DesktopKeyboardTest {
     fun `shift leads its key`() {
         repeat(50) { seed ->
             val steps = typingSteps("xY", TypingModel(Random(seed)), 40, 140)
-            val shift = steps.first { it is KeyStep.Down && it.key == SHIFT_KEY }
+            val shift = steps.first { it is KeyStep.Down && it.key == CdpModifier.SHIFT.key }
             val y = steps.first { it is KeyStep.Down && it.key.key == "Y" }
             assertTrue(y.tMs - shift.tMs >= 25, "lead ${y.tMs - shift.tMs}")
         }
@@ -86,12 +86,12 @@ class DesktopKeyboardTest {
     private fun checkShift(steps: List<KeyStep>): Boolean {
         var held = false
         for (step in steps) {
-            if (step is KeyStep.Up && step.key == SHIFT_KEY) held = false
-            if (step is KeyStep.Down && step.key == SHIFT_KEY) held = true
-            if (step is KeyStep.Down && step.key != SHIFT_KEY) {
+            if (step is KeyStep.Up && step.key == CdpModifier.SHIFT.key) held = false
+            if (step is KeyStep.Down && step.key == CdpModifier.SHIFT.key) held = true
+            if (step is KeyStep.Down && step.key != CdpModifier.SHIFT.key) {
                 val upper = step.key.text?.first()?.isUpperCase() == true
                 assertEquals(upper, held, "$step with shift $held")
-                assertEquals(if (upper) SHIFT_MODIFIER else 0, step.modifiers)
+                assertEquals(if (upper) setOf(CdpModifier.SHIFT) else emptySet(), step.modifiers)
             }
         }
         return held
@@ -100,8 +100,8 @@ class DesktopKeyboardTest {
     private fun rollsOver(steps: List<KeyStep>): Boolean {
         var down = 0
         for (step in steps) {
-            if (step is KeyStep.Down && step.key != SHIFT_KEY) down++
-            if (step is KeyStep.Up && step.key != SHIFT_KEY) down--
+            if (step is KeyStep.Down && step.key != CdpModifier.SHIFT.key) down++
+            if (step is KeyStep.Up && step.key != CdpModifier.SHIFT.key) down--
             if (down > 1) return true
         }
         return false

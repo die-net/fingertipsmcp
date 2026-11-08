@@ -18,6 +18,8 @@ import com.fingertipsmcp.model.ViewerLease
 import com.fingertipsmcp.model.ViewerMessage
 import com.fingertipsmcp.model.ViewerTake
 import com.fingertipsmcp.model.ViewerWheel
+import com.fingertipsmcp.server.MouseControls
+import com.fingertipsmcp.server.PhoneControls
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.SessionsKey
 import com.fingertipsmcp.server.ViewerControls
@@ -42,6 +44,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.serializer
 
 private val viewers = AtomicLong()
+
+private fun unsupported(why: String) = ApiException(422, "unsupported", why)
 
 /**
  * `WS /v1/input/pointer`, the viewer's input socket, which holds the screen for the person using
@@ -123,16 +127,21 @@ private class ViewerSocket(
             "take" -> {
                 touched()
                 lease.takeOver(viewer)
-                act(op, id) { controls.take(decode<ViewerTake>(message).autoWake) }
+                act(op, id) {
+                    val autoWake = decode<ViewerTake>(message).autoWake
+                    (controls as? PhoneControls)?.take(autoWake)
+                }
             }
             "key" -> act(op, id) { controls.key(decode<KeyRequest>(message)) }
             "text" -> act(op, id) { controls.text(decode<TextRequest>(message)) }
             "orientation" ->
-                act(op, id) { controls.orientation(decode<OrientationRequest>(message)) }
+                onPhone(op, id, "This screen has no orientation to set.") {
+                    it.orientation(decode<OrientationRequest>(message))
+                }
             "paste" -> act(op, id) { controls.paste(decode<ClipboardWriteRequest>(message)) }
             "copy" -> act(op, id) { copy(id) }
             "hover" -> hover(op, id, message)
-            "wheel" -> act(op, id) { controls.wheel(decode<ViewerWheel>(message)) }
+            "wheel" -> withMouse(op, id) { it.wheel(decode<ViewerWheel>(message)) }
             "release" -> {
                 touched()
                 lease.release(viewer)
@@ -167,7 +176,7 @@ private class ViewerSocket(
      * dropped because someone else has the screen is answered too when it has an [id], since the
      * page waits for that answer.
      */
-    private suspend fun act(op: String, id: JsonElement?, block: suspend () -> Any) {
+    private suspend fun act(op: String, id: JsonElement?, block: suspend () -> Unit) {
         touched()
         if (!lease.viewerInput(viewer)) {
             if (id != null) send(ViewerError(id, "Someone else has the screen. Take over first."))
@@ -190,7 +199,28 @@ private class ViewerSocket(
      */
     private suspend fun hover(op: String, id: JsonElement?, message: JsonObject) {
         if (!lease.holds(viewer)) return
-        act(op, id) { controls.hover(decode<ViewerHover>(message)) }
+        withMouse(op, id) { it.hover(decode<ViewerHover>(message)) }
+    }
+
+    /** Runs [op] on the mouse, through [act], or refuses it on a screen with none. */
+    private suspend fun withMouse(
+        op: String,
+        id: JsonElement?,
+        block: suspend (MouseControls) -> Unit,
+    ) {
+        val mouse = controls as? MouseControls
+        act(op, id) { block(mouse ?: throw unsupported("This screen has no mouse.")) }
+    }
+
+    /** Runs [op] on the phone's controls, through [act], or refuses it as [refused] elsewhere. */
+    private suspend fun onPhone(
+        op: String,
+        id: JsonElement?,
+        refused: String,
+        block: suspend (PhoneControls) -> Unit,
+    ) {
+        val phone = controls as? PhoneControls
+        act(op, id) { block(phone ?: throw unsupported(refused)) }
     }
 
     /** Copies the selection, or reads the clipboard when nothing is selected. */
@@ -204,7 +234,9 @@ private class ViewerSocket(
 
     /** A binary frame is an image to paste. */
     private suspend fun pasteImage(bytes: ByteArray) {
-        act("paste", null) { controls.pasteImage(bytes) }
+        onPhone("paste", null, "Pasting an image is not supported on this screen.") {
+            it.pasteImage(bytes)
+        }
     }
 
     private suspend fun onLease(state: LeaseState) {

@@ -98,12 +98,13 @@ FingertipsMCP for Chrome starts Chrome with `--remote-debugging-pipe`: DevTools 
 
 Browser input defaults to `cdp`, which on a desktop is mouse and keyboard events, never touch:
 
-- **Clicks** bring the tab to the front if it is hidden, scroll the element into view with the mouse wheel, move the pointer there along a bowed path timed by Fitts's law that often overshoots and settles on a long move, rest briefly, and press and release. The pointer stays where it was left, so the next move starts there. Points land on whole device pixels.
+- **Every input** first brings the tab to the front if it is hidden, as a person switches tabs, and fails with 409 `not_visible` if Chrome does not show it within 2 s.
+- **Clicks** scroll the element into view with the mouse wheel, a flick at a time, waiting after each until the element holds still, then move the pointer there along a bowed path timed by Fitts's law that often overshoots and settles on a long move, rest briefly, and press and release. When the wheel can't bring the element in, because it is beside the viewport, the wheel did not move it, or the page kept moving it for six flicks, Chrome scrolls it into view, and the result's `message` says so. The pointer stays where it was left, by the agent or by a person in the viewer, so the next move starts there. Points land on whole device pixels.
 - **Swipes** scroll with the wheel, a few notches per flick, with the pointer over the page or element. A swipe up scrolls down, as on a phone.
 - **Gestures** with one path are a mouse drag. More than one path is refused.
 - **Typing** clicks the field, then sends each character as key down and key up, Shift held across capitals, at a person's pace inside `minDelayMs`..`maxDelayMs`, with fast keys rolling over. Text no key on a US layout produces, such as emoji, is inserted as an input method commits it. `clear` is select-all (Ctrl+A, or Command+A on macOS) and Backspace.
 
-One action runs at a time. `auto`, `cdp`, and `cdp-mouse` all mean this mouse and keyboard. `touch` is refused with 422 `unsupported`, since a desktop has no touch screen. OS-level input, such as Linux XTEST or uinput and macOS CGEvent, would sit behind the same seam (`DesktopEvents`); FingertipsMCP for Chrome does not have it yet. Incognito tabs are not available either (422 `unsupported`).
+One action runs at a time, the tab switch included, and the viewer's mouse and keyboard wait for it too. `auto`, `cdp`, and `cdp-mouse` all mean this mouse and keyboard. `touch` is refused with 422 `unsupported`, since a desktop has no touch screen. OS-level input, such as Linux XTEST or uinput and macOS CGEvent, would sit behind the same seam (`DesktopEvents`); FingertipsMCP for Chrome does not have it yet. Incognito tabs are not available either (422 `unsupported`).
 
 `browser_read` and `browser_find` read a PDF as they do on the phone. Chrome's viewer holds no text, so FingertipsMCP for Chrome replaces the tab's page with an empty one at the same address and reads the file there with pdf.js. The window then shows that empty page instead of the PDF.
 

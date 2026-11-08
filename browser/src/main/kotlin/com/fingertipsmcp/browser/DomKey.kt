@@ -35,14 +35,30 @@ internal fun domKey(name: String, metaState: Int): DomKey {
     }
 }
 
-/** Chrome's modifier bitfield: Alt=1, Ctrl=2, Meta=4, Shift=8. [metaState] is Android's. */
-internal fun cdpModifiers(metaState: Int): Int {
-    var modifiers = 0
-    if (metaState and SHIFT != 0) modifiers = modifiers or 8
-    if (metaState and ALT != 0) modifiers = modifiers or 1
-    if (metaState and CTRL != 0) modifiers = modifiers or 2
-    if (metaState and META != 0) modifiers = modifiers or 4
-    return modifiers
+/**
+ * Chrome's modifier keys: each one's bit in a key event's `modifiers` field, the left key that
+ * holds it, and Android's meta-state mask for it, which requests use. Listed in the order a hand
+ * presses them for a shortcut, so Shift comes last.
+ */
+internal enum class CdpModifier(val bit: Int, val key: DomKey, private val metaMask: Int) {
+    CONTROL(2, DomKey("Control", "ControlLeft", 17, null), CTRL_MASK),
+    META(4, DomKey("Meta", "MetaLeft", 91, null), META_MASK),
+    ALT(1, DomKey("Alt", "AltLeft", 18, null), ALT_MASK),
+    SHIFT(8, DomKey("Shift", "ShiftLeft", 16, null), SHIFT_MASK);
+
+    companion object {
+        /** The modifiers Android's [metaState] holds, in pressing order. */
+        fun fromMetaState(metaState: Int): Set<CdpModifier> =
+            entries.filterTo(LinkedHashSet()) { metaState and it.metaMask != 0 }
+    }
+}
+
+/** [modifiers] as Chrome's bitfield. */
+internal fun cdpBits(modifiers: Set<CdpModifier>): Int = modifiers.sumOf { it.bit }
+
+/** Whether a key types its text with [modifiers] held: with Alt, Control, or Meta it types none. */
+internal fun typesText(modifiers: Set<CdpModifier>): Boolean = modifiers.all {
+    it == CdpModifier.SHIFT
 }
 
 private fun letter(name: String): DomKey? {
@@ -58,7 +74,7 @@ private fun digit(name: String): DomKey? {
     return DomKey(name, "Digit$name", vk, name)
 }
 
-private fun shifted(metaState: Int): Boolean = metaState and SHIFT != 0
+private fun shifted(metaState: Int): Boolean = metaState and SHIFT_MASK != 0
 
 private fun key(key: String, code: String, virtualKey: Int, text: String?) =
     DomKey(key, code, virtualKey, text)
@@ -103,7 +119,7 @@ private val SYSTEM_KEYS =
     )
 
 /** Android meta-state masks, including the left and right variants. */
-private const val SHIFT = 1 or 64 or 128
-private const val ALT = 2 or 16 or 32
-private const val CTRL = 4_096 or 8_192 or 16_384
-private const val META = 65_536 or 131_072 or 262_144
+private const val SHIFT_MASK = 1 or 64 or 128
+private const val ALT_MASK = 2 or 16 or 32
+private const val CTRL_MASK = 4_096 or 8_192 or 16_384
+private const val META_MASK = 65_536 or 131_072 or 262_144

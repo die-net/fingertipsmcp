@@ -3,6 +3,7 @@ package com.fingertipsmcp.chrome
 import com.fingertipsmcp.browser.BrowserServiceImpl
 import com.fingertipsmcp.browser.ConnectionEndpoints
 import com.fingertipsmcp.browser.DESKTOP_ENDPOINT
+import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.DesktopStyle
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.EventBus
@@ -68,10 +69,12 @@ class ChromeApp(
             missing = "The browser is not running and could not be started.",
         )
     private val device = HostDevice(supervisor, version)
+    /** Chrome's one mouse and keyboard, which the agent's input and the viewer's share. */
+    private val pointer = DesktopPointer(DesktopStyle.forHost())
     private val browser =
         BrowserServiceImpl(
             devtools = devtools,
-            desktopInput = DesktopStyle.forHost(),
+            desktopInput = pointer,
             scope = scope,
         )
     // Cleanup runs only after a holder lets go, long after tabs exists.
@@ -105,6 +108,7 @@ class ChromeApp(
             browser = browser,
             extensionHome = paths.data,
             scope = scope,
+            pointer = pointer,
         )
     /** The TCP port HTTP listens on, for the viewer's address; null until then, or with none. */
     @Volatile private var viewerPort: Int? = null

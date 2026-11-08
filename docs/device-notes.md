@@ -1015,6 +1015,7 @@ Chromium has a check, behind the `CDPScreenshotNewSurface` feature, that crashes
 - `chrome-input-check` on a phone, since it now tests a page from a server. It passed on the Android 13, 16, and 17 emulators on 2026-11-07, with Chrome on screen too. On Chrome 91 six checks differ, since that Chrome has no hold.
 - That `Page.captureScreenshot` ends the hold on Chrome 156 on the Android 11 test phone. It was not tried there. If it does not, a tap on a page Chrome has not drawn fails with `not_visible`.
 - Whether Chrome ever turns on `CDPScreenshotNewSurface`. FingertipsMCP sends a screenshot request to a `hidden` page that dropped a press, which that check would crash on.
+- `browser_key` with Shift held over `cdp` on Android now sends the key with its text, so Shift and a letter type the capital, where it sent `rawKeyDown` and typed nothing; `DomKeysTest` pins it. Unchecked on a phone.
 
 ## Desktop Chrome (FingertipsMCP for Chrome)
 
@@ -1032,11 +1033,14 @@ Checked with Chrome 155 on macOS while the desktop build was first written, and 
 - The same build windowed on macOS that day: `navigator.webdriver` read false; the first window's tab and a new tab had the same content height, 1998 of 2085 px, so neither showed the flag's bar; a tab a session without the screen opened was `hidden`, and with no screen holder the placeholder replaced the tab that had been showing; a click and typing `Hello, World! 42` landed, and the first input on the hidden tab gave Chrome the focus, as `Page.bringToFront` does; an arXiv PDF read as `pdf` in the window too.
 - A PDF sent with `Content-Disposition: attachment` saved to the download folder and closed the new tab, as on Android. Two `url` reads of it returned its text and left one file (2026-11-06).
 - On 2026-11-08, with Chrome 156.0.8078.80 headless on macOS and a scratch config, data folder, and `--profile`: after Chrome was killed, a `GET /v1/browser/targets` that curl gave up on after 0.3 s started it again, the next two calls got that Chrome, one Chrome ran on the profile, and stopping the server left none. The same held with a `--chrome` wrapper that starts Chrome 2 s late and a `POST /v1/wait` with `timeoutMs` 0 as the first call. Neither the hang-up nor the wait cancelled the start, on the build before the fix either, which also started Chrome once and kept it.
+- Scrolling and tab switches for desktop input, on 2026-11-08 with Chrome 156.0.8078.80 windowed on macOS, a scratch config, data folder, and `--profile`, and a 1998 px tall viewport. A CDP `mouseWheel` scrolled the page within a frame: each notch gave one `scroll` event, the last no more than 16 ms after the last `wheel` event, with no smooth-scrolling tail, so the wait for the element to hold still ended at its first check. Taps on a button 2,400 px down landed after 32 to 45 notches of 40 px, with no fallback, three times. On a page that put 600 px of content above the button 120 ms after each of the first three 800 px of scroll, the tap still landed with the wheel. With `overflow: hidden` on the body, the wheel moved nothing, and Chrome's `DOM.scrollIntoViewIfNeeded` scrolled the button in, which the result's message said; so did a button 3,000 px to the right. A tap on a `hidden` tab behind another brought it forward, the click landed there, and the other tab read `hidden`; a key into that other tab then brought it forward too.
 
 ### Still to check
 
 - Chrome on Linux with no window left, under Xvfb, and in the Docker image, which has never been built or run, on amd64 or arm64; and what desktop Chrome answers when attaching to a tab that has just closed, so `not_found` covers that race as it does on Android.
 - A call cancelled while Chrome starts, end to end. The unit tests cover it, but neither a REST client hanging up nor a short wait cancelled the start on a real Chrome.
+- Smooth scrolling on Linux and Windows, where a wheel notch may animate; the wait after a flick covers it, but it has only been seen on macOS. Whether `visibilityState` goes `hidden` when another app covers the window on macOS, and if so whether the `Page.bringToFront` that input then sends raises the window.
+- A viewer's mouse moves followed by an agent's tap on a real Chrome, to see the agent's path start where the person left the pointer. The unit tests cover it.
 
 ### Tab capture for a viewer
 

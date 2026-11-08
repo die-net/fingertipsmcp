@@ -2,17 +2,12 @@ package com.fingertipsmcp.input
 
 import com.fingertipsmcp.model.Point
 import com.fingertipsmcp.model.TimedPoint
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.exp
 import kotlin.math.hypot
-import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /** A rectangle in CSS pixels, such as an element's box in the viewport. */
@@ -51,8 +46,8 @@ class MouseModel(private val random: Random = Random.Default) {
         val halfW = box.width * INNER_FRACTION / 2f
         val halfH = box.height * INNER_FRACTION / 2f
         return Point(
-            center.x + gaussian(halfW / 2.5f).coerceIn(-halfW, halfW),
-            center.y + gaussian(halfH / 2.5f).coerceIn(-halfH, halfH),
+            center.x + random.nextGaussian(halfW / 2.5f).coerceIn(-halfW, halfW),
+            center.y + random.nextGaussian(halfH / 2.5f).coerceIn(-halfH, halfH),
         )
     }
 
@@ -87,12 +82,12 @@ class MouseModel(private val random: Random = Random.Default) {
     /** How long the pointer rests on a target before pressing. */
     fun hoverMs(humanize: Boolean): Long =
         if (!humanize) PLAIN_HOVER_MS
-        else logNormalMs(HOVER_MEDIAN_MS, HOVER_SPREAD, MIN_HOVER_MS, MAX_HOVER_MS)
+        else random.nextLogNormalMs(HOVER_MEDIAN_MS, HOVER_SPREAD, MIN_HOVER_MS, MAX_HOVER_MS)
 
     /** How long the button stays down for a click. */
     fun pressMs(humanize: Boolean): Long =
         if (!humanize) PLAIN_PRESS_MS
-        else logNormalMs(PRESS_MEDIAN_MS, PRESS_SPREAD, MIN_PRESS_MS, MAX_PRESS_MS)
+        else random.nextLogNormalMs(PRESS_MEDIAN_MS, PRESS_SPREAD, MIN_PRESS_MS, MAX_PRESS_MS)
 
     /**
      * Wheel notches that scroll by about ([dx], [dy]) CSS pixels, [notch] pixels each, spread over
@@ -135,11 +130,6 @@ class MouseModel(private val random: Random = Random.Default) {
         return ticks
     }
 
-    /** Settling time after a scroll, for smooth scrolling to finish. */
-    fun scrollSettleMs(humanize: Boolean): Long =
-        if (!humanize) PLAIN_SCROLL_SETTLE_MS
-        else random.nextLong(MIN_SCROLL_SETTLE_MS, MAX_SCROLL_SETTLE_MS)
-
     /** Fitts's law with per-move variation: a fast person on a long move is still not instant. */
     private fun fittsMs(distance: Float, size: Float): Double {
         val index = log2(distance / size + 1.0)
@@ -155,7 +145,7 @@ class MouseModel(private val random: Random = Random.Default) {
         val ux = (to.x - from.x) / distance
         val uy = (to.y - from.y) / distance
         val past = distance * random.nextDouble(MIN_OVERSHOOT, MAX_OVERSHOOT).toFloat()
-        val side = gaussian(past * OVERSHOOT_SIDE)
+        val side = random.nextGaussian(past * OVERSHOOT_SIDE)
         return Point(to.x + ux * past - uy * side, to.y + uy * past + ux * side)
     }
 
@@ -195,7 +185,12 @@ class MouseModel(private val random: Random = Random.Default) {
             val p = cubic(from, c1, c2, to, s.toFloat())
             val last = i == frames
             val jitter = if (tremor && !last) TREMOR_PX else 0f
-            out += TimedPoint(p.x + gaussian(jitter), p.y + gaussian(jitter), at.roundToLong())
+            out +=
+                TimedPoint(
+                    p.x + random.nextGaussian(jitter),
+                    p.y + random.nextGaussian(jitter),
+                    at.roundToLong(),
+                )
         }
         val end = out.last()
         out[out.lastIndex] = TimedPoint(to.x, to.y, end.tMs)
@@ -212,16 +207,6 @@ class MouseModel(private val random: Random = Random.Default) {
                 (i * FRAME_MS).roundToLong(),
             )
         }
-    }
-
-    private fun logNormalMs(median: Double, spread: Double, low: Long, high: Long): Long =
-        (median * exp(gaussian(1f) * spread)).roundToLong().coerceIn(low, high)
-
-    private fun gaussian(sigma: Float): Float {
-        if (sigma == 0f) return 0f
-        val u1 = 1.0 - random.nextDouble()
-        val u2 = random.nextDouble()
-        return (sqrt(-2.0 * ln(u1)) * cos(2 * PI * u2)).toFloat() * sigma
     }
 
     private companion object {
@@ -277,9 +262,6 @@ class MouseModel(private val random: Random = Random.Default) {
         const val GAP_JITTER_HIGH = 1.3
         const val MIN_FLICK_PAUSE_MS = 110L
         const val MAX_FLICK_PAUSE_MS = 320L
-        const val PLAIN_SCROLL_SETTLE_MS = 300L
-        const val MIN_SCROLL_SETTLE_MS = 250L
-        const val MAX_SCROLL_SETTLE_MS = 450L
     }
 }
 

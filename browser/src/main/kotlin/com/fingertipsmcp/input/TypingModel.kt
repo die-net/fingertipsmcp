@@ -1,12 +1,7 @@
 package com.fingertipsmcp.input
 
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToLong
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -21,30 +16,32 @@ class TypingModel(private val random: Random = Random.Default) {
      * the character typed before, or null for the first key.
      */
     fun gapMs(previous: Char?, next: Char, minMs: Long, maxMs: Long): Long {
-        if (previous == null || maxMs <= minMs) return if (previous == null) 0L else minMs
-        val range = (maxMs - minMs).toDouble()
-        val slow = !previous.isLetterOrDigit() || next.isUpperCase()
-        val u = random.nextDouble()
-        // Skewed toward the short end inside a word and the long end at a boundary.
-        val fraction = if (slow) 1.0 - u.pow(SLOW_SKEW) else u.pow(FAST_SKEW)
-        return (minMs + range * fraction).roundToLong().coerceIn(minMs, maxMs)
+        if (previous == null) return 0L
+        return gap(slow = !previous.isLetterOrDigit() || next.isUpperCase(), minMs, maxMs)
     }
 
+    /**
+     * The pause between clicking a field and its first key, in [minMs]..[maxMs], drawn like the gap
+     * at a word boundary, as the hand goes from the mouse to the keys. Zero when [maxMs] is.
+     */
+    fun firstKeyMs(minMs: Long, maxMs: Long): Long = gap(slow = true, minMs, maxMs)
+
     /** How long a key stays down. Zero when the caller asked for no delay at all. */
-    fun holdMs(maxGapMs: Long): Long {
-        if (maxGapMs <= 0) return 0L
-        val sample = HOLD_MEDIAN_MS * exp(gaussian() * HOLD_SPREAD)
-        return sample.roundToLong().coerceIn(MIN_HOLD_MS, MAX_HOLD_MS)
-    }
+    fun holdMs(maxGapMs: Long): Long =
+        if (maxGapMs <= 0) 0L
+        else random.nextLogNormalMs(HOLD_MEDIAN_MS, HOLD_SPREAD, MIN_HOLD_MS, MAX_HOLD_MS)
 
     /** Time between pressing a modifier, such as Shift, and the key it changes. */
     fun modifierLeadMs(maxGapMs: Long): Long =
         if (maxGapMs <= 0) 0L else random.nextLong(MIN_MODIFIER_LEAD_MS, MAX_MODIFIER_LEAD_MS)
 
-    private fun gaussian(): Double {
-        val u1 = 1.0 - random.nextDouble()
-        val u2 = random.nextDouble()
-        return sqrt(-2.0 * ln(u1)) * cos(2 * PI * u2)
+    /** A gap in [minMs]..[maxMs], skewed short inside a word and long at a [slow] boundary. */
+    private fun gap(slow: Boolean, minMs: Long, maxMs: Long): Long {
+        if (maxMs <= minMs) return minMs
+        val range = (maxMs - minMs).toDouble()
+        val u = random.nextDouble()
+        val fraction = if (slow) 1.0 - u.pow(SLOW_SKEW) else u.pow(FAST_SKEW)
+        return (minMs + range * fraction).roundToLong().coerceIn(minMs, maxMs)
     }
 
     private companion object {

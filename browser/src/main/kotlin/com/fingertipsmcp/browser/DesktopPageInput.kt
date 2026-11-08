@@ -1,7 +1,9 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.core.holdsStill
 import com.fingertipsmcp.input.Box
 import com.fingertipsmcp.input.Humanizer
+import com.fingertipsmcp.input.WheelTick
 import com.fingertipsmcp.input.contains
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
@@ -18,12 +20,8 @@ import com.fingertipsmcp.wait.monotonicMs
 import kotlin.math.abs
 import kotlin.random.Random
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
 /** Host conventions a desktop browser's input follows. */
 data class DesktopStyle(
@@ -52,33 +50,34 @@ data class DesktopStyle(
 
 /**
  * Desktop browser input, timed and shaped like a hand on a mouse and keyboard. `cdp` sends mouse
- * and keyboard events over DevTools, never touch. Before any input the tab is brought to the front
- * if it is hidden, as a person switches tabs to use one. The pointer has one position for the whole
- * browser, so each move starts where the last one ended. Elements are scrolled into view with the
- * wheel rather than jumped to. Only one action runs at a time, since there is one hand. `cdp-mouse`
- * is the same as `cdp` here; `touch` needs a touch screen, which a desktop does not have.
+ * and keyboard events over DevTools, never touch. Each action first brings the tab to the front if
+ * it is hidden, as a person switches tabs to use one, and fails with `not_visible` if Chrome does
+ * not. The mouse and keyboard are [pointer]'s, shared with the viewer: each move starts where the
+ * pointer was left, and only one action runs at a time, the tab switch included. Elements are
+ * scrolled into view with the wheel rather than jumped to. `cdp-mouse` is the same as `cdp` here;
+ * `touch` needs a touch screen, which a desktop does not have.
  */
 internal class DesktopPageInput(
     /**
      * The content quads of an element, scrolled into view first when asked, as [ElementLocator].
      */
     private val quads: suspend (CdpSession, String, TapTarget, Boolean) -> JsonArray,
-    private val style: DesktopStyle = DesktopStyle.forHost(),
+    private val pointer: DesktopPointer = DesktopPointer(),
     random: Random = Random.Default,
     /** Monotonic milliseconds, which input plans are timed against. */
     private val now: () -> Long = ::monotonicMs,
 ) : PageInputs {
     private val hand = Humanizer(random)
     private val random = random
-    private val busy = Mutex()
-    @Volatile private var cursor: Point? = null
+    private val style: DesktopStyle
+        get() = pointer.style
 
+    /**
+     * Refuses touch. The tab switch waits for the action, inside [act], so another action can't
+     * switch tabs between it and this one's input.
+     */
     override suspend fun ready(cdp: CdpSession, input: BrowserInput, pointer: Boolean) {
         requireMouse(input)
-        val state = evaluateIn(cdp, "document.visibilityState", awaitPromise = false).value
-        if ((state as? JsonPrimitive)?.contentOrNull == "visible") return
-        cdp.call("Page.bringToFront")
-        delay(random.nextLong(MIN_TAB_SWITCH_MS, MAX_TAB_SWITCH_MS))
     }
 
     override suspend fun tap(
@@ -87,12 +86,18 @@ internal class DesktopPageInput(
         wanted: TapTarget,
         pkg: String?,
         request: BrowserTapRequest,
-    ): ActionResult = busy.withLock {
+    ): ActionResult {
         requireMouse(request.input)
-        val events = events(cdp)
-        val box = reveal(cdp, id, events, wanted, request.humanize)
-        val at = click(events, box, request.humanize)
-        ActionResult(ok = true, backend = BACKEND, points = listOf(at))
+        return act(cdp) { events ->
+            val revealed = reveal(cdp, id, events, wanted, request.humanize)
+            val at = click(events, revealed.box, request.humanize)
+            ActionResult(
+                ok = true,
+                backend = BACKEND,
+                points = listOf(at),
+                message = revealed.note,
+            )
+        }
     }
 
     override fun checkSwipe(request: BrowserSwipeRequest) {
@@ -105,25 +110,25 @@ internal class DesktopPageInput(
         id: String,
         pkg: String?,
         request: BrowserSwipeRequest,
-    ): ActionResult = busy.withLock {
-        val events = events(cdp)
-        val metrics = cdp.call("Page.getLayoutMetrics")
-        val view = viewportBox(metrics)
-        val (from, to) = swipeEnds(cdp, id, request, metrics)
-        val over = clampInto(from, view)
-        moveTo(events, over, MIN_TARGET_PX, request.humanize)
-        // A swipe drags content with the finger, so the page scrolls against the motion.
-        val ticks =
-            hand.mouse.wheel(
-                dx = from.x - to.x,
-                dy = from.y - to.y,
-                notch = style.wheelNotch,
-                durationMs = request.durationMs,
-                humanize = request.humanize,
-            )
-        playWheel(events, over, ticks.map { WheelAt(it.dx, it.dy, it.tMs) })
-        ActionResult(ok = true, backend = BACKEND, points = listOf(over, to))
-    }
+    ): ActionResult =
+        act(cdp) { events ->
+            val metrics = cdp.call("Page.getLayoutMetrics")
+            val view = viewportBox(metrics)
+            val (from, to) = swipeEnds(cdp, id, request, metrics)
+            val over = clampInto(from, view)
+            moveTo(events, over, MIN_TARGET_PX, request.humanize)
+            // A swipe drags content with the finger, so the page scrolls against the motion.
+            val ticks =
+                hand.mouse.wheel(
+                    dx = from.x - to.x,
+                    dy = from.y - to.y,
+                    notch = style.wheelNotch,
+                    durationMs = request.durationMs,
+                    humanize = request.humanize,
+                )
+            playWheel(events, over, ticks)
+            ActionResult(ok = true, backend = BACKEND, points = listOf(over, to))
+        }
 
     override fun checkGesture(request: BrowserGestureRequest) {
         requireMouse(request.input)
@@ -142,20 +147,22 @@ internal class DesktopPageInput(
         cdp: CdpSession,
         pkg: String?,
         request: BrowserGestureRequest,
-    ): ActionResult = busy.withLock {
-        val events = events(cdp)
-        val path = request.pointers.single()
-        val start = path.first()
-        moveTo(events, Point(start.x, start.y), MIN_TARGET_PX, request.humanize)
-        delay(hand.mouse.hoverMs(request.humanize))
-        events.mouseDown(Point(start.x, start.y))
-        play(path.drop(1), offsetMs = start.tMs) { point -> events.mouseMove(point, buttons = 1) }
-        val end = path.last()
-        val last = Point(end.x, end.y)
-        events.mouseUp(last)
-        cursor = last
-        ActionResult(ok = true, backend = BACKEND, points = listOf(Point(start.x, start.y), last))
-    }
+    ): ActionResult =
+        act(cdp) { events ->
+            val path = request.pointers.single()
+            val start = path.first()
+            val first = Point(start.x, start.y)
+            moveTo(events, first, MIN_TARGET_PX, request.humanize)
+            delay(hand.mouse.hoverMs(request.humanize))
+            events.mouseDown(first)
+            play(path.drop(1), offsetMs = start.tMs) { point ->
+                events.mouseMove(point, buttons = 1)
+            }
+            val end = path.last()
+            val last = Point(end.x, end.y)
+            events.mouseUp(last)
+            ActionResult(ok = true, backend = BACKEND, points = listOf(first, last))
+        }
 
     override fun prepareKey(request: BrowserKeyRequest): DomKey {
         requireMouse(request.input)
@@ -167,29 +174,24 @@ internal class DesktopPageInput(
         pkg: String?,
         request: BrowserKeyRequest,
         pageKey: DomKey?,
-    ): ActionResult = busy.withLock {
-        val events = events(cdp)
-        val key = pageKey ?: domKey(request.key, request.metaState)
-        val modifiers = cdpModifiers(request.metaState)
-        val held = heldModifiers(modifiers)
-        for ((index, modifier) in held.withIndex()) {
-            events.keyDown(
-                modifier.first,
-                held.take(index + 1).sumOf { it.second },
-                LEFT,
-                emptyList(),
-            )
-            delay(hand.keys.modifierLeadMs(DEFAULT_MAX_GAP_MS))
+    ): ActionResult =
+        act(cdp) { events ->
+            val key = pageKey ?: domKey(request.key, request.metaState)
+            val modifiers = CdpModifier.fromMetaState(request.metaState)
+            val held = modifiers.toList()
+            for ((index, modifier) in held.withIndex()) {
+                events.keyDown(modifier.key, held.take(index + 1).toSet(), LEFT, emptyList())
+                delay(hand.keys.modifierLeadMs(DEFAULT_MAX_GAP_MS))
+            }
+            events.keyDown(key, modifiers, 0, emptyList())
+            delay(if (request.longPress) LONG_PRESS_MS else hand.keys.holdMs(DEFAULT_MAX_GAP_MS))
+            events.keyUp(key, modifiers, 0)
+            for ((index, modifier) in held.withIndex().reversed()) {
+                delay(hand.keys.modifierLeadMs(DEFAULT_MAX_GAP_MS))
+                events.keyUp(modifier.key, held.take(index).toSet(), LEFT)
+            }
+            ActionResult(ok = true, backend = BACKEND)
         }
-        events.keyDown(key, modifiers, 0, emptyList())
-        delay(if (request.longPress) LONG_PRESS_MS else hand.keys.holdMs(DEFAULT_MAX_GAP_MS))
-        events.keyUp(key, modifiers, 0)
-        for ((index, modifier) in held.withIndex().reversed()) {
-            delay(hand.keys.modifierLeadMs(DEFAULT_MAX_GAP_MS))
-            events.keyUp(modifier.first, held.take(index).sumOf { it.second }, LEFT)
-        }
-        ActionResult(ok = true, backend = BACKEND)
-    }
 
     override fun prepareText(request: BrowserTextRequest): TapTarget? {
         requireMouse(request.input)
@@ -202,64 +204,65 @@ internal class DesktopPageInput(
         pkg: String?,
         request: BrowserTextRequest,
         focus: TapTarget?,
-    ): ActionResult = busy.withLock {
-        val events = events(cdp)
-        val points = ArrayList<Point>()
-        if (focus != null) {
-            val box = reveal(cdp, id, events, focus, humanize = true)
-            points += click(events, box, humanize = true)
-            delay(
-                hand.keys.gapMs(null, 'a', request.minDelayMs, request.maxDelayMs) + AFTER_CLICK_MS
-            )
+    ): ActionResult =
+        act(cdp) { events ->
+            val points = ArrayList<Point>()
+            var note: String? = null
+            if (focus != null) {
+                val revealed = reveal(cdp, id, events, focus, humanize = true)
+                note = revealed.note
+                points += click(events, revealed.box, humanize = true)
+                delay(hand.keys.firstKeyMs(request.minDelayMs, request.maxDelayMs))
+            }
+            if (request.clear) clearField(events, request.maxDelayMs)
+            val steps = typingSteps(request.text, hand.keys, request.minDelayMs, request.maxDelayMs)
+            playKeys(events, steps, now)
+            if (request.submit) {
+                delay(hand.keys.gapMs(' ', 'a', request.minDelayMs, request.maxDelayMs))
+                val enter = typingSteps("\n", hand.keys, request.minDelayMs, request.maxDelayMs)
+                playKeys(events, enter, now)
+            }
+            ActionResult(ok = true, backend = BACKEND, points = points, message = note)
         }
-        if (request.clear) clearField(events, request.maxDelayMs)
-        val steps = typingSteps(request.text, hand.keys, request.minDelayMs, request.maxDelayMs)
-        playKeys(events, steps)
-        if (request.submit) {
-            delay(hand.keys.gapMs(' ', 'a', request.minDelayMs, request.maxDelayMs))
-            playKeys(events, typingSteps("\n", hand.keys, request.minDelayMs, request.maxDelayMs))
+
+    /**
+     * Runs [block] as the only action on the mouse and keyboard, once this tab is the one Chrome
+     * shows, with events for the page that move [pointer].
+     */
+    private suspend fun <T> act(cdp: CdpSession, block: suspend (DesktopEvents) -> T): T =
+        pointer.act {
+            if (!tabShowing(cdp)) selectTab(cdp)
+            val ratio = dipScale(cdp.call("Page.getLayoutMetrics"))
+            block(pointer.tracked(CdpDesktopEvents(cdp, devicePixelRatio = ratio)))
         }
-        ActionResult(ok = true, backend = BACKEND, points = points)
-    }
 
     /** Select all, then Backspace: Ctrl+A here, Command+A with Chrome's command on macOS. */
     private suspend fun clearField(events: DesktopEvents, maxGapMs: Long) {
-        val modifierKey = if (style.mac) META_KEY else CONTROL_KEY
-        val modifier = if (style.mac) META_MODIFIER else CONTROL_MODIFIER
+        val modifier = if (style.mac) CdpModifier.META else CdpModifier.CONTROL
+        val held = setOf(modifier)
         val a = DomKey("a", "KeyA", 'A'.code, "a")
         val commands = if (style.mac) listOf("selectAll") else emptyList()
-        events.keyDown(modifierKey, modifier, LEFT, emptyList())
+        events.keyDown(modifier.key, held, LEFT, emptyList())
         delay(hand.keys.modifierLeadMs(maxGapMs))
-        events.keyDown(a, modifier, 0, commands)
+        events.keyDown(a, held, 0, commands)
         delay(hand.keys.holdMs(maxGapMs))
-        events.keyUp(a, modifier, 0)
+        events.keyUp(a, held, 0)
         delay(hand.keys.modifierLeadMs(maxGapMs))
-        events.keyUp(modifierKey, 0, LEFT)
+        events.keyUp(modifier.key, emptySet(), LEFT)
         delay(hand.keys.gapMs('a', ' ', 0, maxGapMs))
         val backspace = DomKey("Backspace", "Backspace", BACKSPACE_VK, null)
-        events.keyDown(backspace, 0, 0, emptyList())
+        events.keyDown(backspace, emptySet(), 0, emptyList())
         delay(hand.keys.holdMs(maxGapMs))
-        events.keyUp(backspace, 0, 0)
+        events.keyUp(backspace, emptySet(), 0)
         delay(hand.keys.gapMs(' ', 'a', 0, maxGapMs))
-    }
-
-    private suspend fun playKeys(events: DesktopEvents, steps: List<KeyStep>) {
-        val started = now()
-        for (step in steps) {
-            waitUntil(started, step.tMs)
-            when (step) {
-                is KeyStep.Down ->
-                    events.keyDown(step.key, step.modifiers, step.location, emptyList())
-                is KeyStep.Up -> events.keyUp(step.key, step.modifiers, step.location)
-                is KeyStep.Insert -> events.insertText(step.text)
-            }
-        }
     }
 
     /**
      * The element's box, inside the viewport. When it is above or below the viewport, the wheel
-     * scrolls toward it a flick at a time, until it shows or stops moving; then Chrome scrolls it
-     * into view as a last resort.
+     * scrolls toward it a flick at a time, waiting after each for the page to stop moving. When the
+     * wheel can't bring it in, Chrome scrolls it into view, and [Revealed.note] says so: the
+     * element is beside the viewport, the wheel did not move it, or the page kept moving it for
+     * [MAX_FLICKS] flicks.
      */
     private suspend fun reveal(
         cdp: CdpSession,
@@ -267,66 +270,83 @@ internal class DesktopPageInput(
         events: DesktopEvents,
         wanted: TapTarget,
         humanize: Boolean,
-    ): Box {
-        var lastTop: Float? = null
-        var rounds = 0
-        while (rounds < MAX_SCROLL_ROUNDS) {
-            rounds++
-            when (val step = scrollToward(cdp, id, events, wanted, humanize, lastTop)) {
-                is Reveal.Shown -> return step.box
-                is Reveal.Scrolled -> lastTop = step.top
-                Reveal.Stuck -> rounds = MAX_SCROLL_ROUNDS
+    ): Revealed {
+        var flicks = 0
+        while (true) {
+            val look = look(cdp, id, wanted)
+            look.shown?.let {
+                return Revealed(it, note = null)
             }
+            val sideways = look.whole.right < look.view.left || look.whole.left > look.view.right
+            if (sideways || flicks == MAX_FLICKS) return jumpTo(cdp, id, wanted)
+            flick(events, look, humanize)
+            flicks++
+            val top = settledTop(cdp, id, wanted)
+            if (abs(top - look.whole.top) < MOVED_PX) return jumpTo(cdp, id, wanted)
         }
-        val quads = quads(cdp, id, wanted, true)
-        val metrics = cdp.call("Page.getLayoutMetrics")
-        return visibleBox(quads, metrics)
-            ?: throw ApiException(409, "offscreen", "The node is outside the viewport")
     }
 
-    /** One look at the element, and one flick of the wheel toward it when it is not shown. */
-    private suspend fun scrollToward(
-        cdp: CdpSession,
-        id: String,
-        events: DesktopEvents,
-        wanted: TapTarget,
-        humanize: Boolean,
-        lastTop: Float?,
-    ): Reveal {
+    /** Where the element and the viewport are now, and the element's visible box if it shows. */
+    private suspend fun look(cdp: CdpSession, id: String, wanted: TapTarget): Look {
         val metrics = cdp.call("Page.getLayoutMetrics")
         val view = viewportBox(metrics)
         val quads = quads(cdp, id, wanted, false)
-        val whole =
-            wholeBox(quads)
-                ?: throw ApiException(409, "offscreen", "The node has no box on the page")
+        val whole = wholeBox(quads) ?: throw noBox()
         val visible = visibleBox(quads, metrics)
-        if (
-            visible != null &&
-                visible.height >= minOf(whole.height, MIN_VISIBLE_PX) &&
-                visible.center.y in view.top + EDGE_PX..view.bottom - EDGE_PX
-        ) {
-            return Reveal.Shown(visible)
+        val shown = visible?.takeIf {
+            it.height >= minOf(whole.height, MIN_VISIBLE_PX) &&
+                it.center.y in view.top + EDGE_PX..view.bottom - EDGE_PX
         }
-        val sideways = whole.right < view.left || whole.left > view.right
-        val stopped = lastTop != null && abs(whole.top - lastTop) < 1f
-        if (sideways || stopped) return Reveal.Stuck
+        return Look(view, whole, shown)
+    }
+
+    /**
+     * One flick of the wheel that brings the element from where [look] saw it toward the middle.
+     */
+    private suspend fun flick(events: DesktopEvents, look: Look, humanize: Boolean) {
+        val view = look.view
         val goal = view.top + view.height * random.nextDouble(GOAL_LOW, GOAL_HIGH).toFloat()
-        val over = cursor?.takeIf { it in view } ?: idlePoint(view)
+        val over = pointer.at?.takeIf { it in view } ?: idlePoint(view)
         moveTo(events, over, MIN_TARGET_PX, humanize)
         val ticks =
-            hand.mouse.wheel(0f, whole.center.y - goal, style.wheelNotch, durationMs = 0, humanize)
-        playWheel(events, over, ticks.map { WheelAt(it.dx, it.dy, it.tMs) })
-        delay(hand.mouse.scrollSettleMs(humanize))
-        return Reveal.Scrolled(whole.top)
+            hand.mouse.wheel(
+                0f,
+                look.whole.center.y - goal,
+                style.wheelNotch,
+                durationMs = 0,
+                humanize,
+            )
+        playWheel(events, over, ticks)
     }
 
-    private sealed interface Reveal {
-        data class Shown(val box: Box) : Reveal
-
-        data class Scrolled(val top: Float) : Reveal
-
-        data object Stuck : Reveal
+    /**
+     * The element's top once it holds still, as smooth scrolling and anything the scroll set off,
+     * such as content loading above it, come to rest. A page that keeps moving it past
+     * [SCROLL_SETTLE_MS] gives where it was then.
+     */
+    private suspend fun settledTop(cdp: CdpSession, id: String, wanted: TapTarget): Float {
+        var top = Float.NaN
+        holdsStill(SCROLL_SETTLE_MS, SCROLL_POLL_MS) {
+            val box = wholeBox(quads(cdp, id, wanted, false)) ?: throw noBox()
+            box.top.also { top = it }
+        }
+        return top
     }
+
+    /** Has Chrome scroll the element into view, since the wheel could not. */
+    private suspend fun jumpTo(cdp: CdpSession, id: String, wanted: TapTarget): Revealed {
+        val quads = quads(cdp, id, wanted, true)
+        val metrics = cdp.call("Page.getLayoutMetrics")
+        val box =
+            visibleBox(quads, metrics)
+                ?: throw ApiException(409, "offscreen", "The node is outside the viewport")
+        return Revealed(box, note = JUMPED)
+    }
+
+    private data class Look(val view: Box, val whole: Box, val shown: Box?)
+
+    /** The element's visible [box], and a [note] for the result when Chrome scrolled to it. */
+    private data class Revealed(val box: Box, val note: String?)
 
     /** Moves into [box], rests, and clicks. Returns where. */
     private suspend fun click(events: DesktopEvents, box: Box, humanize: Boolean): Point {
@@ -345,10 +365,9 @@ internal class DesktopPageInput(
         targetSize: Float,
         humanize: Boolean,
     ) {
-        val from = cursor ?: Point(to.x + random.nextInt(-ENTRY_PX, ENTRY_PX), to.y + ENTRY_PX)
+        val from = pointer.at ?: Point(to.x + random.nextInt(-ENTRY_PX, ENTRY_PX), to.y + ENTRY_PX)
         val path = hand.mouse.move(from, to, targetSize, humanize)
         play(path, offsetMs = 0) { point -> events.mouseMove(point, buttons = 0) }
-        cursor = to
     }
 
     private suspend fun play(
@@ -358,15 +377,15 @@ internal class DesktopPageInput(
     ) {
         val started = now()
         for (point in path) {
-            waitUntil(started, point.tMs - offsetMs)
+            waitUntil(now, started, point.tMs - offsetMs)
             send(Point(point.x, point.y))
         }
     }
 
-    private suspend fun playWheel(events: DesktopEvents, at: Point, ticks: List<WheelAt>) {
+    private suspend fun playWheel(events: DesktopEvents, at: Point, ticks: List<WheelTick>) {
         val started = now()
         for (tick in ticks) {
-            waitUntil(started, tick.tMs)
+            waitUntil(now, started, tick.tMs)
             events.wheel(at, tick.dx, tick.dy)
         }
     }
@@ -387,11 +406,6 @@ internal class DesktopPageInput(
                 quads(cdp, id, it, false)
             }
         return directionSwipe(quads, metrics, direction, request.distance)
-    }
-
-    private suspend fun events(cdp: CdpSession): DesktopEvents {
-        val ratio = dipScale(cdp.call("Page.getLayoutMetrics"))
-        return CdpDesktopEvents(cdp, devicePixelRatio = ratio)
     }
 
     /** Refuses touch, which needs a touch screen. Every other input is the mouse and keyboard. */
@@ -416,26 +430,22 @@ internal class DesktopPageInput(
             point.y.coerceIn(view.top + 1f, view.bottom - 1f),
         )
 
-    private fun heldModifiers(modifiers: Int): List<Pair<DomKey, Int>> = buildList {
-        if (modifiers and CONTROL_MODIFIER != 0) add(CONTROL_KEY to CONTROL_MODIFIER)
-        if (modifiers and META_MODIFIER != 0) add(META_KEY to META_MODIFIER)
-        if (modifiers and ALT_MODIFIER != 0) add(ALT_KEY to ALT_MODIFIER)
-        if (modifiers and SHIFT_MODIFIER != 0) add(SHIFT_KEY to SHIFT_MODIFIER)
-    }
-
-    /** Sleeps until [atMs] after [startedMs], so slow round trips do not stretch a plan. */
-    private suspend fun waitUntil(startedMs: Long, atMs: Long) {
-        val wait = atMs - (now() - startedMs)
-        if (wait > 0) delay(wait)
-    }
-
-    private data class WheelAt(val dx: Float, val dy: Float, val tMs: Long)
+    private fun noBox() = ApiException(409, "offscreen", "The node has no box on the page")
 
     private companion object {
-        const val MIN_TAB_SWITCH_MS = 180L
-        const val MAX_TAB_SWITCH_MS = 420L
         const val MIN_TARGET_PX = 40f
-        const val MAX_SCROLL_ROUNDS = 6
+        /**
+         * Flicks before Chrome scrolls the element in instead. Each flick scrolls the whole way to
+         * the element, so another is needed only when the page moved the element while it scrolled,
+         * as a feed that loads more above it does. This bounds how often that may happen.
+         */
+        const val MAX_FLICKS = 6
+        /** How far the element has to move for a flick to count as having scrolled it. */
+        const val MOVED_PX = 1f
+        /** How long smooth scrolling, and what the scroll set off, may take to come to rest. */
+        const val SCROLL_SETTLE_MS = 1_500L
+        /** How far apart two reads of the element's place are when checking that it holds still. */
+        const val SCROLL_POLL_MS = 50L
         const val MIN_VISIBLE_PX = 8f
         const val EDGE_PX = 4f
         const val GOAL_LOW = 0.3
@@ -445,10 +455,9 @@ internal class DesktopPageInput(
         const val ENTRY_PX = 120
         const val LONG_PRESS_MS = 600L
         const val DEFAULT_MAX_GAP_MS = 140L
-        const val AFTER_CLICK_MS = 120L
         const val BACKSPACE_VK = 8
-        const val ALT_MODIFIER = 1
         const val BACKEND = "cdp"
-        val ALT_KEY = DomKey("Alt", "AltLeft", 18, null)
+        const val JUMPED =
+            "The wheel could not bring the element into view, so Chrome scrolled to it."
     }
 }

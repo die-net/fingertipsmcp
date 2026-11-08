@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 class ViewerPageInputTest {
     private val page = Recorder()
     private var clock = 0L
-    private val input = ViewerPageInput(page, devicePixelRatio = 1f) { clock }
+    private val input = ViewerPageInput(page, devicePixelRatio = 1f, DesktopPointer()) { clock }
 
     @Test
     fun `quick clicks double`() = runTest {
