@@ -157,7 +157,10 @@ class Capture {
     this.frames = 0;
     this.last = null;
     this.plan = new RedrawPlan();
+    // The next redraw, or before the first frame, the next time Chrome is asked for one.
     this.timer = 0;
+    this.startedAt = performance.now();
+    this.asked = 0;
     this.audio = null;
     this.audioHead = false;
     this.playback = null;
@@ -166,6 +169,7 @@ class Capture {
     if (video) {
       video.addEventListener("ended", () => this.ended());
       this.read(video, (f) => this.video(f));
+      this.askForFirst(video);
     }
     if (sound) {
       // Capturing a tab's audio stops it playing where the tab is, so it is played back here.
@@ -187,6 +191,32 @@ class Capture {
     } finally {
       reader.cancel().catch(() => {});
     }
+  }
+
+  // Until the first frame comes, asks Chrome for the tab's picture on the redraw schedule, counted
+  // from the capture's start. Chrome 156 can leave a still tab's capture with no frame for good.
+  // Its first frames reach the track before getUserMedia answers, so before the reader is there.
+  // The reader's own request for a frame comes too soon after them, and Chrome retries it as a
+  // refresh. When Chrome's first copy of the tab failed, it counts that copy as pending for the
+  // rest of the capture, and it takes no refresh while one is pending. A new sink on the track
+  // demands a frame, which Chrome takes even then. grabFrame adds one, and the frame it brings
+  // reaches the reader too. docs/device-notes.md, "The first frame", has what was measured.
+  askForFirst(track) {
+    const step = this.asked++;
+    const last = SETTLE_MS.length - 1;
+    const at = step <= last ? SETTLE_MS[step] : SETTLE_MS[last] + (step - last) * IDLE_MS;
+    this.timer = setTimeout(
+      () => {
+        if (!this.open || this.plan.hasFrame) return;
+        // The picture is the reader's, so the grabbed copy goes. A stopped track refuses.
+        new ImageCapture(track).grabFrame().then(
+          (picture) => picture.close(),
+          () => {},
+        );
+        this.askForFirst(track);
+      },
+      Math.max(1, this.startedAt + at - performance.now()),
+    );
   }
 
   ended() {

@@ -1121,7 +1121,23 @@ So FingertipsMCP runs the action only on a tab in a window the extension reads a
 
 - A popup opened from the captured tab left capture on that tab, with no crash, 4 of 4 times. Frames kept coming at the still-page rate, and the log said the popup was passed over.
 - A tab opened with `_blank` was followed, with a new header and key frame within 0.1 s.
-- Closing the captured tab with the popup still open moved capture to the placeholder. 1 of 3 times it sent a header within 0.1 s. 2 of 3 times it sent no frame at all in the 5 s that followed, so the viewer page would show no picture and reconnect after 12 s. Closing the captured tab with no popup gave a header within 0.1 s, 1 of 1. Before this change the same sequence crashed Chrome, so this was not seen before.
+- Closing the captured tab with the popup still open moved capture to the placeholder. 1 of 3 times it sent a header within 0.1 s. 2 of 3 times it sent no frame at all in the 5 s that followed, so the viewer page would show no picture and reconnect after 12 s. Closing the captured tab with no popup gave a header within 0.1 s, 1 of 1. Before this change the same sequence crashed Chrome, so this was not seen before. [The first frame](#the-first-frame) has the cause, which has nothing to do with the popup.
+
+### The first frame
+
+Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on scratch profiles, through the jar and a WebSocket viewer. Some runs used `--attach` to a Chrome started with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, so a second DevTools client could probe the offscreen document and record a trace of the `gpu.capture` and `media` categories.
+
+- A new capture of a still tab sometimes sent no frame at all, whether the tab was the placeholder or a page just brought forward, and with or without a popup open. The track was `live` and not `muted`, and the page read `visible`. Left alone, it stayed without a frame until the tab repainted: 0 of 2 recovered in 4 s, and one got its first frame 10.6 s in, when another tab opened.
+- Chrome's first frames of a capture reach the track before `getUserMedia` answers, so before the offscreen document can read them. The reader's `MediaStreamTrackProcessor` asks for a frame as it attaches, which Chrome turned down (`FpsRateLimited`, trigger `demand`) since it came within one frame period of the last one. Chrome then retried it as a refresh every 67 ms. In a capture that worked, a retry 77 to 99 ms in was taken and became the reader's first frame, 24 of 24 times.
+- In each capture that got no frame, Chrome's first copy of the tab had failed (`Capture` ended with `result` 2, `kI420ReadbackFailed`), and every retry after it was turned down (`FpsRateLimited`, trigger `refresh`) for as long as the capture ran. In Chromium's code at the 156.0.8078.80 tag, `FrameSinkVideoCapturerImpl::MaybeDeliverFrame` skips `VideoCaptureOracle::CompleteCapture` for a copy that failed, so the oracle counts that frame as pending for good, and `ObserveEventAndDecideCapture` takes a refresh request only while none is pending. A refresh demand and a repaint of the tab skip that check.
+- A new sink on the track demands a frame. `ImageCapture.grabFrame()` on the stuck track, a `clone()` of it read by a second processor, and `Page.captureScreenshot` on the tab each brought a frame within 1 s, 2 of 2 times each, and the reader got it too.
+
+So the offscreen document now asks for a frame with `grabFrame` 100, 300, and 700 ms after a capture starts, and then every 4 s, until its first frame comes. Over 45 rounds of bringing a static page forward and closing it, 90 tab switches and 89 captures on each build, with the trace on:
+
+- Before: 5 captures had a failed first copy. 4 never got a frame, and 1 got one 6.5 s in. 5 switches left the viewer with no picture.
+- After: 4 captures had a failed first copy. All 4 got their first frame 106 to 108 ms in, from the request at 100 ms. Every capture got a frame within 108 ms.
+
+Through the jar on its own Chrome over the pipe, with the fix: capturing a page, opening a popup from it, waiting 5 s, and closing the page gave a header and a frame within 0.17 s, 15 of 15 times. Without the popup, 11 of 12. The other one was the first round after the viewer connected, where capture never moved to the page brought forward, as also happened before the fix; see the list below. Before the fix, with the popup, 1 of 4 rounds gave no picture after the close, and without it, 2 of the 12 captures in 6 rounds got no frame.
 
 ### The popup notice
 
@@ -1135,9 +1151,10 @@ Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on a scratch
 ### Still to check for the viewer
 
 - Linux, headless Chrome, and the Docker image with the viewer.
-- A capture of the placeholder, or of any still tab, that never sends its first frame, as below.
 - The popup notice when a person clicks the opener's window with the popup still open: it should clear.
 - Why the first window check after a new extension version loads can get no answer, and whether the offscreen document's script had run yet.
+- A capture whose first copy failed has Chrome turning down every refresh retry for the rest of its life, not only before the first frame. When the tab's last repaint in a burst comes within a frame period of the one before, Chrome normally sends it later as a refresh, and in such a capture it may never come, so the viewer shows the frame before it until the tab repaints again. Not seen yet.
+- A tab brought forward right after the first viewer connects, whose switch capture sometimes doesn't follow: the viewer keeps the placeholder. It was seen in the first round of several runs, before and after the first-frame fix, and its cause is not known.
 - Whether a tab in an installed web app's window (`chrome.windows` type `app`) has the action, which FingertipsMCP passes over as it does a popup's.
 - A viewport that changes while the window does not, as with page zoom, the bookmarks bar, or docked DevTools: no window event comes, so the capture keeps the old viewport.
 - The resize with the pipe rather than `--attach`, on a Chrome a script may resize.
