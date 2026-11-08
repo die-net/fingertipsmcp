@@ -61,14 +61,25 @@ class DeviceInfoProvider(
             appsManage = helper,
             logcatAll = helper,
             browserCdp = helper,
-            streamVideoMirror = helper,
-            streamAudioSubmix = helper && sdk >= Build.VERSION_CODES.R,
+            streamVideoMirror = videoRefusal() == null,
+            streamAudioSubmix = audioRefusal() == null,
             encoderLowLatency = sdk >= Build.VERSION_CODES.R,
             adbWireless = sdk >= Build.VERSION_CODES.R,
             settingsSecure = secureSettings,
             clipboard = helper,
         )
     }
+
+    /** Why the viewer's video cannot stream now, or null when it can. */
+    fun videoRefusal(): String? = if (isHelperRunning()) null else "Video needs the shell helper"
+
+    /** Why the viewer's audio cannot stream now, or null when it can. */
+    fun audioRefusal(): String? =
+        if (isHelperRunning() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            null
+        } else {
+            "Audio needs Android 11 or later and the shell helper"
+        }
 
     fun display(): DisplayInfo {
         val display =

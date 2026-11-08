@@ -131,7 +131,7 @@ FingertipsMCP for Chrome keeps Chrome with a window open:
 
 - Closing the last tab through the API first opens a blank tab, as a person opens a new tab before closing their last one. Chrome on Linux exits when its last window closes, which would end session cookies and logins.
 - On macOS, Chrome keeps running when a person closes its last window. Opening a tab then opens a window again.
-- If Chrome exits anyway, for example when a person closes its last window on Linux or quits it, the next call starts it again with a fresh blank window. `device_info` reports `helper` `stopped` until then. A call that gives up while Chrome starts, such as a client that hangs up, leaves the start to finish, and the next call uses that Chrome.
+- If Chrome exits anyway, for example when a person closes its last window on Linux or quits it, the next call starts it again with a fresh blank window. `device_info` reports `model` as `Chrome (not running)` until then. A call that gives up while Chrome starts, such as a client that hangs up, leaves the start to finish, and the next call uses that Chrome.
 
 ### ARM
 

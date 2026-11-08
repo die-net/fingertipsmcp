@@ -194,18 +194,19 @@ internal suspend fun waitFor(
         )
     requireWaitAccess(wait, scopes)
     if (args.screenshot && Scope.OBSERVE !in scopes) throw ApiException.forbidden(Scope.OBSERVE)
+    // Refused before waiting, so a server without screenshots does not wait only to fail.
+    val shoot = if (args.screenshot) services.requireScreenshots().png else null
     val result = services.waits.wait(wait, scopes)
     val header =
         "matched=${result.matched} timedOut=${result.timedOut} elapsedMs=${result.elapsedMs}"
     val body = result.snapshot?.compact
     val text = TextContent(text = if (body.isNullOrBlank()) header else "$header\n$body")
-    if (args.screenshot) listOf(text, screenshotContent(services, args.scale)) else listOf(text)
+    if (shoot != null) listOf(text, screenshotContent(shoot, args.scale)) else listOf(text)
 }
 
 internal suspend fun sessionStart(services: ServerServices): CallToolResult = runTool {
     val id = checkNotNull(services.sessions).start()
-    val calls = if (services.phone != null) "phone call" else "call"
-    "session=$id\nPass session=$id on every $calls for this task, reads included. A call " +
+    "session=$id\nPass session=$id on every call for this task, reads included. A call " +
         "without it acts as you, and tabs opened without it are yours, not the task's. End it " +
         "with session_end when the task is done."
 }
@@ -396,11 +397,14 @@ internal suspend fun screenshot(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runContent {
-    listOf(screenshotContent(services, request.args<ScaleArgs>().scale))
+    listOf(screenshotContent(services.requireScreenshots().png, request.args<ScaleArgs>().scale))
 }
 
-private suspend fun screenshotContent(services: ServerServices, scale: Float): ImageContent {
-    val png = services.requireScreenshots()(scale)
+private suspend fun screenshotContent(
+    shoot: suspend (Float) -> ByteArray,
+    scale: Float,
+): ImageContent {
+    val png = shoot(scale)
     if (png.size > MAX_IMAGE_BYTES) {
         throw ApiException.badRequest("Screenshot is too large; pass a smaller scale")
     }

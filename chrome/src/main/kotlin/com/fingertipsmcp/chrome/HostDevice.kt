@@ -4,12 +4,7 @@ import com.fingertipsmcp.browser.CdpSession
 import com.fingertipsmcp.browser.evaluateIn
 import com.fingertipsmcp.model.Capabilities
 import com.fingertipsmcp.model.DeviceInfo
-import com.fingertipsmcp.model.DeviceStateSummary
 import com.fingertipsmcp.model.DisplayInfo
-import com.fingertipsmcp.model.HelperStatus
-import com.fingertipsmcp.model.ImeState
-import com.fingertipsmcp.model.KeyguardState
-import com.fingertipsmcp.model.ScreenState
 import com.fingertipsmcp.server.DeviceFacts
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonArray
@@ -21,8 +16,9 @@ data class HostScreen(val width: Int, val height: Int, val pixelRatio: Float)
 
 /**
  * `device_info` for the computer: the OS in manufacturer and release, the browser in model, and the
- * screen as Chrome reports it. helper is `running` while the browser is up. Browser input is the
- * mouse and keyboard over DevTools.
+ * screen as Chrome reports it. The phone's fields, such as its state and helper, are left out.
+ * Capabilities name Android's mechanisms, so only `browser.cdp` is true: screenshots and the viewer
+ * are offered by their feature groups instead.
  */
 class HostDevice(
     private val supervisor: BrowserSupervisor,
@@ -38,7 +34,6 @@ class HostDevice(
         return DeviceInfo(
             manufacturer = osName,
             model = supervisor.current?.product ?: "Chrome (not running)",
-            sdkInt = 0,
             release = osVersion,
             appVersion = version,
             display =
@@ -49,14 +44,6 @@ class HostDevice(
                     rotation = 0,
                     refreshRate = REFRESH_HZ,
                 ),
-            state =
-                DeviceStateSummary(
-                    screen = ScreenState.ON,
-                    keyguard = KeyguardState(locked = false, secure = false),
-                    ime = ImeState(visible = false),
-                ),
-            helper = if (supervisor.current != null) HelperStatus.RUNNING else HelperStatus.STOPPED,
-            uiAutomationConnected = false,
             capabilities = capabilities(),
         )
     }
@@ -66,14 +53,13 @@ class HostDevice(
             uiSnapshot = false,
             inputInject = false,
             textKeyevent = false,
-            screenshotHelper = true,
+            screenshotHelper = false,
             uiStableIds = false,
             appsManage = false,
             logcatAll = false,
             browserCdp = true,
-            // The viewer captures the tab Chrome shows, picture and sound.
-            streamVideoMirror = true,
-            streamAudioSubmix = true,
+            streamVideoMirror = false,
+            streamAudioSubmix = false,
             encoderLowLatency = false,
             adbWireless = false,
             settingsSecure = false,

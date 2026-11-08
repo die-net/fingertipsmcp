@@ -567,6 +567,7 @@ On the Android 11 test phone on 2026-11-06, video at `maxSize` 720 was H.264 Hig
 - That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
 - A real resolution change while streaming, which needs a phone with more than one display mode.
 - Rotation on Android 10 and 11 and viewer taps on Android 10, since the Android 10 emulator has no video. Android 10 taps in the viewer opening no audio socket.
+- That the viewer's video and audio sockets still refuse with `Video needs the shell helper` and `Audio needs Android 11 or later and the shell helper` while the helper is down, and on Android 10 for audio, now that the reason comes from the stream services rather than the capability map (2026-11-08). Unit tests cover the server side only.
 
 ## UiAutomation
 

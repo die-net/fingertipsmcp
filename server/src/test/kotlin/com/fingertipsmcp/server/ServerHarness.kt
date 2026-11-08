@@ -328,7 +328,15 @@ internal class FakeApi(
             writePin = { _ -> },
             shell = { _ -> ShellResult(exit = 0, stdout = "log") },
             logcat = LogcatFeed { _ -> emptyFlow() },
+            foreground = foreground,
         )
+
+    /** The fake's screenshot, a few bytes. */
+    val screenshotPng: suspend (Float) -> ByteArray = { _ -> byteArrayOf(1, 2, 3) }
+
+    /** Why the fake's video and audio sockets refuse, or null to serve them. */
+    @Volatile var videoRefusal: String? = null
+    @Volatile var audioRefusal: String? = null
 
     val services: ServerServices =
         ServerServices(
@@ -344,13 +352,17 @@ internal class FakeApi(
 
                     override fun versionName(): String = "test"
                 },
-            screenshots = { _ -> byteArrayOf(1, 2, 3) },
+            screenshots =
+                ScreenshotService(available = Capabilities::screenshotHelper, png = screenshotPng),
             events = emptyFlow(),
+            product = Product.ANDROID,
             phone = phone,
             streams =
                 StreamServices(
                     video = VideoFeed { _, _ -> },
+                    videoRefusal = { videoRefusal },
                     audio = AudioFeed { _ -> },
+                    audioRefusal = { audioRefusal },
                     viewerText = { "http://127.0.0.1:1/viewer?access_token=TOKEN" },
                     controls = PhoneViewerControls(phone),
                 ),
@@ -363,7 +375,6 @@ internal class FakeApi(
                     store = tabStore,
                     scope = tabScope,
                 ),
-            foreground = foreground,
         )
 }
 

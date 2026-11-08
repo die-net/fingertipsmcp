@@ -60,7 +60,7 @@ import kotlinx.serialization.serializer
 
 /**
  * Feature groups a server may provide. [CORE] is always there. FingertipsMCP for Android has every
- * group; FingertipsMCP for Chrome has [CORE], [BROWSER], and [SCREENSHOTS].
+ * group; FingertipsMCP for Chrome has all but [PHONE]. Each route and MCP tool names its group.
  */
 public enum class ApiGroup {
     /** Device info, tokens, events, sessions, the screen lease, waits, and this document. */
@@ -102,7 +102,8 @@ public data class ApiEndpoint(
     public val requestContentType: String? = null,
     /** False when the route takes an empty body as the request type's defaults. */
     public val requestRequired: Boolean = true,
-    public val group: ApiGroup = ApiGroup.CORE,
+    /** The feature group a server must have to install it. */
+    public val group: ApiGroup,
 ) {
     public companion object {
         public const val JSON: String = "application/json"
@@ -112,15 +113,16 @@ public data class ApiEndpoint(
     }
 }
 
-/** The routes a server with [groups] installs, in the order it registers them. */
+/** The routes a server with [groups] installs. */
 public fun apiEndpoints(groups: Set<ApiGroup>): List<ApiEndpoint> = fingertipsEndpoints.filter {
     it.group in groups
 }
 
-/** Every route installed from `server/routes`, in the order the server registers them. */
+/** Every route installed from `server/routes`, each with the feature group that installs it. */
 public val fingertipsEndpoints: List<ApiEndpoint> =
     listOf(
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.GET,
             "/v1/device",
             setOf(Scope.OBSERVE),
@@ -128,6 +130,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<DeviceInfo>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/device/wake",
             setOf(Scope.CONTROL, Scope.BROWSER),
@@ -135,6 +138,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/device/unlock",
             setOf(Scope.CONTROL, Scope.BROWSER),
@@ -144,6 +148,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             requestRequired = false,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/device/lock",
             setOf(Scope.CONTROL),
@@ -151,6 +156,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/device/orientation",
             setOf(Scope.CONTROL),
@@ -159,6 +165,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.PUT,
             "/v1/device/pin",
             setOf(Scope.ADMIN),
@@ -167,6 +174,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<PinStatus>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.DELETE,
             "/v1/device/pin",
             setOf(Scope.ADMIN),
@@ -174,6 +182,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 204,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.GET,
             "/v1/ui/snapshot",
             setOf(Scope.OBSERVE),
@@ -181,6 +190,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<UiSnapshot>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/ui/find",
             setOf(Scope.OBSERVE),
@@ -189,6 +199,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<FindResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/ui/nodes/{ref}/action",
             setOf(Scope.CONTROL),
@@ -197,6 +208,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.SCREENSHOTS,
             ApiMethod.GET,
             "/v1/screenshot",
             setOf(Scope.OBSERVE),
@@ -204,6 +216,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             responseContentType = ApiEndpoint.PNG,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/input/tap",
             setOf(Scope.CONTROL),
@@ -212,6 +225,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/input/swipe",
             setOf(Scope.CONTROL),
@@ -220,6 +234,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/input/gesture",
             setOf(Scope.CONTROL),
@@ -228,6 +243,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.STREAMS,
             ApiMethod.WEBSOCKET,
             "/v1/input/pointer",
             setOf(Scope.CONTROL),
@@ -235,6 +251,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<PointerFrame>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/input/key",
             setOf(Scope.CONTROL),
@@ -243,6 +260,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/input/text",
             setOf(Scope.CONTROL),
@@ -251,6 +269,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/ime/hide",
             setOf(Scope.CONTROL),
@@ -258,6 +277,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/ime/show",
             setOf(Scope.CONTROL),
@@ -266,6 +286,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/clipboard/read",
             setOf(Scope.CONTROL),
@@ -274,6 +295,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ClipboardContent>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/clipboard/write",
             setOf(Scope.CONTROL),
@@ -282,6 +304,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.GET,
             "/v1/clipboard/image",
             setOf(Scope.CONTROL),
@@ -289,6 +312,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             responseContentType = ApiEndpoint.IMAGE,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/clipboard/image",
             setOf(Scope.CONTROL),
@@ -297,6 +321,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             requestContentType = ApiEndpoint.IMAGE,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.GET,
             "/v1/apps",
             setOf(Scope.OBSERVE),
@@ -304,6 +329,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = ListSerializer(serializer<AppInfo>()),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/apps/{pkg}/launch",
             setOf(Scope.CONTROL),
@@ -313,6 +339,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             requestRequired = false,
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/apps/{pkg}/stop",
             setOf(Scope.CONTROL),
@@ -320,6 +347,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/apps/{pkg}/clear",
             setOf(Scope.CONTROL),
@@ -327,6 +355,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.PHONE,
             ApiMethod.POST,
             "/v1/intents",
             setOf(Scope.CONTROL),
@@ -335,6 +364,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.POST,
             "/v1/wait",
             setOf(Scope.OBSERVE, Scope.BROWSER),
@@ -343,6 +373,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<WaitResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.GET,
             "/v1/browser/targets",
             setOf(Scope.BROWSER),
@@ -350,6 +381,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = ListSerializer(serializer<BrowserTarget>()),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/tabs",
             setOf(Scope.BROWSER),
@@ -358,6 +390,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<BrowserTarget>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/navigate",
             setOf(Scope.BROWSER),
@@ -366,6 +399,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<BrowserTarget>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/close",
             setOf(Scope.BROWSER),
@@ -373,6 +407,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.GET,
             "/v1/browser/targets/{id}/snapshot",
             setOf(Scope.BROWSER),
@@ -380,6 +415,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<BrowserSnapshot>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/read",
             setOf(Scope.BROWSER),
@@ -388,6 +424,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<BrowserReadResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/find",
             setOf(Scope.BROWSER),
@@ -396,6 +433,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<BrowserFindResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/tap",
             setOf(Scope.BROWSER),
@@ -404,6 +442,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/swipe",
             setOf(Scope.BROWSER),
@@ -412,6 +451,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/gesture",
             setOf(Scope.BROWSER),
@@ -420,6 +460,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/key",
             setOf(Scope.BROWSER),
@@ -428,6 +469,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/text",
             setOf(Scope.BROWSER),
@@ -436,6 +478,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ActionResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/evaluate",
             setOf(Scope.BROWSER),
@@ -444,6 +487,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<EvalResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/capture",
             setOf(Scope.BROWSER),
@@ -452,6 +496,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<BrowserCaptureResult>(),
         ),
         endpoint(
+            ApiGroup.BROWSER,
             ApiMethod.POST,
             "/v1/browser/targets/{id}/console",
             setOf(Scope.BROWSER),
@@ -460,6 +505,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<ConsoleResult>(),
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.WEBSOCKET,
             "/v1/events",
             setOf(Scope.OBSERVE),
@@ -467,6 +513,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = serializer<Event>(),
         ),
         endpoint(
+            ApiGroup.STREAMS,
             ApiMethod.GET,
             "/viewer",
             setOf(Scope.STREAM),
@@ -474,18 +521,21 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             responseContentType = ApiEndpoint.HTML,
         ),
         endpoint(
+            ApiGroup.STREAMS,
             ApiMethod.WEBSOCKET,
             "/v1/stream/video",
             setOf(Scope.STREAM),
             "H.264 video stream.",
         ),
         endpoint(
+            ApiGroup.STREAMS,
             ApiMethod.WEBSOCKET,
             "/v1/stream/audio",
             setOf(Scope.STREAM),
             "Opus or AAC audio stream.",
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.GET,
             "/v1/tokens",
             setOf(Scope.ADMIN),
@@ -493,6 +543,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = ListSerializer(serializer<TokenInfo>()),
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.POST,
             "/v1/tokens",
             setOf(Scope.ADMIN),
@@ -502,6 +553,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 201,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.PATCH,
             "/v1/tokens/{id}",
             setOf(Scope.ADMIN),
@@ -510,6 +562,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             serializer<TokenInfo>(),
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.DELETE,
             "/v1/tokens/{id}",
             setOf(Scope.ADMIN),
@@ -517,6 +570,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 204,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.POST,
             "/v1/sessions",
             emptySet(),
@@ -525,6 +579,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 201,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.DELETE,
             "/v1/sessions/current",
             emptySet(),
@@ -532,6 +587,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 204,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.POST,
             "/v1/screen/release",
             emptySet(),
@@ -541,6 +597,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             requestRequired = false,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.GET,
             "/v1/sessions",
             setOf(Scope.ADMIN),
@@ -548,6 +605,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             response = ListSerializer(serializer<SessionInfo>()),
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.DELETE,
             "/v1/sessions/{hash}",
             setOf(Scope.ADMIN),
@@ -555,6 +613,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
             status = 204,
         ),
         endpoint(
+            ApiGroup.CORE,
             ApiMethod.GET,
             "/v1/openapi.json",
             setOf(Scope.OBSERVE),
@@ -564,6 +623,7 @@ public val fingertipsEndpoints: List<ApiEndpoint> =
     )
 
 private fun endpoint(
+    group: ApiGroup,
     method: ApiMethod,
     path: String,
     scopes: Set<Scope>,
@@ -586,21 +646,5 @@ private fun endpoint(
         responseContentType = responseContentType ?: response?.let { ApiEndpoint.JSON },
         requestContentType = requestContentType,
         requestRequired = requestRequired,
-        group = groupOf(path),
+        group = group,
     )
-
-private fun groupOf(path: String): ApiGroup =
-    when {
-        path == "/v1/screenshot" -> ApiGroup.SCREENSHOTS
-        path.startsWith("/v1/browser/") -> ApiGroup.BROWSER
-        path == "/viewer" || path == "/v1/input/pointer" || path.startsWith("/v1/stream/") ->
-            ApiGroup.STREAMS
-        path.startsWith("/v1/tokens") || path.startsWith("/v1/sessions") -> ApiGroup.CORE
-        // Literals rather than a set: fingertipsEndpoints is built before a property below it.
-        path == "/v1/device" ||
-            path == "/v1/events" ||
-            path == "/v1/wait" ||
-            path == "/v1/screen/release" ||
-            path == "/v1/openapi.json" -> ApiGroup.CORE
-        else -> ApiGroup.PHONE
-    }

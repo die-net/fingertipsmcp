@@ -38,6 +38,7 @@ import com.fingertipsmcp.model.openapi.ApiGroup
 import com.fingertipsmcp.model.schema.JsonSchemas
 import com.fingertipsmcp.server.Product
 import com.fingertipsmcp.server.ServerServices
+import com.fingertipsmcp.server.offers
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
@@ -51,7 +52,15 @@ import kotlinx.serialization.serializer
 
 internal data class McpTool(
     val name: String,
+    /** The feature group a server must have to list it. */
+    val group: ApiGroup,
     val description: String,
+    /**
+     * The description on a desktop browser, for a tool whose phone wording does not fit one. The
+     * arguments and behavior are the same; only what the agent reads differs. Null keeps
+     * [description].
+     */
+    val desktop: String? = null,
     /**
      * The scopes that show this tool: a token with any one of them sees it. Empty for a tool any
      * token may call. A tool whose access depends on its arguments checks them when called.
@@ -73,41 +82,28 @@ internal data class McpTool(
     val schema: ToolSchema = toolSchema(arguments)
 }
 
+/** The tool's description in [product]'s wording. */
+internal fun McpTool.description(product: Product): String = product.toolText(description, desktop)
+
 /**
- * The tools a token with [scopes] sees on a server with [groups], in [product]'s wording, and with
+ * The tools a token with [scopes] sees on [services]' server, in its product's wording, and with
  * what [capabilities] has right now.
  */
 internal fun visibleMcpTools(
     scopes: Set<Scope>,
+    services: ServerServices,
     capabilities: Capabilities,
-    product: Product = Product.ANDROID,
-    groups: Set<ApiGroup> = ApiGroup.entries.toSet(),
 ): List<McpTool> =
     MCP_TOOLS.filter {
             (it.scopes.isEmpty() || it.scopes.any(scopes::contains)) &&
-                toolGroup(it.name) in groups &&
+                services.offers(it.group, capabilities) &&
                 it.available(capabilities)
         }
         .map { tool ->
-            val text =
-                product.toolDescriptions[tool.name]?.let {
-                    if (tool.screen.always) "$it Uses the screen." else it
-                } ?: tool.description
+            val text = tool.description(services.product)
             val note = reducedNote(tool.name, capabilities)
             tool.copy(description = if (note == null) text else "$text $note")
         }
-
-/** The feature group a tool belongs to, which a server must have to list it. */
-private fun toolGroup(name: String): ApiGroup =
-    when {
-        name.startsWith("browser_") -> ApiGroup.BROWSER
-        name == "screenshot" -> ApiGroup.SCREENSHOTS
-        name in CORE_TOOLS -> ApiGroup.CORE
-        else -> ApiGroup.PHONE
-    }
-
-private val CORE_TOOLS =
-    setOf("device_info", "session_start", "session_end", "screen_release", "wait_for")
 
 private val readOnly = ToolAnnotations(readOnlyHint = true, openWorldHint = false)
 
@@ -152,8 +148,11 @@ private val TOOLS: List<McpTool> =
     listOf(
         McpTool(
             name = "device_info",
+            group = ApiGroup.CORE,
             description =
                 "Model, Android version, display, helper status, capabilities, and current state: screen, keyguard, keyboard, and foregroundPackage. Cheap. foregroundPackage only updates while the helper is watching the screen, as during wait_for or right after ui_snapshot, so it can be missing or stale. To know what is in front, take a ui_snapshot or wait_for a window condition. Other agents, scripts, and people use the phone at the same time, which is normal. screenHolder says who has the screen now (you; parent, the session that started yours; subagent, one you started with session_start; agent; person, in the viewer; or script; absent when it is free), and screenHeldMs for how long. Tools whose descriptions say Uses the screen wait for it.",
+            desktop =
+                "The computer and its browser: OS, version, display, capabilities, and who has the screen. Cheap. The screen here is the browser's mouse and keyboard, which one client uses at a time. Other agents, scripts, and people may use the browser at the same time, which is normal. screenHolder says who has the screen now (you; parent, the session that started yours; subagent, one you started with session_start; agent; or script; absent when it is free), and screenHeldMs for how long. Tools whose descriptions say Uses the screen wait for it.",
             scopes = setOf(Scope.OBSERVE),
             available = always,
             arguments = listOf(serializer<EmptyArgs>()),
@@ -163,8 +162,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "session_start",
+            group = ApiGroup.CORE,
             description =
                 "Give a subagent or parallel task its own place in line for the screen and its own browser tabs, so parallel tasks do not tap over each other. Not needed for one agent working step by step. Call it once per task, either yourself, putting the id in the subagent's instructions, or in the subagent. Then pass the id as session on every phone call for that task, reads included; a call without session acts as you, with your screen turn and your tabs. Tabs are not shared between sessions. End it with session_end when the task is done; it also ends when your connection ends, or after 20 minutes unused.",
+            desktop =
+                "Give a subagent or parallel task its own place in line for the screen and its own browser tabs, so parallel tasks do not click over each other. Not needed for one agent working step by step. Call it once per task, either yourself, putting the id in the subagent's instructions, or in the subagent. Then pass the id as session on every call for that task, reads included; a call without session acts as you, with your screen turn and your tabs. Tabs are not shared between sessions. End it with session_end when the task is done; it also ends when your connection ends, or after 20 minutes unused.",
             scopes = emptySet(),
             available = always,
             arguments = listOf(serializer<EmptyArgs>()),
@@ -174,6 +176,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "session_end",
+            group = ApiGroup.CORE,
             description =
                 "End a session from session_start when its task is done: close the tabs it opened, give back the ones it took over, and let the screen go if it held it.",
             scopes = emptySet(),
@@ -185,8 +188,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "screen_release",
+            group = ApiGroup.CORE,
             description =
                 "Let the screen go when you are done with it for now, so other clients can use the phone. While you hold it, browser input uses touch and brings your tab forward; after this it goes back to the background. FingertipsMCP goes home, and locks the phone if no one is waiting and it was locked before. Your tabs stay yours and background browser work keeps going. The next call that needs the screen takes it again, waiting if someone else has it. Holding the screen idle while another client waits also lets it go, after 30 s. When a person has to step in, such as for a captcha you cannot solve: bring your tab on screen with browser_snapshot or browser_read and show true, and call device_unlock if the phone is locked. Then call this with cleanup false and tell them to finish in the FingertipsMCP viewer. To know they are done, wait_for a browser.* condition on your tab for the page after the captcha. wait_for {type screen, person true} matches while they are in the viewer and person false once nobody is, so person true misses a person who already finished. Neither uses the screen. If your session ends first, a later one finds the tab in browser_targets.",
+            desktop =
+                "Let the screen, the browser's mouse and keyboard, go when you are done with it for now, so other clients can use it. The browser goes back to a blank tab, so yours is hidden until you act on it. Your tabs stay yours and background browser work keeps going. The next call that needs the screen takes it again, waiting if someone else has it. Holding the screen idle while another client waits also lets it go, after 30 s. When a person has to step in, such as for a captcha you cannot solve, call this with cleanup false, tell them which tab to finish in, and wait_for a browser.* condition on your tab for the page after it.",
             scopes = emptySet(),
             available = always,
             arguments = listOf(serializer<ScreenReleaseRequest>()),
@@ -196,6 +202,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "ui_snapshot",
+            group = ApiGroup.PHONE,
             description =
                 "Compact outline of the visible nodes on screen, with refs for ui_act. Covers app windows, plus system windows such as dialogs and the notification shade when they are focused or large. The keyboard is listed without its contents. Use it when you do not know what is on screen. To act on something whose label you know, tap or type_text with a text selector, with no snapshot first. To see what an action did, use wait_for with snapshot true rather than calling this again. Shows up to maxNodes lines (default 400); when anything is left out, the first line ends with truncated and the next lines say how much, so narrow with window or ui_find, or raise maxNodes. textOnly drops positions, ids, states, and actions. Password and one-time-code fields and card numbers are masked unless redact is false. Canvas content such as maps and Street View shows little, so use a screenshot there. When the first line ends with page_nodes_off, Chrome has turned off the page's nodes, so none of the page shows here: use browser_read, or any tap or typing call, which brings them back.",
             scopes = setOf(Scope.OBSERVE),
@@ -207,6 +214,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "ui_find",
+            group = ApiGroup.PHONE,
             description =
                 "Find nodes by selector and return each match's bounds and actions. Much smaller than ui_snapshot when you know what you want. Use index when several nodes match. Secrets are masked as in ui_snapshot unless redact is false. page_nodes_off means nothing matched and Chrome has turned off the page's nodes, so the page could not be searched.",
             scopes = setOf(Scope.OBSERVE),
@@ -218,6 +226,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "ui_act",
+            group = ApiGroup.PHONE,
             description =
                 "Act on a ref from the latest ui_snapshot or ui_find. action is click, longClick, setText, scrollForward, imeEnter, or a custom action listed on the node. mode semantic skips real touch.",
             scopes = setOf(Scope.CONTROL),
@@ -229,6 +238,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "tap",
+            group = ApiGroup.PHONE,
             description =
                 "Tap a node selector or a point in screen pixels. A selector by text, id, or desc needs no snapshot first, so prefer it when you know the label; a ref needs one. Humanized by default. Wakes the screen itself. Follow with wait_for on what should appear, with snapshot true to see it.",
             scopes = setOf(Scope.CONTROL),
@@ -240,6 +250,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "swipe",
+            group = ApiGroup.PHONE,
             description =
                 """Swipe from one point to another, or in a direction (up, down, left, right) across the screen or inside a selector. from and to are objects such as {"x":540,"y":1800}.""",
             scopes = setOf(Scope.CONTROL),
@@ -251,6 +262,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "type_text",
+            group = ApiGroup.PHONE,
             description =
                 "Type into the focused field, or into selector first, so a text or id selector needs no tap or snapshot before it. mode auto taps the on-screen keyboard and falls back to setText. setText is fastest for long text. clear replaces the field's text. submit presses the IME action. no_editor means no editable field has focus.",
             scopes = setOf(Scope.CONTROL),
@@ -262,6 +274,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "press_key",
+            group = ApiGroup.PHONE,
             description =
                 "Press BACK, HOME, ENTER, DEL, or any KEYCODE_* name. HOME returns to the launcher.",
             scopes = setOf(Scope.CONTROL),
@@ -273,6 +286,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "clipboard_read",
+            group = ApiGroup.PHONE,
             description =
                 "Read the phone's clipboard as text, with its MIME types, or as an image when it holds one. copy true presses KEYCODE_COPY first, so the app in front copies what is selected on screen, and changed says whether the clipboard changed. A selection made by script in a background tab is not on screen, so it is not copied. The clipboard is emptied when a session gets the screen, so it holds only what was copied since. It is the phone user's and can hold a password (sensitive true): read it only for the task at hand. Requires the shell helper.",
             scopes = setOf(Scope.CONTROL),
@@ -284,6 +298,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "clipboard_write",
+            group = ApiGroup.PHONE,
             description =
                 "Put plain text on the phone's clipboard, replacing what the phone user copied. paste true then presses KEYCODE_PASTE into the focused field, which is faster than type_text for long text, though the app sees a paste rather than typing. Requires the shell helper.",
             scopes = setOf(Scope.CONTROL),
@@ -295,8 +310,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "wait_for",
+            group = ApiGroup.CORE,
             description =
                 "Wait until all or any conditions match, then optionally show the result: snapshot true adds a ui_snapshot outline, and screenshot true adds a screenshot for maps and other screens with an empty tree. So an action takes two calls, the action and one wait_for, rather than a snapshot before and after. Pass at least one condition. Use it after an action instead of sleeping. Conditions on the UI, snapshot true, and screenshot true use the screen; browser.* conditions and screen with only person do not. A condition's type is node, window, ime, idle, screen, keyguard, or browser.*. After open_intent or app_launch, wait for {type window, package} with {type node, selector {textContains}}. After browser_open, wait for browser.settled on its tab, and browser.url for where it ended up: pass the tab as target, once at the top level or on each browser condition. To check a browser_tap, wait for browser.element with a CSS selector for the new state, such as an attribute selector, rather than running browser_eval. idle is a fallback when no text is known. Browser conditions need the browser scope, and target when more than one page is open. Other conditions, snapshot, screenshot, and settleMs need the observe scope.",
+            desktop =
+                "Wait until all or any browser conditions match. Pass at least one. Use it after an action instead of sleeping or taking a screenshot. A condition's type is browser.url, browser.lifecycle, browser.networkIdle, browser.element, browser.request, browser.dialog, browser.newTarget, browser.log, or browser.settled; the phone's node, window, ime, idle, screen, and keyguard conditions are not available, nor is snapshot true. screenshot true adds a screenshot of the tab showing. After browser_open, wait for browser.url and browser.settled on its tab: pass the tab as target, once at the top level or on each condition. To check a browser_tap, wait for browser.element with a CSS selector for the new state rather than running browser_eval. Pass target when more than one page is open.",
             scopes = setOf(Scope.OBSERVE, Scope.BROWSER),
             available = always,
             arguments = listOf(serializer<WaitArgs>()),
@@ -306,6 +324,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "keyboard_hide",
+            group = ApiGroup.PHONE,
             description = "Hide the soft keyboard.",
             scopes = setOf(Scope.CONTROL),
             available = Capabilities::uiSnapshot,
@@ -316,6 +335,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "keyboard_show",
+            group = ApiGroup.PHONE,
             description =
                 "Show the soft keyboard for an editable node. Omit selector to use the focused field.",
             scopes = setOf(Scope.CONTROL),
@@ -327,6 +347,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "app_launch",
+            group = ApiGroup.PHONE,
             description =
                 "Launch an app by package name and bring it to the front. fresh clears its task first. wait (default true) waits for it to reach the foreground, not for its content.",
             scopes = setOf(Scope.CONTROL),
@@ -338,6 +359,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "app_stop",
+            group = ApiGroup.PHONE,
             description =
                 "Force-stop an app. Unsaved state in it is lost. Requires the shell helper.",
             scopes = setOf(Scope.CONTROL),
@@ -349,6 +371,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "app_clear",
+            group = ApiGroup.PHONE,
             description =
                 "Erase an app's data, including sign-in. Not reversible. Use only when the user asked. Requires the shell helper.",
             scopes = setOf(Scope.CONTROL),
@@ -360,6 +383,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "open_intent",
+            group = ApiGroup.PHONE,
             description =
                 "Start an intent, such as action android.intent.action.VIEW with an https URL as data, to open a place in Maps or a deep link in an app. For a web page in Chrome, use browser_open instead: it returns the target id that browser tools need. package and component are optional. Waits for the app to reach the foreground, not for its content, so follow with wait_for, with snapshot or screenshot true to see the content. Without a package, a URI that several apps handle shows a chooser and returns ok false: name a package. Wakes the screen itself. Requires the shell helper.",
             scopes = setOf(Scope.CONTROL),
@@ -371,6 +395,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "device_wake",
+            group = ApiGroup.PHONE,
             description =
                 "Turn the screen on. Leaves the keyguard up. Not needed before other calls: actions, snapshots, and intents wake the screen themselves.",
             scopes = setOf(Scope.CONTROL, Scope.BROWSER),
@@ -382,6 +407,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "device_unlock",
+            group = ApiGroup.PHONE,
             description =
                 "Dismiss the keyguard. A secure lock uses the stored PIN. needs_user means there is no stored PIN, or the lock is a pattern or password.",
             scopes = setOf(Scope.CONTROL, Scope.BROWSER),
@@ -393,6 +419,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "device_lock",
+            group = ApiGroup.PHONE,
             description =
                 "Turn the screen off and lock. The foreground app stays, so press HOME first for a neutral screen. Background browser work keeps running.",
             scopes = setOf(Scope.CONTROL),
@@ -404,6 +431,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "device_orientation",
+            group = ApiGroup.PHONE,
             description =
                 "Set screen orientation. auto follows the sensor. lock freezes the current rotation. 0, 90, 180, and 270 lock to that rotation from the device's natural orientation. An app can still force its own orientation.",
             scopes = setOf(Scope.CONTROL),
@@ -415,8 +443,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_targets",
+            group = ApiGroup.BROWSER,
             description =
                 "List your Chrome tabs (owned true) and tabs no session owns (owned false), with id, title, and url, plus the debuggable WebViews of the app in front while you hold the screen. Other sessions' tabs are not listed, and a session's tabs close when it ends. A tab a session left on screen for a person with screen_release and cleanup false stays, unowned; using it makes it yours. Chrome updates the list itself, so a closed tab or a redirect can lag behind. Chrome must be running with USB debugging on. Android 11+ needs FingertipsMCP paired with wireless debugging. Android 10 needs the USB DevTools forward.",
+            desktop =
+                "List your tabs (owned true) and tabs no session owns (owned false), with id, title, and url. Other sessions' tabs are not listed, and a session's tabs close when it ends. Chrome updates the list itself, so a closed tab or a redirect can lag behind.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<EmptyArgs>()),
@@ -426,8 +457,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_open",
+            group = ApiGroup.BROWSER,
             description =
                 "Open a tab and return its target, for every other browser tool. The tab is yours: other sessions cannot see it, and it closes when your session ends. Other sessions work in their own tabs at the same time, so start in the background unless you know the page needs the screen. Prefer it over open_intent for web pages. With Chrome hidden, the tab opens in the background and the screen is untouched. With Chrome not running, it starts Chrome, which takes the screen while the tab opens. With Chrome on screen, Chrome switches to the new tab, and the result has tookScreen true. url must be http(s) or about:blank. A page that hands off to an installed app loads as a website in the tab. It returns once the page has started to replace the new tab's blank page, and loading true means the server had not answered within 12 s. A PDF Chrome saves is held in the tab it returns, with savedPdf true, for browser_read and browser_find. Another download fails with download_saved. Follow with wait_for on browser.settled, which waits for the page to load. To only read or search a page, browser_read or browser_find with url opens it for you. incognito true opens a tab without the phone's logins, for a page that needs no account; it takes the screen only while the tab opens.",
+            desktop =
+                "Open a tab and return its target, for every other browser tool. The tab is yours: other sessions cannot see it, and it closes when your session ends. Without the screen it opens hidden, in the background, and reading and scripts work there. With the screen, Chrome shows it. url must be http(s) or about:blank. Follow with wait_for on browser.url and browser.settled. To only read or search a page, browser_read or browser_find with url opens it for you. incognito is not available.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<OpenTabRequest>()),
@@ -437,6 +471,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_navigate",
+            group = ApiGroup.BROWSER,
             description =
                 "Navigate an existing target to url, in the background. target is the id from browser_targets or browser_open. Follow with wait_for.",
             scopes = setOf(Scope.BROWSER),
@@ -448,6 +483,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_close",
+            group = ApiGroup.BROWSER,
             description =
                 "Close a tab by target id, in the background. Works after a redirect, where window.close() does not.",
             scopes = setOf(Scope.BROWSER),
@@ -459,6 +495,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_snapshot",
+            group = ApiGroup.BROWSER,
             description =
                 "Compact outline of a browser target's accessibility tree, with refs for browser_tap. Works in the background. Shows up to maxNodes lines (default 400) and 40 levels. When anything is left out, the first line ends with truncated and the next lines say how much. Links show their text, not their URL. To read a page's text, browser_read is much smaller. A tab that is not on screen is not drawn, so content that loads when drawn may be missing; the header says so, and show brings the tab forward first.",
             scopes = setOf(Scope.BROWSER),
@@ -470,6 +507,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_read",
+            group = ApiGroup.BROWSER,
             description =
                 "Read a page's text as markdown, a slice at a time. Works in the background. scope article (default) is the main content without navigation, footers, and ads. page is all visible text. selector reads every element it matches, in page order, such as a table. A PDF that Chrome shows in its own viewer reads the same way: its outline comes from its bookmarks, or else from font size and section numbers, running headers and footers are left out, and tables come out as plain lines. The header gives the total length, a version, and nextOffset for the next slice, and flags a page that looks blocked or still loading. It also names the page's feeds, its canonical URL, and its next page when it links to them. Pass version from an earlier read to get only the header when the content has not changed. Pages built by scripts often embed their data as JSON, which the header's data line names. Read it with scope data: without a path you get an outline whose lines each start with a path to pass back; path reads one value; a * in a path reads that field from every item, such as __NEXT_DATA__/props/pageProps/items/*/name; and paths reads several values in one call. Prefer these to paging through a large blob. Data a page fetches after it loads is not embedded; browser_capture records those responses, and a scope data read with url records them for you. outline returns only headings with their offsets, cheaply. Pass url instead of target to open a new tab and read it in one call, and close true to close the tab afterwards, so a one-look read is a single call. To read more of it, pass the target the read returned, not url, which opens a new tab each time. A tab that is not on screen is not drawn, so content that loads when drawn may be missing; the header says so, and show brings the tab forward first.",
             scopes = setOf(Scope.BROWSER),
@@ -481,6 +519,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_find",
+            group = ApiGroup.BROWSER,
             description =
                 "Find text or links in a page's content, with offsets browser_read takes when given the same scope, selector, and format. Works in the background. kind text returns each match with context and its nearest heading. To look for several things, or for something whose wording you can only guess, pass queries: up to 20, each searched on its own, with a no-matches line for the ones not there. Listing likely wordings and synonyms in one call costs far less than a find per guess. Matching is a plain substring that ignores case, so list wordings, not capitalizations, and use regex with \\b for whole words. kind links returns each link's text, URL, and whether it is same-origin, filtered by query and hrefContains, each URL once and without tracking parameters. With scope data it searches the page's embedded JSON and gives each match's path, which browser_read's path takes; path, * allowed, limits the search to part of it. Pass url instead of target to open the page in a new tab first, and close true to close the tab afterwards.",
             scopes = setOf(Scope.BROWSER),
@@ -492,8 +531,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_tap",
+            group = ApiGroup.BROWSER,
             description =
                 "Tap a snapshot ref or a CSS selector in a browser target. A selector waits up to waitMs (default 5000) for its element to appear, and the element is scrolled into view, so no wait or scroll is needed first. To check the tap worked, wait_for browser.element with a selector for the new state. The default input auto is touch while you hold the screen, and cdp-mouse otherwise, so tapping a background tab does not take a free screen. input touch brings the tab to the front and uses the screen. input cdp sends touch events over DevTools without bringing the tab forward, but Chrome only takes them on the tab it is showing, with Chrome on screen. input cdp-mouse clicks with a mouse, which works with Chrome hidden and the screen off, but the page sees a mouse rather than a finger. All three are trusted input, unlike a click from browser_eval.",
+            desktop =
+                "Click a snapshot ref or a CSS selector in a browser target. A selector waits up to waitMs (default 5000) for its element to appear. The tab comes to the front if it is hidden, the mouse wheel scrolls the element into view, and the mouse moves there along a curved path, pauses, and clicks. The page sees trusted mouse events, unlike a click from browser_eval. To check the click worked, wait_for browser.element with a selector for the new state. input touch is refused, since a desktop has no touch screen.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserTapRequest>()),
@@ -503,8 +545,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_swipe",
+            group = ApiGroup.BROWSER,
             description =
                 "Swipe a browser target. from and to are CSS viewport pixels, or pass a direction. The default input auto is touch, which brings the tab to the front and uses the screen. input cdp swipes over DevTools without bringing the tab forward, but only on the tab Chrome is showing, with Chrome on screen. With Chrome hidden there is no trusted way to scroll, since Chrome holds wheel and scroll input too. Scrolling from browser_eval works but is untrusted.",
+            desktop =
+                "Scroll a browser target with the mouse wheel, in notches. from and to are CSS viewport pixels, dragging content the way a finger would: from below to above scrolls down. Or pass a direction: up scrolls down the page, as a swipe up does. The mouse moves over the element or page first.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserSwipeRequest>()),
@@ -514,8 +559,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_gesture",
+            group = ApiGroup.BROWSER,
             description =
                 "Play pointer paths on a browser target, in CSS viewport pixels. The default input auto is touch, which brings the tab to the front and uses the screen. input cdp plays them over DevTools without bringing the tab forward, but only on the tab Chrome is showing, with Chrome on screen.",
+            desktop =
+                "Drag the mouse along one pointer path on a browser target, in CSS viewport pixels: pressed at the first point and released at the last. More than one path is refused, since a mouse has one pointer.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserGestureRequest>()),
@@ -525,8 +573,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_key",
+            group = ApiGroup.BROWSER,
             description =
                 "Press a key on a browser target. The default input auto is touch while you hold the screen, and cdp otherwise. input touch brings the tab to the front and injects a hardware key, and needs the control scope. input cdp sends it to the target in the background. Device keys such as HOME need input touch.",
+            desktop =
+                "Press a key on a browser target with keyDown and keyUp events, holding modifiers first, after bringing the tab to the front if it is hidden. Device keys such as HOME are refused.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserKeyRequest>()),
@@ -536,8 +587,11 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_type",
+            group = ApiGroup.BROWSER,
             description =
                 "Type text into a field in a browser target. ref or selector focuses the field first. The default input auto is touch while you hold the screen, and cdp otherwise. input touch brings the tab to the front and uses the hardware text modes. input cdp inserts the text in the background.",
+            desktop =
+                "Type text into a field in a browser target. ref or selector clicks the field first. Each character is a keyDown and keyUp, with Shift where needed, at a person's pace between minDelayMs and maxDelayMs. Characters no key produces, such as emoji, are inserted the way an input method commits them. clear selects all and deletes first; submit presses Enter.",
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserTextRequest>()),
@@ -547,6 +601,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_eval",
+            group = ApiGroup.BROWSER,
             description =
                 "Evaluate JavaScript in an isolated world and return the result. Works in the background. awaitPromise waits for a promise. A script exception is a result field. Not retried, so a script with side effects runs at most once. Clicks and scrolls made from a script are untrusted (isTrusted false), which bot detection can see, so click with browser_tap instead.",
             scopes = setOf(Scope.BROWSER),
@@ -558,6 +613,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_capture",
+            group = ApiGroup.BROWSER,
             description =
                 "Record the JSON responses a tab's page fetches, such as the data a page loads after it appears or when you tap something. A response counts when its content type says JSON, whatever its request method. Turn it on before the action, then browser_read with scope data lists each response as response-1, response-2, and so on, which paths read like any other blob. A body of several JSON values one after another reads as an array of them. A body that does not parse as JSON is listed with the reason, but cannot be read. Recording lasts until on false, the tab closes, or 10 minutes pass without a data read or a call to this. To record a page's load, browser_open with capture true, or call this before browser_navigate. browser_read with url and scope data records for you. Chrome keeps the last 4 MB of what the page loads, so on a busy page read soon after the action.",
             scopes = setOf(Scope.BROWSER),
@@ -569,6 +625,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "browser_console",
+            group = ApiGroup.BROWSER,
             description =
                 "Collect log entries for timeoutMs. Entries from before the call are not returned, so start it before the action you want to watch.",
             scopes = setOf(Scope.BROWSER),
@@ -580,10 +637,13 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "screenshot",
+            group = ApiGroup.SCREENSHOTS,
             description =
                 "PNG of the screen. Prefer ui_snapshot, and use this when the tree is empty or unhelpful, such as maps and images. After an action, wait_for with screenshot true waits and shows the screen in one call. scale is 0.1 to 1, default 0.5. Divide image coordinates by scale to get tap coordinates.",
+            desktop =
+                "PNG of the tab showing in the browser, captured over DevTools. Prefer browser_snapshot or browser_read, and use this for images, canvases, and layout. scale is 0.1 to 1, default 0.5.",
             scopes = setOf(Scope.OBSERVE),
-            available = Capabilities::screenshotHelper,
+            available = always,
             arguments = listOf(serializer<ScaleArgs>()),
             screen = ToolScreen.ALWAYS,
             annotations = readOnly,
@@ -591,6 +651,7 @@ private val TOOLS: List<McpTool> =
         ),
         McpTool(
             name = "logcat_tail",
+            group = ApiGroup.PHONE,
             description = "Recent log lines from the shell helper. lines is 1 to 400, default 80.",
             scopes = setOf(Scope.OBSERVE),
             available = Capabilities::logcatAll,
@@ -607,7 +668,14 @@ private val TOOLS: List<McpTool> =
  */
 internal val MCP_TOOLS: List<McpTool> = TOOLS.map {
     val tool =
-        if (it.screen.always) it.copy(description = "${it.description} Uses the screen.") else it
+        if (it.screen.always) {
+            it.copy(
+                description = "${it.description} Uses the screen.",
+                desktop = it.desktop?.let { text -> "$text Uses the screen." },
+            )
+        } else {
+            it
+        }
     if (tool.name in SESSION_TOOLS) tool
     else tool.copy(arguments = tool.arguments + serializer<SessionArg>())
 }
@@ -622,10 +690,7 @@ internal data class McpResource(
     val read: (ServerServices) -> String,
 )
 
-internal fun mcpResources(
-    scopes: Set<Scope>,
-    groups: Set<ApiGroup> = ApiGroup.entries.toSet(),
-): List<McpResource> =
+internal fun mcpResources(scopes: Set<Scope>, groups: Set<ApiGroup>): List<McpResource> =
     if (Scope.OBSERVE !in scopes) emptyList() else MCP_RESOURCES.filter { it.group in groups }
 
 private val MCP_RESOURCES =

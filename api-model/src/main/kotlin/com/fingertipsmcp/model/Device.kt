@@ -75,19 +75,27 @@ public data class DisplayInfo(
     val autoRotate: Boolean = false,
 )
 
+/**
+ * `GET /v1/device` and `device_info`. The fields about Android, its helper, and its Chrome are null
+ * on a server without the phone, such as FingertipsMCP for Chrome, so they are left out there
+ * rather than made up.
+ */
 @Serializable
 public data class DeviceInfo(
     val manufacturer: String,
     val model: String,
-    val sdkInt: Int,
+    /** Android's API level; null without the phone. */
+    val sdkInt: Int? = null,
     val release: String,
     val appVersion: String,
     val display: DisplayInfo,
-    val state: DeviceStateSummary,
-    val helper: HelperStatus,
+    /** The screen, keyguard, keyboard, and foreground app; null without the phone. */
+    val state: DeviceStateSummary? = null,
+    /** The shell helper's status; null without the phone, which is the only one with a helper. */
+    val helper: HelperStatus? = null,
     val helperRecoveredAtMs: Long? = null,
-    /** The helper's UiAutomation session is up. */
-    val uiAutomationConnected: Boolean,
+    /** The helper's UiAutomation session is up; null without the phone. */
+    val uiAutomationConnected: Boolean? = null,
     val capabilities: Capabilities,
     /**
      * Whether Android's cached-app freezer is on, as `use_freezer` in `dumpsys activity` said when
@@ -96,9 +104,9 @@ public data class DeviceInfo(
     val appFreezer: Boolean? = null,
     /**
      * Whether FingertipsMCP holds a binding to Chrome's Custom Tabs service, which keeps the
-     * freezer off Chrome. It does while the helper runs.
+     * freezer off Chrome. It does while the helper runs. Null without the phone.
      */
-    val chromeKept: Boolean = false,
+    val chromeKept: Boolean? = null,
     /**
      * Who has the screen now: `you` (the calling session), `parent` (the session that started it
      * with `session_start`), `subagent` (a session it started), `agent`, `person` (in the viewer),
