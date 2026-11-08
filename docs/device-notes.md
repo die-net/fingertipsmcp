@@ -657,7 +657,7 @@ With the app killed and restarted beside a live helper, on the Android 13 and 16
 Measured on the Android 10 and 16 emulators on 2026-11-05, typing into a web field in Chrome through Gboard (15.1 on Android 16).
 
 - On Android 16, Gboard relabels its letters without an event that reaches UiAutomation's node cache. After a shift tap the shift key read "Shift enabled" while the cached letters stayed lowercase for over a second. Both `AccessibilityNodeInfo.refresh()` on each node and `UiAutomation.clearCache()` gave the new labels at once. Typing 10 mixed characters took about 5.0 s from the cache, 5.5 s with `clearCache`, and 7.4 s with `refresh` on each node. `clearCache` needs Android 14. Older releases use a hidden call, and refresh each node only if that fails.
-- Gboard lists its suggestions among its keys. A suggestion can be one letter, and it has no view id, where a real key's id holds `key_pos_`. Tapping one enters the letter and a space.
+- Gboard lists its suggestions among its keys. A suggestion can be one letter, and it has no view id, where a real key's id holds `key_pos_`. Tapping one enters the letter and a space. Gboard 17.2 changed the ids, as below.
 - A keyboard still sliding up reports keys that aren't where it ends up. Tapping then lost the first letter in 3 of 6 runs on Android 16 on the old build.
 - On Android 10, labels change before the redraw ends. Tapping as soon as they changed lost or swapped a letter in 2 of 8 runs. Waiting until they hold still for one poll lost none in 16.
 - Read just after a letter, the keys can still show the shift that letter ended. Pressing shift then turns it back on, and pressing it again recovers. This happened in 1 of 8 runs on Android 16.
@@ -680,8 +680,16 @@ The merged code typed the same cases exactly on the Android 11 test phone on 202
 
 On the Android 11 test phone on 2026-11-07, at 2acb53e, keyboard `clear` failed 409 `text_not_cleared` in 1 of 16 tries, with the field unchanged, so nothing was typed. The likely cause is the page's nodes being off. The 15 tries that worked ran `ui/find` between steps, which keeps them on. With no such reads, the same steps left the nodes off 25 of 25 times at 4a18edd, where `clear` recovers, as under [UiAutomation](#uiautomation). Each such `clear` took 7.5 to 7.9 s, against 2 s with the nodes on. The failure itself was not run again on the old build.
 
+Typing `www` into Chrome's address bar, on 2026-11-08, on the Android 17 emulator (Gboard 17.2, Chrome 145) and the Android 16 emulator (Gboard 15.1, Chrome 133):
+
+- After a `w`, both show a suggestion strip reading `w`, `what`, `we`, listed ahead of the keys, and keep it up on the symbols page, which has no `w` key. Gboard 15.1 gives its letter keys ids such as `key_pos_0_1`. Gboard 17.2 gives them position codes such as `D02`, `C01`, and `A08`, and keeps `key_pos_` only for keys with a job, such as `key_pos_shift`, `key_pos_space`, and `key_pos_header_power_key`. In both, every key on the letter, symbols, and More symbols pages has an id, and only the suggestions have none.
+- On Gboard 17.2, the old build typed `www` as `w w`, in one call and in three calls of one letter each, as the viewer sends them: the second `w` tapped the suggestion. It looked for `key_pos_` in the id, and fell back to the first node labeled `w`. `KeyMatcher.withoutSuggestions` now drops nodes without an id from a keyboard whose character keys have ids. With it, on Gboard 17.2, `www` was exact 4 of 4 in one call, 11 of 12 in three calls, and 3 of 3 through the viewer socket, and `wwwww`, `w.w`, `a@b`, `w1w`, and `Hello, World! 50%` were exact. The one miss was the first run after reinstalling the app, which typed `ww`, and was not seen again in the 11 runs after it. On Gboard 15.1, `www` and `w|w|w` were exact 2 of 2 each, and `a|@` and `Hello, World! 50%` were exact.
+- On Gboard 17.2, `Wow, www!` came out `Wow, wew!` in 6 of 12 runs, through the viewer socket and REST alike, always at the middle `w` of the second word. That tap landed on the `w` key, 15 px right of its center and 39 px from `e`, and other taps 1 to 3 px from center stayed `w`. That points to Gboard's own key correction picking `we` from the words before it, though this was not checked further. PhoneAPI aims a tap anywhere in the middle 60% of a key.
+- On the Android 11 test phone on 2026-11-08 (Gboard 18.6, Chrome 156), Gboard names its keys as 17.2 does, such as `D02`, and its suggestions have no id. It labels `.` as `Period`. Before the change, `www` typed as `w w` 4 of 4 times, in one call and in three. After it, `www` was exact 12 of 12 times over REST, half in one call and half in three, and 3 of 3 through the viewer socket. `a|@` and `Hello, World! 50%` were exact. `Wow, www!` came out `Wow, wew!` 2 of 3 times, as on the emulator.
+
 ### Still to check
 
+- A keyboard that gives its keys no ids keeps its suggestions in the key list, so a suggestion that reads like a key can still be tapped there.
 
 ## MCP SDK
 
