@@ -3,7 +3,7 @@ package com.fingertipsmcp.browser
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserTarget
 import com.fingertipsmcp.model.DevtoolsSocketInfo
-import java.io.Closeable
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A desktop browser over one [CdpBrowserConnection]. [connection] starts the browser when it is not
@@ -18,8 +18,6 @@ class ConnectionEndpoints(
     private val missing: String = "The browser is not running.",
 ) : DevtoolsEndpoints {
     override val tabs: String = name
-
-    override val tabsPackage: String? = null
 
     override val backgroundStaysHidden: Boolean = true
 
@@ -51,18 +49,27 @@ class ConnectionEndpoints(
     override suspend fun openPage(
         endpoint: String,
         targetId: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit,
-    ): OpenCdpSession = attach(endpoint, targetId)
+        answerTimeoutMs: Long,
+    ): OpenCdpSession = answered(answerTimeoutMs) { attach(endpoint, targetId) }
 
     @Suppress("MissingUseCall") // The caller closes the session.
-    override suspend fun openBrowser(
-        endpoint: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit,
-    ): OpenCdpSession {
+    override suspend fun openBrowser(endpoint: String, answerTimeoutMs: Long): OpenCdpSession {
         requireEndpoint(endpoint)
-        return connection().attachBrowser()
+        return answered(answerTimeoutMs) { connection().attachBrowser() }
+    }
+
+    /**
+     * [open], which fails with `cdp_timeout` when the browser hasn't answered in [answerTimeoutMs],
+     * or the connection's own call timeout for 0. An attach given up on detaches when its answer
+     * comes, so nothing is left attached.
+     */
+    private suspend fun answered(
+        answerTimeoutMs: Long,
+        open: suspend () -> OpenCdpSession,
+    ): OpenCdpSession {
+        if (answerTimeoutMs <= 0) return open()
+        return withTimeoutOrNull(answerTimeoutMs) { open() }
+            ?: throw ApiException.unavailable("cdp_timeout", "DevTools did not answer in time")
     }
 
     /**

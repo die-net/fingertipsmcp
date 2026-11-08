@@ -1,5 +1,6 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.core.closeOnFailure
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserCaptureResult
 import com.fingertipsmcp.model.DataBlob
@@ -145,51 +146,56 @@ internal class NetworkCapture(
     /** The time in ms, on the clock [scope]'s waits run on. */
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private class Capture(val link: PageLink, val log: CaptureLog) {
+    /** One tab's recording, listed under [id]. Closing it ends it and unlists it, once. */
+    private inner class Capture(val id: String, val link: PageLink, val log: CaptureLog) :
+        Closeable {
         @Volatile var used = 0L
         var job: Job? = null
         /** Records every event into [log] as the session reads it, so none is skipped. */
-        val recording: Closeable =
+        private val recording: Closeable =
             link.cdp.listen { event -> synchronized(log) { log.apply(event) } }
+        private val closed = AtomicBoolean(false)
 
         fun responses(): List<CapturedResponse> = synchronized(log) { log.responses }
+
+        override fun close() {
+            if (!closed.compareAndSet(false, true)) return
+            captures.remove(id, this)
+            job?.cancel()
+            recording.close()
+            link.close()
+        }
     }
 
     private val captures = ConcurrentHashMap<String, Capture>()
     private val starting = Mutex()
 
     /** Starts recording [id]'s JSON responses, or keeps recording. Returns how many it has. */
+    @Suppress("MissingUseCall") // The capture stays in captures until stop or its watch closes it.
     suspend fun start(id: String): Int = starting.withLock {
         captures[id]?.let {
             it.used = now()
             return@withLock it.responses().size
         }
         val link = connect(id)
-        val capture = Capture(link, CaptureLog(parseBrowserTargetId(id).second))
-        capture.used = now()
-        // Listed before the watch starts, so a session that has already closed is removed by the
-        // watch rather than left here with nothing to remove it.
-        captures[id] = capture
-        var started = false
-        try {
-            // Recording started with the capture, before Network, so no event is missed.
-            capture.job = scope.launch(start = CoroutineStart.UNDISPATCHED) { watch(id, capture) }
-            link.cdp.call(
+        // Recording starts with the capture, before Network, so no event is missed.
+        val capture = link.closeOnFailure {
+            Capture(id, it, CaptureLog(parseBrowserTargetId(id).second))
+        }
+        capture.closeOnFailure {
+            capture.used = now()
+            // Listed before the watch starts, so a session that has already closed is removed by
+            // the watch rather than left here with nothing to remove it.
+            captures[id] = capture
+            capture.job = scope.launch(start = CoroutineStart.UNDISPATCHED) { watch(capture) }
+            capture.link.cdp.call(
                 "Network.enable",
                 buildJsonObject {
                     put("maxTotalBufferSize", TOTAL_BUFFER)
                     put("maxResourceBufferSize", RESOURCE_BUFFER)
                 },
             )
-            started = true
             0
-        } finally {
-            if (!started) {
-                captures.remove(id, capture)
-                capture.job?.cancel()
-                capture.recording.close()
-                link.close()
-            }
         }
     }
 
@@ -204,10 +210,7 @@ internal class NetworkCapture(
 
     /** Stops recording [id], which frees the bodies Chrome held for it. */
     fun stop(id: String) {
-        val capture = captures.remove(id) ?: return
-        capture.job?.cancel()
-        capture.recording.close()
-        capture.link.close()
+        captures[id]?.close()
     }
 
     /** What [id] has recorded, by name and size only, or nothing when it is not recording. */
@@ -257,7 +260,7 @@ internal class NetworkCapture(
     }
 
     /** Ends a capture when its session closes, as when the tab does, or when it goes unused. */
-    private suspend fun watch(id: String, capture: Capture) {
+    private suspend fun watch(capture: Capture) {
         try {
             var open = true
             while (open) {
@@ -266,9 +269,7 @@ internal class NetworkCapture(
                     left > 0 && withTimeoutOrNull(left) { capture.link.cdp.awaitClosed() } == null
             }
         } finally {
-            captures.remove(id, capture)
-            capture.recording.close()
-            capture.link.close()
+            capture.close()
         }
     }
 
@@ -322,7 +323,7 @@ internal class NetworkCapture(
 internal fun pageLinker(devtools: DevtoolsEndpoints): suspend (String) -> PageLink = { id ->
     val (socket, chromeId) = parseBrowserTargetId(id)
     try {
-        PageLink(devtools.openPage(socket, chromeId, readTimeoutMs = 0))
+        PageLink(devtools.openPage(socket, chromeId, answerTimeoutMs = 0))
     } catch (e: ApiException) {
         throw if (tabGone(e)) tabClosed(id) else e
     }

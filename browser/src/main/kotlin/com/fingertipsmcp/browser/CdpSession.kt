@@ -87,7 +87,8 @@ interface OpenCdpSession : CdpSession, Closeable
  * Matches replies to commands by id, for one DevTools connection. Replies and events go to the
  * session named by their `sessionId`, or to the root session when there is none, and each session
  * counts its own events. A reader failure fails the commands still waiting, so they do not sit out
- * their timeout. [send] writes one message and may block.
+ * their timeout. [send] queues one message and must not block, since a write that blocks is outside
+ * every call's timeout.
  */
 internal class CdpRouter(private val send: (String) -> Unit) {
     private val pending = HashMap<Int, Pending>()
@@ -97,7 +98,24 @@ internal class CdpRouter(private val send: (String) -> Unit) {
     private var closedBy: IOException? = null
     private val nextId = AtomicInteger(0)
 
-    private data class Pending(val session: String, val deferred: CompletableDeferred<CdpReply>)
+    /**
+     * A command waiting for its reply. One that [attaches] gets a session in its reply, which the
+     * reader routes as it reads the reply. Once its caller has [abandoned] it, the reader detaches
+     * that session instead, since nothing else learns its id.
+     */
+    @Suppress("UseDataClass") // Compared by identity: no two commands are the same one.
+    private class Pending(val session: String, val attaches: Boolean) {
+        val deferred = CompletableDeferred<Answer>()
+        /** Set under the gate once the caller stopped waiting, as on a cancel or a timeout. */
+        var abandoned = false
+        /** Set under the gate as the reader hands the caller its answer. */
+        var answered: Answer? = null
+    }
+
+    private data class Answer(val reply: CdpReply, val attached: Attached? = null)
+
+    /** A flattened session that `Target.attachToTarget` or `attachToBrowserTarget` returned. */
+    data class Attached(val id: String, val route: Route)
 
     /**
      * Where one session's events go. A session keeps its route from when it opens, so one that has
@@ -149,8 +167,33 @@ internal class CdpRouter(private val send: (String) -> Unit) {
     }
 
     suspend fun callCounted(method: String, params: JsonObject?, session: String?): CdpReply =
+        exchange(method, params, session, attaches = false).reply
+
+    /**
+     * Sends [method], a root command whose reply names a new flattened session, and returns that
+     * session. Its route is made as the reader reads the reply, so an event or a detach read right
+     * after it reaches the session. A caller that gives up before it has the session, by a cancel
+     * or the timeout, leaves it to be detached when the reply comes.
+     */
+    suspend fun attach(method: String, params: JsonObject?): Attached =
+        checkNotNull(exchange(method, params, session = null, attaches = true).attached)
+
+    fun post(method: String, params: JsonObject?, session: String?) {
         try {
-            withTimeoutOrNull(CALL_TIMEOUT_MS) { roundTrip(method, params, session) }
+            send(command(nextId.incrementAndGet(), method, params, session))
+        } catch (e: IOException) {
+            throw connectionFailed(e)
+        }
+    }
+
+    private suspend fun exchange(
+        method: String,
+        params: JsonObject?,
+        session: String?,
+        attaches: Boolean,
+    ): Answer =
+        try {
+            withTimeoutOrNull(CALL_TIMEOUT_MS) { roundTrip(method, params, session, attaches) }
                 ?: throw ApiException.unavailable("cdp_timeout", "DevTools did not answer in time")
         } catch (e: CancellationException) {
             throw e
@@ -167,32 +210,57 @@ internal class CdpRouter(private val send: (String) -> Unit) {
             throw connectionFailed(e)
         }
 
-    fun post(method: String, params: JsonObject?, session: String?) {
-        try {
-            send(command(nextId.incrementAndGet(), method, params, session))
-        } catch (e: IOException) {
-            throw connectionFailed(e)
-        }
-    }
-
     private suspend fun roundTrip(
         method: String,
         params: JsonObject?,
         session: String?,
-    ): CdpReply {
+        attaches: Boolean,
+    ): Answer {
         val id = nextId.incrementAndGet()
-        val deferred = CompletableDeferred<CdpReply>()
+        val waiter = Pending(session ?: ROOT, attaches)
         synchronized(gate) {
             // A connection that has already stopped has nowhere to send to.
             closedBy?.let { throw IOException(it.message, it) }
             // Listed before the command goes out, so its reply always finds it.
-            pending[id] = Pending(session ?: ROOT, deferred)
+            pending[id] = waiter
         }
+        var sent = false
+        var answered = false
         try {
             send(command(id, method, params, session))
-            return deferred.await()
+            sent = true
+            return waiter.deferred.await().also { answered = true }
         } finally {
-            synchronized(gate) { pending.remove(id) }
+            if (!answered) abandon(id, waiter, sent)
+        }
+    }
+
+    /**
+     * Gives up on a command. An attach that was [sent] and whose reply has not come stays listed
+     * until the reply or the connection's end, so the reader can detach what it returns. One whose
+     * reply came as the caller was cancelled is detached here.
+     */
+    private fun abandon(id: Int, waiter: Pending, sent: Boolean) {
+        val late =
+            synchronized(gate) {
+                if (pending[id] === waiter) {
+                    if (waiter.attaches && sent) waiter.abandoned = true else pending.remove(id)
+                    return
+                }
+                // The reader answers under the gate, so a missing entry has its answer or failed.
+                waiter.answered?.attached
+            }
+        late?.let(::release)
+    }
+
+    /** Stops routing to a session nobody holds, and detaches it in the browser. */
+    private fun release(session: Attached) {
+        detached(session.id, IOException("The DevTools session was abandoned"))
+        if (closed) return
+        try {
+            post("Target.detachFromTarget", buildJsonObject { put("sessionId", session.id) }, null)
+        } catch (_: ApiException) {
+            // The connection closed meanwhile, which detaches every session.
         }
     }
 
@@ -242,13 +310,38 @@ internal class CdpRouter(private val send: (String) -> Unit) {
         stopped.forEach { it.stopped.complete(Unit) }
     }
 
-    /** Hands a reply to its call. One whose call has given up, as on a timeout, is dropped. */
+    /**
+     * Hands a reply to its call. One whose call has given up, as on a timeout, is dropped, and the
+     * session an abandoned attach returned is detached. The answer is completed under the gate, so
+     * a caller giving up at the same moment finds either its entry or its answer.
+     */
     private fun deliver(id: Int, result: Result<CdpReply>) {
-        val waiter = synchronized(gate) { pending.remove(id) } ?: return
-        result.fold(
-            onSuccess = waiter.deferred::complete,
-            onFailure = waiter.deferred::completeExceptionally,
-        )
+        val orphan =
+            synchronized(gate) {
+                val waiter = pending.remove(id) ?: return
+                val answer = result.mapCatching { reply -> answer(waiter, reply) }
+                if (waiter.abandoned) return@synchronized answer.getOrNull()?.attached
+                answer.fold(
+                    onSuccess = {
+                        waiter.answered = it
+                        waiter.deferred.complete(it)
+                    },
+                    onFailure = waiter.deferred::completeExceptionally,
+                )
+                null
+            }
+        orphan?.let(::release)
+    }
+
+    /** The answer to [waiter], with the route of the session an attach made. Holds the gate. */
+    private fun answer(waiter: Pending, reply: CdpReply): Answer {
+        if (!waiter.attaches) return Answer(reply)
+        val session =
+            reply.result.decodeCdp<SessionReply>()?.sessionId
+                ?: throw ApiException(502, "cdp_error", "The browser did not return a session")
+        val route = Route().also { if (closedBy != null) it.stopped.complete(Unit) }
+        routes[session] = route
+        return Answer(reply, Attached(session, route))
     }
 
     private fun command(id: Int, method: String, params: JsonObject?, session: String?): String =
@@ -271,6 +364,8 @@ internal class CdpRouter(private val send: (String) -> Unit) {
     )
 
     @Serializable private data class Rejected(val code: Int? = null, val message: String? = null)
+
+    @Serializable private data class SessionReply(val sessionId: String? = null)
 
     private companion object {
         const val CALL_TIMEOUT_MS = 15_000L

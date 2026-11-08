@@ -3,10 +3,23 @@ package com.fingertipsmcp.browser
 import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.model.ApiException
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -18,11 +31,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /** One browser connection with flattened sessions per target, as a desktop browser serves them. */
+@OptIn(ExperimentalCoroutinesApi::class) // runCurrent runs what is due on the virtual clock.
 class CdpConnectionTest {
     @Test
     fun `routes sessions apart`() = runTest {
@@ -104,6 +119,104 @@ class CdpConnectionTest {
     }
 
     @Test
+    @Suppress("MissingUseCall") // The attach is cancelled, so nothing returns to close.
+    fun `a cancelled attach detaches`() = runTest {
+        connected(testScheduler, holdAttach = true) { connection, browser ->
+            val attaching = launch { connection.attach("T1") }
+            runCurrent()
+            // Cancelled at a wait's limit, before the browser answers.
+            attaching.cancelAndJoin()
+            browser.answerHeld()
+            runCurrent()
+            assertEquals(listOf("S1"), browser.detached)
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The attach is cancelled, so nothing returns to close.
+    fun `late cancelled attach detaches`() = runTest {
+        connected(testScheduler, holdAttach = true) { connection, browser ->
+            val attaching = launch { connection.attach("T1") }
+            runCurrent()
+            // The reply is read, and the caller is cancelled before it resumes with it.
+            browser.answerHeld()
+            attaching.cancel()
+            runCurrent()
+            assertTrue(attaching.isCancelled)
+            assertEquals(listOf("S1"), browser.detached)
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The open times out, so nothing returns to close.
+    fun `an unanswered open times out`() = runTest {
+        connected(testScheduler, holdAttach = true) { connection, browser ->
+            val endpoints = ConnectionEndpoints(connection = { connection })
+            val error =
+                assertThrows<ApiException> {
+                    endpoints.openPage(DESKTOP_ENDPOINT, "T1", answerTimeoutMs = 1_000)
+                }
+            assertEquals("cdp_timeout", error.error)
+            // The open's own limit, not the connection's 15 s call timeout.
+            assertEquals(1_000L, testScheduler.currentTime)
+            browser.answerHeld()
+            runCurrent()
+            assertEquals(listOf("S1"), browser.detached)
+        }
+    }
+
+    @Test
+    fun `an early detach stops it`() = runTest {
+        connected(testScheduler, detachOnAttach = true) { connection, _ ->
+            connection.attach("T1").use { session ->
+                // Virtual time: a session that never stops fails here at once.
+                assertNotNull(withTimeoutOrNull(1_000) { session.awaitClosed() })
+            }
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The listener lasts for the connection.
+    fun `a listener bug is reported`() {
+        val bug =
+            assertThrows<IllegalStateException> {
+                runTest {
+                    connected(testScheduler) { connection, _ ->
+                        connection.root.listen { error("listener bug") }
+                        val error =
+                            assertThrows<ApiException> { connection.root.call("Runtime.evaluate") }
+                        assertEquals(DEVTOOLS_FAILED, error.message)
+                        assertEquals(DEVTOOLS_FAILED, connection.awaitClosed().message)
+                    }
+                }
+            }
+        // Still fatal: the test engine sees it as an uncaught exception.
+        assertEquals("listener bug", bug.message)
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The finally closes the output, and the connection the pipe.
+    fun `a stalled pipe still times out`() = runTest {
+        val threads = Executors.newFixedThreadPool(2).asCoroutineDispatcher()
+        val stalled = StalledOutput()
+        try {
+            val pipe = PipeTransport(PipedInputStream(PipedOutputStream()), stalled, threads)
+            CdpBrowserConnection(pipe, StandardTestDispatcher(testScheduler)).use { connection ->
+                connection.start()
+                repeat(2) {
+                    // The second call is not queued behind the first one's write.
+                    val error =
+                        assertThrows<ApiException> { connection.root.call("Browser.getVersion") }
+                    assertEquals("cdp_timeout", error.error)
+                }
+            }
+        } finally {
+            stalled.close()
+            threads.close()
+        }
+    }
+
+    @Test
     fun `the pipe splits on nul`() = runTest {
         val bytes =
             listOf("""{"a":1}""", """{"b":2}""", """{"c"""").joinToString("\u0000").toByteArray()
@@ -116,12 +229,30 @@ class CdpConnectionTest {
     }
 
     @Test
-    fun `the pipe ends with nul`() {
+    fun `the pipe ends with nul`() = runTest {
         val out = ByteArrayOutputStream()
-        PipeTransport(ByteArray(0).inputStream(), out, StandardTestDispatcher()).use {
+        PipeTransport(ByteArray(0).inputStream(), out, StandardTestDispatcher(testScheduler)).use {
             it.send("""{"a":1}""")
+            runCurrent()
         }
         assertEquals("{\"a\":1}\u0000", out.toString(Charsets.UTF_8))
+    }
+
+    /**
+     * Chrome's end of the pipe when it stops reading: a write blocks until the pipe closes. The
+     * limit only ends a run in which a caller is stuck in the write.
+     */
+    private class StalledOutput : OutputStream() {
+        private val closed = CountDownLatch(1)
+
+        override fun write(b: Int) {
+            if (!closed.await(STALL_LIMIT_S, TimeUnit.SECONDS)) throw IOException("Stalled")
+            throw IOException("Closed")
+        }
+
+        override fun close() {
+            closed.countDown()
+        }
     }
 
     /** Runs [block] on a connection to a [FakeBrowser], read on [scheduler]'s virtual time. */
@@ -129,9 +260,11 @@ class CdpConnectionTest {
         scheduler: TestCoroutineScheduler,
         detachOnCall: Boolean = false,
         refuseAttach: Boolean = false,
+        holdAttach: Boolean = false,
+        detachOnAttach: Boolean = false,
         block: suspend (CdpBrowserConnection, FakeBrowser) -> Unit,
     ) {
-        FakeBrowser(detachOnCall, refuseAttach).use { browser ->
+        FakeBrowser(detachOnCall, refuseAttach, holdAttach, detachOnAttach).use { browser ->
             CdpBrowserConnection(browser, StandardTestDispatcher(scheduler)).use { connection ->
                 connection.start()
                 block(connection, browser)
@@ -141,19 +274,30 @@ class CdpConnectionTest {
 
     /**
      * Answers like Chrome on the other end of a browser connection. It answers each command once it
-     * has been sent, in the order a browser does: a target's events, then the reply.
+     * has been sent, in the order a browser does: a target's events, then the reply. With
+     * [holdAttach], an attach is answered only at [answerHeld], as a slow browser does. With
+     * [detachOnAttach], the tab closes as it is attached, so the detach follows the reply.
      */
     private class FakeBrowser(
         private val detachOnCall: Boolean = false,
         private val refuseAttach: Boolean = false,
+        private val holdAttach: Boolean = false,
+        private val detachOnAttach: Boolean = false,
     ) : CdpTransport {
         private val incoming = Channel<String>(Channel.UNLIMITED)
         private val sent = ArrayList<JsonObject>()
+        private val held = ArrayList<JsonObject>()
         val detached = ArrayList<String>()
         private var browserSessions = 0
 
         fun hangUp() {
             incoming.close()
+        }
+
+        /** Sends the attach replies [holdAttach] held back. */
+        fun answerHeld() {
+            held.forEach { incoming.trySend(it.toString()) }
+            held.clear()
         }
 
         /** The session the last [method] went to, or null for the root. */
@@ -163,7 +307,14 @@ class CdpConnectionTest {
         override fun send(text: String) {
             val message = ApiJson.parseToJsonElement(text).jsonObject
             sent += message
-            answer(message).forEach { incoming.trySend(it.toString()) }
+            val answers = answer(message)
+            if (
+                holdAttach && message["method"]?.jsonPrimitive?.content == "Target.attachToTarget"
+            ) {
+                held += answers
+                return
+            }
+            answers.forEach { incoming.trySend(it.toString()) }
         }
 
         override suspend fun receive(onText: suspend (String) -> Unit) {
@@ -198,7 +349,11 @@ class CdpConnectionTest {
                     if (refuseAttach || params?.get("targetId")?.jsonPrimitive?.content != "T1") {
                         listOf(refusal(id, "No target with given id found"))
                     } else {
-                        listOf(reply(id) { put("sessionId", "S1") })
+                        listOfNotNull(
+                            reply(id) { put("sessionId", "S1") },
+                            event("Target.detachedFromTarget", null) { put("sessionId", "S1") }
+                                .takeIf { detachOnAttach },
+                        )
                     }
                 "Target.attachToBrowserTarget" ->
                     listOf(reply(id) { put("sessionId", "B${++browserSessions}") })
@@ -243,5 +398,9 @@ class CdpConnectionTest {
                 put("params", buildJsonObject(params))
                 if (session != null) put("sessionId", session)
             }
+    }
+
+    private companion object {
+        const val STALL_LIMIT_S = 10L
     }
 }

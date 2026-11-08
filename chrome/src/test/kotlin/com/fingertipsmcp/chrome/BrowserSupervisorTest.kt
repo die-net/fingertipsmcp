@@ -3,15 +3,18 @@ package com.fingertipsmcp.chrome
 import com.fingertipsmcp.browser.CdpBrowserConnection
 import com.fingertipsmcp.browser.CdpTransport
 import com.fingertipsmcp.model.ApiException
+import java.io.IOException
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -111,6 +114,99 @@ class BrowserSupervisorTest {
         supervisor.close()
     }
 
+    @Test
+    fun `two callers share a launch`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        var starts = 0
+        val made = FakeBrowser(testScheduler)
+        val supervisor = supervisor {
+            starts++
+            release.await()
+            made
+        }
+
+        val callers = List(2) { async { supervisor.browser() } }
+        runCurrent()
+        release.complete(Unit)
+        assertEquals(listOf(made, made), callers.awaitAll())
+        assertEquals(1, starts)
+        supervisor.close()
+    }
+
+    @Test
+    fun `exited browser is restarted`() = runTest {
+        val made = mutableListOf<FakeBrowser>()
+        val supervisor = supervisor { FakeBrowser(testScheduler).also { made += it } }
+
+        val first = supervisor.browser()
+        // Chrome exits, as when its last window is closed.
+        made.single().exit()
+        val second = supervisor.browser()
+
+        assertEquals(2, made.size)
+        assertTrue(made[0].isClosed, "the browser that exited was not stopped")
+        assertSame(made[1], second)
+        assertFalse(made[1].isClosed)
+        assertFalse(first === second)
+        supervisor.close()
+    }
+
+    @Test
+    fun `stale stop precedes the start`() = runTest {
+        val stopped = CompletableDeferred<Unit>()
+        val made = mutableListOf<FakeBrowser>()
+        val supervisor = supervisor {
+            FakeBrowser(testScheduler, onStop = { stopped.await() }).also { made += it }
+        }
+        supervisor.browser()
+        made.single().exit()
+
+        val next = async { supervisor.browser() }
+        runCurrent()
+        // Chrome holds its profile until it exits, so the next one waits for it.
+        assertEquals(1, made.size)
+        stopped.complete(Unit)
+        val started = next.await()
+        assertSame(made[1], started)
+        supervisor.close()
+    }
+
+    @Test
+    fun `closing stops the restart`() = runTest {
+        val made = mutableListOf<FakeBrowser>()
+        val supervisor = supervisor {
+            FakeBrowser(testScheduler, onStop = { awaitCancellation() }).also { made += it }
+        }
+        supervisor.browser()
+        made.single().exit()
+
+        val next = async { errorOf { supervisor.browser() } }
+        runCurrent()
+        supervisor.close()
+        runCurrent()
+
+        assertEquals("browser_unavailable", next.await()?.error)
+        assertEquals(1, made.size, "started a browser after close")
+    }
+
+    @Test
+    fun `failed stale stop still starts`() = runTest {
+        val made = mutableListOf<FakeBrowser>()
+        val supervisor = supervisor {
+            // Only the browser that exits fails to stop.
+            val first = made.isEmpty()
+            FakeBrowser(testScheduler, onStop = { if (first) throw IOException("Broken pipe") })
+                .also { made += it }
+        }
+        supervisor.browser()
+        made.single().exit()
+
+        val started = supervisor.browser()
+        assertEquals(2, made.size)
+        assertSame(made[1], started)
+        supervisor.close()
+    }
+
     private fun TestScope.supervisor(start: suspend () -> RunningBrowser) =
         BrowserSupervisor(backgroundScope, StandardTestDispatcher(testScheduler), start)
 
@@ -122,24 +218,48 @@ class BrowserSupervisorTest {
             e
         }
 
-    /** A browser whose connection stays open until closed. */
-    private class FakeBrowser : RunningBrowser {
-        override val connection = CdpBrowserConnection(IdleTransport(), EmptyCoroutineContext)
+    /**
+     * A browser whose connection stays open until it is stopped or [exit]s. [onStop] runs first in
+     * [stop], as Chrome takes a while to exit.
+     */
+    private class FakeBrowser(
+        scheduler: TestCoroutineScheduler? = null,
+        private val onStop: suspend () -> Unit = {},
+    ) : RunningBrowser {
+        private val transport = IdleTransport()
+        override val connection =
+            CdpBrowserConnection(
+                transport,
+                scheduler?.let(::StandardTestDispatcher) ?: EmptyCoroutineContext,
+            )
         override val pid: Long? = null
         override val product = "Chrome/1.0"
         var isClosed = false
             private set
 
-        override fun close() {
+        init {
+            if (scheduler != null) connection.start()
+        }
+
+        /** Chrome exits: its end of the connection closes, and the reader sees it. */
+        suspend fun exit() {
+            transport.hangUp.complete(Unit)
+            connection.awaitClosed()
+        }
+
+        override suspend fun stop() {
+            onStop()
             isClosed = true
             connection.close()
         }
     }
 
     private class IdleTransport : CdpTransport {
+        val hangUp = CompletableDeferred<Unit>()
+
         override fun send(text: String) = Unit
 
-        override suspend fun receive(onText: suspend (String) -> Unit) = awaitCancellation()
+        override suspend fun receive(onText: suspend (String) -> Unit) = hangUp.await()
 
         override fun close() = Unit
     }

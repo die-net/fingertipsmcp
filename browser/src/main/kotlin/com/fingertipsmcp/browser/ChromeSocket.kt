@@ -33,7 +33,7 @@ class ChromeSocket(
 ) : Closeable {
     // Independent of the caller's job so a single command timeout does not cancel the reader.
     private val scope =
-        CoroutineScope(context + SupervisorJob() + CoroutineName("devtools") + pipeFailed)
+        CoroutineScope(context + SupervisorJob() + CoroutineName("devtools") + devtoolsFailed)
     private var webSocket: WebSocketSession? = null
 
     fun handshake(path: String) {
@@ -84,20 +84,18 @@ class ChromeSocket(
 
     private fun socket(): WebSocketSession =
         webSocket ?: error("DevTools WebSocket is not connected")
+}
 
-    private companion object {
-        private val log = LoggerFactory.getLogger("Fingertips")
+private val log = LoggerFactory.getLogger("Fingertips")
 
-        /**
-         * Ktor's writer flushes again from a finally block after a write fails, so a pipe that has
-         * died fails its coroutine with an IOException that no caller sees. The session already
-         * ends, since the writer's failure cancels the reader. Anything else is a bug and stays
-         * fatal: one that corrupts a shared pool, such as okio's, fails every later call until the
-         * process restarts.
-         */
-        val pipeFailed = CoroutineExceptionHandler { _, e ->
-            if (e !is IOException) throw e
-            log.warn("DevTools socket failed", e)
-        }
-    }
+/**
+ * For the scopes DevTools readers and writers run in. A writer that fails, as Ktor's does when it
+ * flushes again from a finally block after a write failed, fails its coroutine with an IOException
+ * that no caller sees. The connection already ends, since a failed write ends the session or the
+ * queue. Anything else is a bug and stays fatal: one that corrupts a shared pool, such as okio's,
+ * fails every later call until the process restarts.
+ */
+internal val devtoolsFailed = CoroutineExceptionHandler { _, e ->
+    if (e !is IOException) throw e
+    log.warn("DevTools connection failed", e)
 }

@@ -7,6 +7,8 @@ import com.fingertipsmcp.browser.WebSocketTransport
 import com.fingertipsmcp.browser.decodeCdp
 import com.fingertipsmcp.browser.httpGet
 import com.fingertipsmcp.core.ApiJson
+import com.fingertipsmcp.core.closeOnFailure
+import com.fingertipsmcp.core.openOn
 import com.fingertipsmcp.model.ApiException
 import java.io.Closeable
 import java.io.File
@@ -15,26 +17,29 @@ import java.io.RandomAccessFile
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
-import java.util.concurrent.TimeUnit
+import java.net.URISyntaxException
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import org.slf4j.LoggerFactory
 
 /**
- * A browser fingertips-chrome is connected to. Closing it closes the browser if fingertips-chrome
+ * A browser fingertips-chrome is connected to. Stopping it closes the browser if fingertips-chrome
  * started it.
  */
 interface RunningBrowser : Closeable {
@@ -45,6 +50,17 @@ interface RunningBrowser : Closeable {
 
     /** `Browser.getVersion`'s product, such as `Chrome/141.0.7390.54`. */
     val product: String
+
+    /**
+     * Disconnects, and closes Chrome if fingertips-chrome started it, waiting for it to exit. It
+     * suspends rather than blocking a thread.
+     */
+    suspend fun stop()
+
+    /** [stop] for a thread that may block and isn't running coroutines, as a shutdown hook. */
+    override fun close() {
+        runBlocking { stop() }
+    }
 }
 
 /**
@@ -87,51 +103,56 @@ class ChromeLauncher(
      * Starts Chrome and waits for it to answer. On any failure, a cancel included, it stops the
      * Chrome it started, so a later launch doesn't find the profile taken.
      */
-    @Suppress("MissingUseCall") // The finally block closes the connection unless it is returned.
+    @Suppress("MissingUseCall") // closeOnFailure stops the launch unless it is returned.
     suspend fun start(): RunningBrowser {
         profile.mkdirs()
         logFile.parentFile?.mkdirs()
         val logStart = if (logFile.exists()) logFile.length() else 0L
-        // Set inside withContext, so a cancel as it returns still finds the process.
-        var process: Process? = null
-        var connection: CdpBrowserConnection? = null
-        var launched = false
-        try {
-            val started = withContext(io) { startProcess().also { process = it } }
-            val cdp =
-                CdpBrowserConnection(
-                        PipeTransport(started.inputStream, started.outputStream, io),
-                        io,
-                    )
-                    .also { connection = it }
-            cdp.start()
-            val product =
-                try {
-                    browserVersion(cdp)
-                } catch (e: ApiException) {
-                    throw LaunchException(
-                        "Chrome did not start (${e.message.orEmpty()}). If another Chrome uses " +
-                            "${profile.path}, close it or pass --profile. " +
-                            logTail(logFile, logStart),
-                        e,
-                    )
+        return openOn(io) { Launch(startProcess()) }
+            .closeOnFailure { launch ->
+                val started = launch.process
+                val cdp = launch.connect()
+                cdp.start()
+                val product =
+                    try {
+                        browserVersion(cdp)
+                    } catch (e: ApiException) {
+                        throw LaunchException(
+                            "Chrome did not start (${e.message.orEmpty()}). If another Chrome uses " +
+                                "${profile.path}, close it or pass --profile. " +
+                                logTail(logFile, logStart),
+                            e,
+                        )
+                    }
+                logger.info("Started {} (pid {}) with profile {}", product, started.pid(), profile)
+                if (!headless) {
+                    try {
+                        openFirstWindow(cdp)
+                    } catch (e: ApiException) {
+                        throw LaunchException(
+                            "Chrome started but did not open a window: ${e.message.orEmpty()}",
+                            e,
+                        )
+                    }
                 }
-            logger.info("Started {} (pid {}) with profile {}", product, started.pid(), profile)
-            if (!headless) {
-                try {
-                    openFirstWindow(cdp)
-                } catch (e: ApiException) {
-                    throw LaunchException(
-                        "Chrome started but did not open a window: ${e.message.orEmpty()}",
-                        e,
-                    )
-                }
+                LaunchedChrome(cdp, started, product)
             }
-            return LaunchedChrome(cdp, started, product).also { launched = true }
-        } finally {
-            if (!launched) {
+    }
+
+    /** A Chrome being started, and its connection once there is one. Closing it stops both. */
+    private inner class Launch(val process: Process) : Closeable {
+        private var connection: CdpBrowserConnection? = null
+
+        @Suppress("MissingUseCall") // Closing the launch closes the connection.
+        fun connect(): CdpBrowserConnection =
+            CdpBrowserConnection(PipeTransport(process.inputStream, process.outputStream, io), io)
+                .also { connection = it }
+
+        override fun close() {
+            try {
                 connection?.close()
-                process?.destroy()
+            } finally {
+                process.destroy()
             }
         }
     }
@@ -171,9 +192,14 @@ class ChromeLauncher(
     ) : RunningBrowser {
         override val pid: Long = process.pid()
 
-        override fun close() {
-            if (process.isAlive && connection.isOpen) {
-                runBlocking {
+        /**
+         * Asks Chrome to close, which saves its session, then closes the pipe, which Chrome also
+         * exits on. A caller cancelled meanwhile still waits for the exit, and for the kill when
+         * Chrome doesn't exit, so no Chrome is left holding the profile.
+         */
+        override suspend fun stop() {
+            try {
+                if (process.isAlive && connection.isOpen) {
                     withTimeoutOrNull(CLOSE_MS) {
                         try {
                             connection.root.call("Browser.close")
@@ -182,14 +208,19 @@ class ChromeLauncher(
                         }
                     }
                 }
-            }
-            // Chrome also exits when the pipe closes.
-            connection.close()
-            if (!process.waitFor(EXIT_WAIT_S, TimeUnit.SECONDS)) {
-                process.destroy()
-                if (!process.waitFor(EXIT_WAIT_S, TimeUnit.SECONDS)) process.destroyForcibly()
+            } finally {
+                withContext(NonCancellable) {
+                    connection.close()
+                    if (!exited()) {
+                        process.destroy()
+                        if (!exited()) process.destroyForcibly()
+                    }
+                }
             }
         }
+
+        private suspend fun exited(): Boolean =
+            withTimeoutOrNull(EXIT_WAIT_MS) { process.onExit().await() } != null
     }
 
     private companion object {
@@ -200,7 +231,7 @@ class ChromeLauncher(
          */
         const val PIPE_SHIM = "exec 3<&0 4>&1 0</dev/null 1>&2; exec \"$@\""
         const val CLOSE_MS = 3_000L
-        const val EXIT_WAIT_S = 5L
+        const val EXIT_WAIT_MS = 5_000L
     }
 }
 
@@ -211,24 +242,21 @@ class ChromeLauncher(
  */
 class ChromeAttacher(private val target: String, private val io: CoroutineContext) {
     /** Connects to Chrome. On any failure, a cancel included, it closes what it opened. */
-    @Suppress("MissingUseCall") // The finally block closes the socket unless it is returned.
-    suspend fun start(): RunningBrowser {
-        // Set inside withContext, so a cancel as it returns still finds them.
-        var socket: Socket? = null
-        var connection: CdpBrowserConnection? = null
-        var attached = false
+    @Suppress("MissingUseCall") // closeOnFailure and openOn close what is not returned.
+    suspend fun start(): RunningBrowser =
         try {
-            return withContext(io) {
-                    val (host, port, path) = endpoint()
-                    val open = Socket().also { socket = it }
-                    open.connect(InetSocketAddress(host, port), CONNECT_MS)
-                    val chrome = ChromeSocket(open.getInputStream(), open.getOutputStream(), io)
-                    chrome.handshake(path)
-                    chrome.connect()
-                    val cdp =
-                        CdpBrowserConnection(WebSocketTransport(chrome) { open.close() }, io).also {
-                            connection = it
-                        }
+            openOn(io) {
+                val (host, port, path) = endpoint()
+                val cdp =
+                    Socket().closeOnFailure { socket ->
+                        socket.connect(InetSocketAddress(host, port), CONNECT_MS)
+                        val chrome =
+                            ChromeSocket(socket.getInputStream(), socket.getOutputStream(), io)
+                        chrome.handshake(path)
+                        chrome.connect()
+                        CdpBrowserConnection(WebSocketTransport(chrome) { socket.close() }, io)
+                    }
+                cdp.closeOnFailure {
                     cdp.start()
                     val product = browserVersion(cdp)
                     logger.warn(
@@ -239,7 +267,7 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
                     )
                     AttachedChrome(cdp, product)
                 }
-                .also { attached = true }
+            }
         } catch (e: IOException) {
             throw LaunchException(
                 "Could not attach to Chrome at $target: ${e.message.orEmpty()}",
@@ -250,28 +278,24 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
                 "Could not attach to Chrome at $target: ${e.message.orEmpty()}",
                 e,
             )
-        } finally {
-            if (!attached) {
-                connection?.close()
-                socket?.close()
-            }
         }
-    }
 
     private fun endpoint(): Triple<String, Int, String> {
         if (target.startsWith("ws://")) {
-            val uri = URI(target)
-            return Triple(uri.host, uri.port, uri.rawPath)
+            val uri = uri(target, "--attach $target")
+            return Triple(hostOf(uri), portOf(uri), uri.rawPath)
         }
         val base =
-            when {
-                target.all(Char::isDigit) -> URI("http://127.0.0.1:$target")
-                target.startsWith("http://") -> URI(target)
-                else -> URI("http://$target")
-            }
-        val host = base.host ?: throw LaunchException("No host in --attach $target")
-        val port =
-            base.port.takeIf { it > 0 } ?: throw LaunchException("No port in --attach $target")
+            uri(
+                when {
+                    target.all(Char::isDigit) -> "http://127.0.0.1:$target"
+                    target.startsWith("http://") -> target
+                    else -> "http://$target"
+                },
+                "--attach $target",
+            )
+        val host = hostOf(base)
+        val port = portOf(base)
         val version =
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(host, port), CONNECT_MS)
@@ -283,10 +307,30 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
                 )
             }
         val url =
-            ApiJson.decodeFromString(serializer<VersionInfo>(), version).webSocketDebuggerUrl
-                ?: throw LaunchException("Chrome at $target did not give a browser WebSocket URL")
-        return Triple(host, port, URI(url).rawPath)
+            try {
+                ApiJson.decodeFromString(serializer<VersionInfo>(), version).webSocketDebuggerUrl
+            } catch (e: SerializationException) {
+                throw LaunchException("Chrome at $target did not answer /json/version in JSON", e)
+            } catch (e: IllegalArgumentException) {
+                throw LaunchException("Chrome at $target did not answer /json/version in JSON", e)
+            } ?: throw LaunchException("Chrome at $target did not give a browser WebSocket URL")
+        return Triple(host, port, uri(url, "Chrome's WebSocket URL $url").rawPath)
     }
+
+    /** [text] as a URI, or a [LaunchException] naming [what] it is. */
+    private fun uri(text: String, what: String): URI =
+        try {
+            URI(text)
+        } catch (e: URISyntaxException) {
+            throw LaunchException("$what is not a valid address: ${e.reason}", e)
+        }
+
+    private fun hostOf(uri: URI): String =
+        uri.host ?: throw LaunchException("No host in --attach $target")
+
+    private fun portOf(uri: URI): Int =
+        uri.port.takeIf { it in 1..MAX_PORT }
+            ?: throw LaunchException("No port from 1 to $MAX_PORT in --attach $target")
 
     private class AttachedChrome(
         override val connection: CdpBrowserConnection,
@@ -294,7 +338,9 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
     ) : RunningBrowser {
         override val pid: Long? = null
 
-        override fun close() = connection.close()
+        override suspend fun stop() {
+            connection.close()
+        }
     }
 
     @Serializable private data class VersionInfo(val webSocketDebuggerUrl: String? = null)
@@ -302,6 +348,7 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
     private companion object {
         const val CONNECT_MS = 5_000
         const val MAX_VERSION_BODY = 64 * 1024
+        const val MAX_PORT = 65_535
     }
 }
 
@@ -360,10 +407,7 @@ class BrowserSupervisor(
         val stale = running
         running = null
         return launches.async(io) {
-            stale?.let {
-                logger.info("The browser exited; starting it again")
-                runCatching { it.close() }
-            }
+            stale?.let { stopStale(it) }
             val started =
                 try {
                     start()
@@ -377,10 +421,23 @@ class BrowserSupervisor(
                 }
             if (!kept) {
                 // close() came while a start that doesn't stop for a cancel was finishing.
-                started.close()
+                withContext(NonCancellable) { started.stop() }
                 throw shutDown()
             }
             started
+        }
+    }
+
+    /**
+     * Stops a browser that exited, before the next one starts on its profile. A stop that fails
+     * leaves nothing for the next launch to wait for, so the launch goes on.
+     */
+    private suspend fun stopStale(stale: RunningBrowser) {
+        logger.info("The browser exited; starting it again")
+        try {
+            stale.stop()
+        } catch (e: IOException) {
+            logger.warn("Could not close the browser that exited", e)
         }
     }
 
