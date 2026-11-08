@@ -1,14 +1,17 @@
 # Setting up FingertipsMCP
 
-This guide installs a release build and connects an agent to it. To build from source, see [development.md](development.md).
+This guide installs a release build of FingertipsMCP for Android, FingertipsMCP for Chrome, or both, and connects an agent to them. To build from source, see [development.md](development.md).
 
-## Requirements
+You'll want an [MCP](https://modelcontextprotocol.io) client, such as Claude Code or Cursor, for an agent to drive them.
+
+## A phone
+
+### Requirements
 
 - A phone or emulator running Android 10 or newer, with USB debugging on. Wireless Debugging, to drop the cable later, needs Android 11.
 - On the computer, `adb`, `jq`, and `curl` on your `PATH`. `fingertips` shells out to these. Most machines already have `curl`. `adb` and `jq` usually need a separate install, for example `brew install android-platform-tools jq` on macOS, or [platform-tools](https://developer.android.com/tools/releases/platform-tools) from Google plus your OS package for `jq`.
-- An [MCP](https://modelcontextprotocol.io) client, such as Claude Code or Cursor, if you want an agent to drive the phone.
 
-## Install
+### Install
 
 1. Download a release APK (`fingertipsmcp-android-v*.apk`) from [GitHub Releases](https://github.com/die-net/fingertipsmcp/releases).
 2. Copy [`scripts/fingertips`](../scripts/fingertips) somewhere on your `PATH`, for example `~/bin/fingertips`. It does not need the rest of the repo.
@@ -30,7 +33,7 @@ fingertips helper
 
 Open FingertipsMCP on the phone (its launcher icon says Fingertips) for screen reading and taps, Wireless Debugging, and the computers that have access. The screen reading switch starts the helper and shuts it down. On Android 11 and newer the same screen can turn Wireless Debugging on and pair it. You can remove a computer's access there at any time.
 
-## Pairing
+### Pairing
 
 A paired computer holds its own bearer token. Mint one with `fingertips pair`. The shell user is already trusted, so no approval on the phone is needed:
 
@@ -49,7 +52,7 @@ The token gets every scope unless `--scopes` limits it, for example `fingertips 
 
 Every request needs `Authorization: Bearer <token>`. Scopes, the `access_token` query exception, token admin, and error shapes are in [api.md](api.md).
 
-## Helper
+### Helper
 
 The helper is a separate `app_process` running as the shell user. It reads the screen, injects input, captures the screen, and runs privileged app commands. `/v1/device` reports it as `running`, `starting`, `needs_pairing`, `needs_usb`, or `stopped`, and `capabilities` shrinks to what works in the current state.
 
@@ -77,9 +80,36 @@ To pair Wireless Debugging from the phone (Android 11+), tap the Wireless debugg
 
 Snapshots, injected input, screenshots, logcat, browser routes, and streams need the helper. Without it, an app launch works only while FingertipsMCP is on screen, and wake has a limited fallback. See [api.md](api.md) for which routes require the helper or the browser scope.
 
+## Desktop Chrome
+
+### Requirements
+
+- Linux on x86-64 or ARM64, or macOS.
+- Java 21, for example Temurin.
+- Google Chrome, stable channel, where its installer puts it. Chromium works too, but sites can tell it apart; see [chrome.md](chrome.md#chromium).
+- `jq` and `curl`, and [`scripts/fingertips`](../scripts/fingertips), only to call the API with `fingertips papi`.
+
+### Install
+
+Download `fingertipsmcp-chrome-v*.jar` from [GitHub Releases](https://github.com/die-net/fingertipsmcp/releases) and save it as `fingertipsmcp-chrome.jar`, the name the examples use. It is a single jar and needs nothing else from the repo.
+
+It runs one of two ways:
+
+- **Started by the MCP client**, with `--stdio`. The client runs it when it starts and stops it when it quits. It serves that one client, with no token, and has no viewer.
+- **As a server**, over HTTP on loopback. Several clients and a viewer can share it, each with its own token. Mint one, then start it:
+
+```sh
+java -jar fingertipsmcp-chrome.jar token create
+java -jar fingertipsmcp-chrome.jar
+```
+
+`token create` writes the port and token to `~/.config/fingertips-chrome/pairing.json`, readable only by you, in the same shape as the phone's pairing file. The token gets the `observe`, `control`, and `browser` scopes. `--scopes` replaces them, for example `--name viewer --scopes stream,control` for a viewer.
+
+Either way, it starts Chrome with a profile of its own, so the first run is a clean Chrome to sign in to. Stopping FingertipsMCP for Chrome closes Chrome. [chrome.md](chrome.md) has the options, a Docker image, where its files live, and how it keeps Chrome looking like a person's.
+
 ## Connecting an agent
 
-Start the helper (`fingertips helper`) and `fingertips server`, then point an MCP client at `http://127.0.0.1:<port>/mcp` with the bearer token, both from the pairing file. In Claude Code (project `.mcp.json`, or user scope in `~/.claude.json`):
+For the phone, start the helper (`fingertips helper`) and `fingertips server`, then point an MCP client at `http://127.0.0.1:<port>/mcp` with the bearer token, both from the pairing file. For desktop Chrome, either let the client start it on stdio, or point the client at the server the same way, with the port and token from its own pairing file. In Claude Code (project `.mcp.json`, or user scope in `~/.claude.json`), with both:
 
 ```json
 {
@@ -88,30 +118,38 @@ Start the helper (`fingertips helper`) and `fingertips server`, then point an MC
       "type": "http",
       "url": "http://127.0.0.1:<port>/mcp",
       "headers": { "Authorization": "Bearer <token>" }
+    },
+    "chrome": {
+      "command": "java",
+      "args": ["-jar", "/absolute/path/to/fingertipsmcp-chrome.jar", "--stdio"]
     }
   }
 }
 ```
 
-Cursor takes the same entry without `type`. Each client gets its own session, with its own Chrome tabs and its turn at the screen, as [sharing.md](sharing.md) describes.
+Cursor takes the same entries without `type`. Each client gets its own session, with its own Chrome tabs and its turn at the screen, as [sharing.md](sharing.md) describes.
 
 Then ask the agent something concrete, for example:
 
 > On the phone, use Chrome to open https://github.com/die-net/fingertipsmcp/ and go to the Releases page.
 
-The tools, resources, and scopes are in [api.md](api.md#mcp).
+The tools, resources, and scopes are in [api.md](api.md#mcp), and what differs on desktop Chrome is in [api.md](api.md#fingertipsmcp-for-chrome-differences).
 
 ## Watching in the viewer
 
-Open `http://127.0.0.1:<port>/viewer?access_token=<token>` in a desktop browser. The page sets a cookie and drops the token from the URL. It plays the phone's screen and sound with WebCodecs, takes taps, keys, and text, rotates the screen, and copies and pastes between the computer and the phone. **Take over** gives you the screen when an agent has it, and **Done** hands it back. The token needs the `stream` scope, which `fingertips pair` grants.
+Open `http://127.0.0.1:<port>/viewer?access_token=<token>` in a desktop browser, with the port and token from the phone's or Chrome's pairing file. The page sets a cookie and drops the token from the URL. It plays the screen and sound with WebCodecs. **Take over** gives you the screen when an agent has it, and **Done** hands it back. The token needs the `stream` scope, and `control` too to use the screen. `fingertips pair` grants both. A Chrome token needs them asked for, as above.
+
+- **The phone.** It plays the phone's screen, takes taps, keys, and text, rotates the screen, and copies and pastes between the computer and the phone.
+- **Desktop Chrome.** It plays the tab Chrome shows, following it as tabs switch, and takes the mouse, the wheel, keys, and text. It needs FingertipsMCP for Chrome running as a server on a TCP port, so `--stdio` and `--unix` have no viewer.
 
 ## Calling the API directly
 
-You can also call the REST and WebSocket API with `curl`, your own client, or `fingertips papi`. Calls that act on the phone need a session from `POST /v1/sessions`, named in the `Mcp-Session-Id` header. `fingertips papi` keeps one for you, and `fingertips session id` and `fingertips session end` show and end it. Run `fingertips server` first so localhost reaches the on-device socket.
+You can also call the REST and WebSocket API with `curl`, your own client, or `fingertips papi`. Calls that act on the phone or Chrome need a session from `POST /v1/sessions`, named in the `Mcp-Session-Id` header. `fingertips papi` keeps one for you, and `fingertips session id` and `fingertips session end` show and end it. For the phone, run `fingertips server` first so localhost reaches the on-device socket. For desktop Chrome, point `PAPI_PAIRING` at its pairing file.
 
 ```sh
 fingertips papi GET /v1/device
 fingertips papi GET /v1/openapi.json
+PAPI_PAIRING=~/.config/fingertips-chrome/pairing.json fingertips papi GET /v1/browser/targets
 ```
 
 Routes, auth, and OpenAPI are in [api.md](api.md). [development.md](development.md#calling-the-api-with-fingertips-dev-papi) has more `papi` examples.

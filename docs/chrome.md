@@ -43,8 +43,9 @@ Or let the client start FingertipsMCP for Chrome on stdio. With a phone alongsid
 {
   "mcpServers": {
     "phone": {
-      "command": "/absolute/path/to/fingertips",
-      "args": ["mcp"]
+      "type": "http",
+      "url": "http://127.0.0.1:<port>/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
     },
     "chrome": {
       "command": "java",
