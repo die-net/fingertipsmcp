@@ -65,6 +65,12 @@ class BrowserServiceImpl(
      * [TabProbe], and with a [scope], [TimerWatch].
      */
     freezesTabs: Boolean = false,
+    /**
+     * For a desktop browser, the host's mouse and keyboard conventions, and input goes as a mouse
+     * and keyboard ([DesktopPageInput]). Null for Android's [PageInput], through [touchAt],
+     * [swipeAt], [gestureAt], [pressKey], and [typeText].
+     */
+    desktopInput: DesktopStyle? = null,
     private val contentBounds: suspend (String?) -> Rect = { Rect(0, 0, 0, 0) },
     private val touchAt: suspend (Rect, Boolean) -> ActionResult = { _, _ ->
         ActionResult(ok = false)
@@ -159,21 +165,22 @@ class BrowserServiceImpl(
         )
     @Volatile private var stateSource: String? = null
     private val pageNodes = PageNodes(showPackage) { pkg -> contentBounds(pkg) }
-    private val pageInput: PageInput by lazy {
-        PageInput(
-            touchAt = touchAt,
-            swipeAt = swipeAt,
-            gestureAt = gestureAt,
-            pressKey = pressKey,
-            typeText = typeText,
-            pageBounds = ::pageBounds,
-            appUp = { pkg -> appUp(pkg) },
-            quads = locator::quads,
-            focusNode = locator::focus,
-            target = { ref, selector -> optionalTarget(ref, selector) },
-            refreshHz = refreshHz,
-            touchscreen = touchscreen,
-        )
+    private val pageInput: PageInputs by lazy {
+        desktopInput?.let { DesktopPageInput(locator::quads, it) }
+            ?: PageInput(
+                touchAt = touchAt,
+                swipeAt = swipeAt,
+                gestureAt = gestureAt,
+                pressKey = pressKey,
+                typeText = typeText,
+                pageBounds = ::pageBounds,
+                appUp = { pkg -> appUp(pkg) },
+                quads = locator::quads,
+                focusNode = locator::focus,
+                target = { ref, selector -> optionalTarget(ref, selector) },
+                refreshHz = refreshHz,
+                touchscreen = touchscreen,
+            )
     }
 
     private fun newAxCache(): AxTreeCache = AxTreeCache(axTreeCap)
@@ -490,7 +497,7 @@ class BrowserServiceImpl(
                     probe?.revive(cdp, socket, reading = false)
                     // Touch brings the tab on screen, in block, which wakes it.
                     if (input !in TOUCH_INPUTS) probe?.requireRunning(cdp, socket)
-                    if (pointer && input == BrowserInput.CDP) requireShowing(cdp)
+                    pageInput.ready(cdp, input, pointer)
                     block(cdp, pkg)
                 }
             // Touch brought the tab on screen; background input gets a timer check for next time.
@@ -733,7 +740,7 @@ private fun tapTarget(request: BrowserTapRequest): TapTarget {
     return if (target is TapTarget.Css) target.copy(waitMs = request.waitMs) else target
 }
 
-private fun optionalTarget(ref: String?, selector: String?): TapTarget? {
+internal fun optionalTarget(ref: String?, selector: String?): TapTarget? {
     val css = selector?.trim()?.ifEmpty { null }
     val id = ref?.trim()?.ifEmpty { null }
     if (css != null && id != null) {

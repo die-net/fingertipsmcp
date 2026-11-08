@@ -1,5 +1,6 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.input.Box
 import com.fingertipsmcp.input.HumanGesture
 import com.fingertipsmcp.input.Humanizer
 import com.fingertipsmcp.input.PLAIN_TAP_HOLD_MS
@@ -220,6 +221,28 @@ private fun box(quad: JsonArray, content: Rect, scaleX: Double, scaleY: Double):
     if (right - left < MIN_EDGE || bottom - top < MIN_EDGE) return null
     return Rect(left, top, right, bottom)
 }
+
+/** The CSS viewport, origin at its top left. */
+internal fun viewportBox(metrics: JsonObject): Box {
+    val frame = viewport(metrics)
+    return Box(0f, 0f, frame.cssWidth.toFloat(), frame.cssHeight.toFloat())
+}
+
+/** The largest quad's part inside the viewport, or null when none of it is. */
+internal fun visibleBox(quads: JsonArray, metrics: JsonObject): Box? {
+    val frame = viewport(metrics)
+    return largestCss(quads, CssBox(0.0, 0.0, frame.cssWidth, frame.cssHeight))?.toBox()
+}
+
+/** The largest quad's bounds wherever it is, inside the viewport or not. */
+internal fun wholeBox(quads: JsonArray): Box? =
+    quads
+        .mapNotNull { (it as? JsonArray)?.let(::cssBox) }
+        .maxByOrNull { it.width * it.height }
+        ?.toBox()
+
+private fun CssBox.toBox(): Box =
+    Box(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
 
 private fun largestCss(quads: JsonArray, view: CssBox): CssBox? {
     var best: CssBox? = null

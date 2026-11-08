@@ -18,26 +18,35 @@ import kotlinx.serialization.json.put
  * by an id that may name another element now. A node still on the page with no box is `offscreen`.
  */
 internal class ElementLocator(private val axTrees: AxTreeCache) {
-    /** The content quads of [target], scrolled into view first. */
+    /**
+     * The content quads of [target], in CSS viewport pixels. With [scroll], Chrome scrolls it into
+     * view first; without, they can lie outside the viewport, for a caller that scrolls as a person
+     * would.
+     */
     suspend fun quads(
         cdp: CdpSession,
         targetId: String,
         target: TapTarget,
+        scroll: Boolean = true,
     ): JsonArray =
         when (target) {
-            is TapTarget.Ref -> refQuads(cdp, targetId, target.id)
-            is TapTarget.Css -> cssQuads(cdp, target)
+            is TapTarget.Ref -> refQuads(cdp, targetId, target.id, scroll)
+            is TapTarget.Css -> cssQuads(cdp, target, scroll)
         }
 
     /**
      * Polls until [target] matches an element with a box, or its wait is up. Then the last reason
      * it did not, no match or no box, is the failure.
      */
-    private suspend fun cssQuads(cdp: CdpSession, target: TapTarget.Css): JsonArray {
+    private suspend fun cssQuads(
+        cdp: CdpSession,
+        target: TapTarget.Css,
+        scroll: Boolean,
+    ): JsonArray {
         var why: ApiException? = null
         suspend fun attempt(): JsonArray? =
             try {
-                cdp.withNodeIds { boxed(cdp, cssNode(cdp, target.selector)) }
+                cdp.withNodeIds { boxed(cdp, cssNode(cdp, target.selector), scroll) }
             } catch (e: ApiException) {
                 if (e.error != "not_found" && e.error != "offscreen") throw e
                 why = e
@@ -56,10 +65,15 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
         } ?: throw checkNotNull(why)
     }
 
-    private suspend fun refQuads(cdp: CdpSession, targetId: String, ref: String): JsonArray {
+    private suspend fun refQuads(
+        cdp: CdpSession,
+        targetId: String,
+        ref: String,
+        scroll: Boolean,
+    ): JsonArray {
         val params = refParams(cdp, targetId, ref)
         try {
-            return boxed(cdp, params)
+            return boxed(cdp, params, scroll)
         } catch (e: ApiException) {
             if (e.rejected == null || inDocument(cdp, params)) throw e
             throw staleRef(ref, "its node has left the page", e)
@@ -106,10 +120,10 @@ internal class ElementLocator(private val axTrees: AxTreeCache) {
      * dropped, and only the text differs. None of those has a box now, so nothing here reads the
      * text. The refusal stays the error's cause, for a caller that needs to know more.
      */
-    private suspend fun boxed(cdp: CdpSession, params: JsonObject): JsonArray {
+    private suspend fun boxed(cdp: CdpSession, params: JsonObject, scroll: Boolean): JsonArray {
         val quads =
             try {
-                cdp.call("DOM.scrollIntoViewIfNeeded", params)
+                if (scroll) cdp.call("DOM.scrollIntoViewIfNeeded", params)
                 quadsOf(cdp.call("DOM.getContentQuads", params))
             } catch (e: ApiException) {
                 if (e.rejected?.code != SERVER_ERROR) throw e
