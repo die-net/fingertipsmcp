@@ -17,6 +17,7 @@ import com.fingertipsmcp.model.ViewerHolder
 import com.fingertipsmcp.model.ViewerHover
 import com.fingertipsmcp.model.ViewerLease
 import com.fingertipsmcp.model.ViewerMessage
+import com.fingertipsmcp.model.ViewerNotice
 import com.fingertipsmcp.model.ViewerTake
 import com.fingertipsmcp.model.ViewerWheel
 import com.fingertipsmcp.server.MouseControls
@@ -34,6 +35,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -53,7 +55,7 @@ private fun unsupported(why: String) = ApiException(422, "unsupported", why)
  * it. The first input takes a free screen; while someone else has it, input is dropped and the page
  * is told, and `{"op":"take"}` takes it over. The socket lets the screen go on `{"op":"release"}`,
  * after [VIEWER_IDLE_MS] without input, and when it closes. The server sends `{"op":"lease",...}`
- * when the holder changes.
+ * when the holder changes, and `{"op":"notice",...}` when the controls' notice changes.
  */
 internal suspend fun serveViewer(
     services: ServerServices,
@@ -84,6 +86,10 @@ private class ViewerSocket(
 
     suspend fun run() = coroutineScope {
         val status = launch { lease.state.collect { onLease(it) } }
+        // A page starts with no notice, so none is sent until there is one.
+        val notices = launch {
+            controls.notice.dropWhile { it == null }.collect { send(ViewerNotice(it)) }
+        }
         val idle = launch { releaseWhenIdle() }
         launch {
             try {
@@ -95,6 +101,7 @@ private class ViewerSocket(
         // The service cancels any contact still down when the channel closes.
         controls.contacts(frames)
         status.cancel()
+        notices.cancel()
         idle.cancel()
     }
 

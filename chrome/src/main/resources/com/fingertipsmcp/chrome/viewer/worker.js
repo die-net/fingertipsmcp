@@ -34,13 +34,17 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Answers the offscreen document with the type of the window it names, as chrome.windows gives it,
-// or null when the extension can't see that window, as with one of another profile. Only a normal
-// window has this extension's action, and FingertipsMCP runs the action only on a tab in one; the
-// Viewer section of docs/chrome.md says why. The document can't ask chrome.windows itself.
+// Answers the offscreen document with the type of the window it names, or of the window Chrome
+// focused last when it names none, as chrome.windows gives it, or null when the extension can't see
+// that window, as with one of another profile. Only a normal window has this extension's action,
+// and FingertipsMCP runs the action only on a tab in one; the Viewer section of docs/chrome.md says
+// why. The focused window's type tells the viewer page when a popup is in front. The document can't
+// ask chrome.windows itself.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.op !== "window") return false;
-  chrome.windows.get(message.id).then(
+  const asked =
+    message.id === undefined ? chrome.windows.getLastFocused() : chrome.windows.get(message.id);
+  asked.then(
     (window) => reply({ type: window.type }),
     () => reply({ type: null }),
   );
@@ -49,6 +53,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 
 chrome.tabs.onActivated.addListener(() => tell({ op: "activated" }));
 chrome.windows.onFocusChanged.addListener(() => tell({ op: "activated" }));
+// A window that closes while Chrome is not the active app moves no focus, and a popup that closed
+// is no longer in front.
+chrome.windows.onRemoved.addListener(() => tell({ op: "activated" }));
 // A capture keeps the frame size it started with, so a window that changes size has to be
 // captured again at its new size, which FingertipsMCP does when the tab's viewport changed.
 chrome.windows.onBoundsChanged.addListener(() => tell({ op: "resized" }));

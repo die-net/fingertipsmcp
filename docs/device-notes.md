@@ -1123,10 +1123,21 @@ So FingertipsMCP runs the action only on a tab in a window the extension reads a
 - A tab opened with `_blank` was followed, with a new header and key frame within 0.1 s.
 - Closing the captured tab with the popup still open moved capture to the placeholder. 1 of 3 times it sent a header within 0.1 s. 2 of 3 times it sent no frame at all in the 5 s that followed, so the viewer page would show no picture and reconnect after 12 s. Closing the captured tab with no popup gave a header within 0.1 s, 1 of 1. Before this change the same sequence crashed Chrome, so this was not seen before.
 
+### The popup notice
+
+Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on a scratch profile, through the jar, with the viewer page open in a second browser. The page's own pane was hidden, so a Node WebSocket client held a video viewer open for the first part:
+
+- Clicking a button in the captured tab through the viewer, which ran `window.open(url, name, "popup,width=500,height=400")`, showed the notice within 3 s, and capture stayed on the opener with no crash. A page loaded while the popup was open got the notice on connect, both when another viewer kept capture running and when it was the only viewer and capture started again, 1 of 1 each.
+- Closing the popup with `POST /v1/browser/targets/{id}/close`, while Chrome was not the active app, fired neither `tabs.onActivated` nor `windows.onFocusChanged`, so the notice stayed, 1 of 1. With the worker also listening to `windows.onRemoved`, the same close cleared it, 1 of 1.
+- A `cdp` tap on the opener's tab with the popup open ran `follow`, but `chrome.windows.getLastFocused` still gave the popup, and the notice stayed. Whether the opener's window came to the front was not seen.
+- The first viewer after a new extension version loaded failed once, 74 ms after the load, with "The viewer extension did not say what type the window is: no answer", which the window check before this change could hit too. The page's reconnect 10 s later worked.
+
 ### Still to check for the viewer
 
 - Linux, headless Chrome, and the Docker image with the viewer.
 - A capture of the placeholder, or of any still tab, that never sends its first frame, as below.
+- The popup notice when a person clicks the opener's window with the popup still open: it should clear.
+- Why the first window check after a new extension version loads can get no answer, and whether the offscreen document's script had run yet.
 - Whether a tab in an installed web app's window (`chrome.windows` type `app`) has the action, which FingertipsMCP passes over as it does a popup's.
 - A viewport that changes while the window does not, as with page zoom, the bookmarks bar, or docked DevTools: no window event comes, so the capture keeps the old viewport.
 - The resize with the pipe rather than `--attach`, on a Chrome a script may resize.

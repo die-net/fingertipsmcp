@@ -60,6 +60,14 @@ public data class ViewerClipboard(
 public data class ViewerError(val id: JsonElement? = null, val message: String) : ViewerMessage
 
 /**
+ * Why the picture differs from what the screen shows, as when Chrome shows a popup the viewer can't
+ * capture. It holds until the next notice, and one with no [message] clears it.
+ */
+@Serializable
+@SerialName("notice")
+public data class ViewerNotice(val message: String? = null) : ViewerMessage
+
+/**
  * The text frame the video socket sends before binary frames, and again when the encoded size or
  * the screen's size changes. [width] and [height] are the encoded picture. [displayWidth] and
  * [displayHeight] are the screen the input socket's `x` and `y` point into, so a viewer maps a

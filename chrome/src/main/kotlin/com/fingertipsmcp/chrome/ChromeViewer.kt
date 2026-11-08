@@ -46,6 +46,9 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -107,6 +110,8 @@ class ChromeViewer(
     private var input: PageInput? = null
     /** Whether other versions of the extension have been removed, which is done once. */
     private var pruned = false
+    /** What [controls] tells viewer pages of the picture, set as capture follows the tabs. */
+    private val notice = MutableStateFlow<String?>(null)
 
     /** The extension loaded into one browser connection, and what it knows of its targets. */
     private data class Loaded(
@@ -205,6 +210,7 @@ class ChromeViewer(
     private suspend fun start() {
         val ext = load()
         capture(ext, showingTab(ext) ?: throw nothingCapturable())
+        showFocus(ext)
     }
 
     @Suppress("MissingUseCall") // Loaded owns the target watch, which ends with its connection.
@@ -316,7 +322,6 @@ class ChromeViewer(
      * checking for either, and crashes; Chromium's main branch checks and refuses. The extension's
      * worker knows each window's type, under the id `Browser.getWindowForTarget` gives.
      */
-    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun hasAction(ext: Loaded, pageId: String): Boolean {
         val (_, chromeId) = parseBrowserTargetId(pageId)
         val window =
@@ -328,9 +333,18 @@ class ChromeViewer(
                     "capture_failed",
                     "Chrome did not say which window holds the tab",
                 )
+        return windowType(ext, window) == NORMAL_WINDOW
+    }
+
+    /**
+     * The `chrome.windows` type of [window], or of the window Chrome focused last when it is null,
+     * as the extension's worker gives it. Null when the extension can't see that window.
+     */
+    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
+    private suspend fun windowType(ext: Loaded, window: Long?): String? {
         val reply =
             offscreenSession(ext)
-                .call("Runtime.evaluate", evaluation("fingertipsViewer.window($window)"))
+                .call("Runtime.evaluate", evaluation("fingertipsViewer.window(${window ?: ""})"))
                 .decodeCdp<EvalReply>()
                 ?.result
                 ?.value
@@ -338,11 +352,28 @@ class ChromeViewer(
         if (reply == null || reply.error != null) {
             throw ApiException.unavailable(
                 "capture_failed",
-                "The viewer extension did not say what window the tab is in: " +
+                "The viewer extension did not say what type the window is: " +
                     (reply?.error ?: "no answer"),
             )
         }
-        return reply.type == NORMAL_WINDOW
+        return reply.type
+    }
+
+    /**
+     * Sets [notice] from the window Chrome focused last. When that is a popup, the person sees it
+     * in front while the viewer shows another tab, so viewer pages are told why. The worker asks
+     * `chrome.windows` with its default filter, which counts only normal and popup windows. Unknown
+     * leaves the notice as it was.
+     */
+    private suspend fun showFocus(ext: Loaded) {
+        val type =
+            try {
+                windowType(ext, null)
+            } catch (e: ApiException) {
+                log.debug("Could not read which window Chrome focused: {}", e.message)
+                return
+            }
+        notice.value = if (type == null || type == NORMAL_WINDOW) null else FOCUS_NOTICE
     }
 
     /**
@@ -534,7 +565,7 @@ class ChromeViewer(
     /**
      * Captures the tab Chrome shows now: when that is another tab, or after the capture [ended]
      * stopped on its own, as when its tab closed. When the extension is left capturing nothing,
-     * viewers are closed.
+     * viewers are closed. Each time, [notice] is set from the window Chrome focused.
      */
     private suspend fun follow(ended: Int?) {
         gate.withLock {
@@ -548,8 +579,8 @@ class ChromeViewer(
             }
             try {
                 val shown = showingTab(ext) ?: throw nothingCapturable()
-                if (shown == captured?.pageId) return
-                capture(ext, shown)
+                if (shown != captured?.pageId) capture(ext, shown)
+                showFocus(ext)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
@@ -602,6 +633,7 @@ class ChromeViewer(
     private suspend fun stop() {
         offscreen("fingertipsViewer.stop()")
         name(null)
+        notice.value = null
         audioConfig = null
         input?.session?.close()
         input = null
@@ -648,6 +680,8 @@ class ChromeViewer(
 
     /** The viewer's mouse and keyboard, on the captured tab. */
     private inner class Controls : MouseControls {
+        override val notice: StateFlow<String?> = this@ChromeViewer.notice.asStateFlow()
+
         override suspend fun contacts(frames: ReceiveChannel<PointerFrame>) {
             var down: Point? = null
             try {
@@ -753,6 +787,9 @@ class ChromeViewer(
         const val CHROME_STOPPED = "Chrome stopped"
         /** The `chrome.windows` type of a window with a toolbar, and so the extension's action. */
         const val NORMAL_WINDOW = "normal"
+        /** The notice while Chrome's window in front is a popup. */
+        const val FOCUS_NOTICE =
+            "Chrome has a popup in front, which the viewer can't capture, so it shows another tab."
         const val NANOS_PER_MS = 1_000_000L
     }
 }
