@@ -1,6 +1,7 @@
 package com.fingertipsmcp.core
 
 import java.io.Closeable
+import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -10,10 +11,12 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 /** What happens to a socket whose open outlives its caller. */
 @OptIn(ExperimentalCoroutinesApi::class) // The test dispatcher is run by hand.
@@ -43,6 +46,23 @@ class OpenOnTest {
         assertFalse(socket.closed)
     }
 
+    @Test
+    fun `failed use is closed`() {
+        val socket = FakeSocket(failClose = true)
+        val error =
+            assertThrows<IllegalStateException> { socket.closeOnFailure { error("handshake") } }
+        assertTrue(socket.closed)
+        // The failure that ended the use, not the close's.
+        assertEquals("handshake", error.message)
+    }
+
+    @Test
+    fun `returned use is kept`() {
+        val socket = FakeSocket()
+        assertSame(socket, socket.closeOnFailure { it })
+        assertFalse(socket.closed)
+    }
+
     /** A dispatcher apart from the test's own, as the IO dispatcher is from a caller's. */
     private fun TestScope.ioDispatcher() = StandardTestDispatcher(testScheduler)
 
@@ -52,12 +72,13 @@ class OpenOnTest {
         return socket
     }
 
-    private class FakeSocket : Closeable {
+    private class FakeSocket(private val failClose: Boolean = false) : Closeable {
         var closed = false
             private set
 
         override fun close() {
             closed = true
+            if (failClose) throw IOException("close")
         }
     }
 }

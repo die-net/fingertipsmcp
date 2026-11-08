@@ -13,6 +13,8 @@ import com.fingertipsmcp.model.ApiException
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.stream.AdbStream
 import java.io.IOException
+import java.util.Collections
+import java.util.IdentityHashMap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -38,7 +40,8 @@ internal class CdpForward(
     private val state = Any()
     private val wire = Any()
     private var client: Kadb? = null
-    private var openStreams = 0
+    /** The adb streams open sockets run on, so the count of sockets in use is never inferred. */
+    private val openStreams: MutableSet<AdbStream> = Collections.newSetFromMap(IdentityHashMap())
     private var lastUseMs = 0L
     private var generation = 0
 
@@ -59,7 +62,7 @@ internal class CdpForward(
         val session = session()
         try {
             val stream = synchronized(wire) { session.client.open("localabstract:$name") }
-            acquired()
+            acquired(stream)
             return socket(stream, answerTimeoutMs)
         } catch (e: IOException) {
             if (retry && !session.fresh && drop(session.client)) {
@@ -86,7 +89,7 @@ internal class CdpForward(
         } catch (_: IOException) {
             // The DevTools call is already finished.
         } finally {
-            released()
+            released(stream)
         }
     }
 
@@ -124,7 +127,7 @@ internal class CdpForward(
     private fun drop(stale: Kadb): Boolean {
         val current =
             synchronized(state) {
-                if (client !== stale || openStreams > 0) return false
+                if (client !== stale || openStreams.isNotEmpty()) return false
                 client = null
                 generation++
                 stale
@@ -133,21 +136,21 @@ internal class CdpForward(
         return true
     }
 
-    private fun acquired() {
+    private fun acquired(stream: AdbStream) {
         synchronized(state) {
-            openStreams++
+            openStreams += stream
             lastUseMs = SystemClock.uptimeMillis()
             generation++
         }
     }
 
-    private fun released() {
+    private fun released(stream: AdbStream) {
         val gen =
             synchronized(state) {
-                openStreams = (openStreams - 1).coerceAtLeast(0)
+                openStreams -= stream
                 lastUseMs = SystemClock.uptimeMillis()
                 generation++
-                if (openStreams > 0) return
+                if (openStreams.isNotEmpty()) return
                 generation
             }
         scheduleIdle(gen)
@@ -156,7 +159,7 @@ internal class CdpForward(
     private fun armIdle() {
         val gen =
             synchronized(state) {
-                if (client == null || openStreams > 0) return
+                if (client == null || openStreams.isNotEmpty()) return
                 lastUseMs = SystemClock.uptimeMillis()
                 generation++
                 generation
@@ -175,7 +178,7 @@ internal class CdpForward(
         val current =
             synchronized(state) {
                 val idleFor = SystemClock.uptimeMillis() - lastUseMs >= IDLE_MS
-                if (generation != gen || openStreams > 0 || !idleFor) return
+                if (generation != gen || openStreams.isNotEmpty() || !idleFor) return
                 val connected = client ?: return
                 client = null
                 connected

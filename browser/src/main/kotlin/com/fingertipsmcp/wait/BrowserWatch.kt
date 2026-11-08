@@ -228,7 +228,7 @@ class BrowserWatch(
         val (socketName, chromeId) = parseBrowserTargetId(id)
         val session =
             try {
-                hold(devtools.openPage(socketName, chromeId, readTimeout()) { hold(it) })
+                hold(devtools.openPage(socketName, chromeId, answerTimeout()))
             } catch (e: ApiException) {
                 throw if (tabGone(e)) tabClosed(id) else e
             }
@@ -253,7 +253,7 @@ class BrowserWatch(
      * session dropping says only that something ended it.
      */
     private suspend fun hasClosed(socketName: String, chromeId: String): Boolean = refused {
-        devtools.openPage(socketName, chromeId, readTimeout()) { hold(it) }.close()
+        devtools.openPage(socketName, chromeId, answerTimeout()).close()
     }
 
     @Suppress("MissingUseCall") // The watch closes every session and listener it opened.
@@ -306,7 +306,7 @@ class BrowserWatch(
 
     @Suppress("MissingUseCall") // The watch closes every session and listener it opened.
     private suspend fun openBrowser() {
-        val session = hold(devtools.openBrowser(devtools.tabs, readTimeout()) { hold(it) })
+        val session = hold(devtools.openBrowser(devtools.tabs, answerTimeout()))
         hold(
             session.listen { event ->
                 targets.apply(event.method, event.params)
@@ -317,11 +317,10 @@ class BrowserWatch(
     }
 
     /**
-     * The read timeout for a session the watch opens. The watch closes what a session opens on when
-     * the wait ends, which ends a handshake. The socket's own timeout comes after that, for a
-     * socket that opens too late to reach the watch.
+     * How long the browser has to answer a session the watch opens. Closing the watch cancels
+     * set-up, which ends an open. This comes after that, as a bound of its own.
      */
-    private fun readTimeout(): Long = left() + SOCKET_SLACK_MS
+    private fun answerTimeout(): Long = left() + SOCKET_SLACK_MS
 
     /** The page [condition] is on, or null when the wait ran out of time before reaching it. */
     private fun session(condition: WaitCondition): PageSession? =

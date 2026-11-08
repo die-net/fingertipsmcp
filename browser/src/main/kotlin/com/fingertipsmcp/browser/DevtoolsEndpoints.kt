@@ -1,12 +1,19 @@
 package com.fingertipsmcp.browser
 
 import com.fingertipsmcp.core.ApiJson
+import com.fingertipsmcp.core.closeOnFailure
+import com.fingertipsmcp.core.openOn
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserTarget
 import com.fingertipsmcp.model.DevtoolsSocketInfo
 import java.io.Closeable
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.serializer
@@ -22,9 +29,6 @@ import kotlinx.serialization.serializer
 interface DevtoolsEndpoints {
     /** The endpoint of the browser that opens tabs: Chrome's socket on Android. */
     val tabs: String
-
-    /** The app that shows [tabs]' pages, which can be brought forward; null on a desktop. */
-    val tabsPackage: String?
 
     /**
      * Whether the browser at [tabs] keeps a tab that `Target.createTarget` opens with `background`
@@ -52,28 +56,25 @@ interface DevtoolsEndpoints {
     suspend fun <T> withBrowser(endpoint: String, block: suspend (CdpSession) -> T): T
 
     /**
-     * A page session held open by the caller, such as for a wait. Reads give up after
-     * [readTimeoutMs], or never for 0, where the endpoint has a read timeout at all. [opening] gets
-     * what the session opens on, such as a socket, before any blocking read, so a caller that has
-     * to stop on time can close it to end a handshake that hangs. It may throw to abandon the open.
+     * A page session held open by the caller, such as for a wait. The browser has [answerTimeoutMs]
+     * to answer the open, or the endpoint's own limit for 0, or the open fails with `cdp_timeout`.
+     * Once open, each call has its own timeout. Cancelling the caller ends the open, a handshake
+     * that hangs included, and leaves nothing open.
      */
-    suspend fun openPage(
-        endpoint: String,
-        targetId: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit = {},
-    ): OpenCdpSession
+    suspend fun openPage(endpoint: String, targetId: String, answerTimeoutMs: Long): OpenCdpSession
 
-    /** A browser session held open by the caller, with reads and [opening] as [openPage] says. */
-    suspend fun openBrowser(
-        endpoint: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit = {},
-    ): OpenCdpSession
+    /** A browser session held open by the caller, opened as [openPage] says. */
+    suspend fun openBrowser(endpoint: String, answerTimeoutMs: Long): OpenCdpSession
 
     /** Why there is nothing to attach to. */
     fun gap(gap: BrowserGap): String
 }
+
+/**
+ * The app that shows the pages of the DevTools endpoint [endpoint], which can be brought forward:
+ * Chrome for Chrome's socket on Android, and null for any other, a desktop browser's included.
+ */
+fun tabsPackageOf(endpoint: String): String? = CHROME_PACKAGE.takeIf { endpoint == CHROME_SOCKET }
 
 /**
  * A page could not be attached to because the browser no longer lists it. It is the cause of the
@@ -99,8 +100,6 @@ class SocketEndpoints(
     },
 ) : DevtoolsEndpoints {
     override val tabs: String = CHROME_SOCKET
-
-    override val tabsPackage: String = CHROME_PACKAGE
 
     override val backgroundStaysHidden: Boolean = false
 
@@ -153,38 +152,51 @@ class SocketEndpoints(
     override suspend fun openPage(
         endpoint: String,
         targetId: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit,
-    ): OpenCdpSession = openSession(endpoint, "/devtools/page/$targetId", readTimeoutMs, opening)
+        answerTimeoutMs: Long,
+    ): OpenCdpSession = openSession(endpoint, "/devtools/page/$targetId", answerTimeoutMs)
 
-    override suspend fun openBrowser(
-        endpoint: String,
-        readTimeoutMs: Long,
-        opening: (Closeable) -> Unit,
-    ): OpenCdpSession = openSession(endpoint, "/devtools/browser", readTimeoutMs, opening)
+    override suspend fun openBrowser(endpoint: String, answerTimeoutMs: Long): OpenCdpSession =
+        openSession(endpoint, "/devtools/browser", answerTimeoutMs)
 
     @Suppress("MissingUseCall") // SocketCdpSession closes the socket.
-    private suspend fun openSession(
-        name: String,
-        path: String,
-        timeoutMs: Long,
-        opening: (Closeable) -> Unit,
-    ): OpenCdpSession {
+    private suspend fun openSession(name: String, path: String, timeoutMs: Long): OpenCdpSession {
         // Not in withContext: its return would drop a socket that opened after a cancel, which then
         // never closes. [open] moves its blocking work off the caller's thread itself.
         val devtools = open(name, timeoutMs)
-        var opened = false
-        try {
-            opening(devtools)
+        return devtools.closeOnFailure {
             val session = devtools.withStreams { input, output ->
-                withContext(io) {
-                    CdpSocketSession(input, output, io, websocketKey).also { it.open(path) }
+                openOn(io) {
+                    closedOnCancel(devtools) {
+                        CdpSocketSession(input, output, io, websocketKey).closeOnFailure {
+                            it.open(path)
+                            it
+                        }
+                    }
                 }
             }
-            opened = true
-            return SocketCdpSession(session, devtools)
+            SocketCdpSession(session, devtools)
+        }
+    }
+
+    /**
+     * Runs [handshake], a blocking read that a cancel alone can't end, and closes [socket] under it
+     * if the caller is cancelled meanwhile, which ends the read.
+     */
+    private fun <T> CoroutineScope.closedOnCancel(socket: Closeable, handshake: () -> T): T {
+        val reading = AtomicBoolean(true)
+        val closer =
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (reading.get()) socket.close()
+                }
+            }
+        try {
+            return handshake()
         } finally {
-            if (!opened) devtools.close()
+            reading.set(false)
+            closer.cancel()
         }
     }
 

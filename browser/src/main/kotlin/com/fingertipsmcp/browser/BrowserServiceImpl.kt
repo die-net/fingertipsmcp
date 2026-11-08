@@ -266,7 +266,7 @@ class BrowserServiceImpl(
             startedChrome(
                 devtools.tabs,
                 devtools::endpoints,
-                { devtools.tabsPackage?.let { showPackage(it) } },
+                { tabsPackageOf(devtools.tabs)?.let { showPackage(it) } },
             ) {
                 devtools.gap(BrowserGap.CHROME)
             }
@@ -318,7 +318,10 @@ class BrowserServiceImpl(
         events: TabEvents,
         hook: (String) -> suspend (String) -> Unit,
     ): BrowserTarget {
-        val pkg = browserPackage(chrome, chrome.name) ?: devtools.tabsPackage ?: throw noIncognito()
+        val pkg =
+            browserPackage(chrome, chrome.name)
+                ?: tabsPackageOf(devtools.tabs)
+                ?: throw noIncognito()
         val id = browserTargetId(chrome.name, privateTabs.open(chrome, pkg))
         return opener.follow(tab.copy(id = id), true, true, events, hook(id))
     }
@@ -715,7 +718,7 @@ class BrowserServiceImpl(
     }
 
     private fun browserPackage(socket: DevtoolsSocketInfo?, name: String): String? =
-        socket?.packageName ?: if (name == devtools.tabs) devtools.tabsPackage else null
+        socket?.packageName ?: if (name == devtools.tabs) tabsPackageOf(name) else null
 
     /** The app that shows [socket]'s pages, or null when there is none to bring forward. */
     private suspend fun packageOf(socket: String): String? =

@@ -59,7 +59,7 @@ class ChromeStartTest {
         val launch =
             launch(Dispatchers.IO) {
                 try {
-                    launcher.start().close()
+                    launcher.start().stop()
                 } catch (e: LaunchException) {
                     // Opening the FIFO frees the reader below, which then fails on pid 0.
                     started.writeText("0")
@@ -89,7 +89,7 @@ class ChromeStartTest {
             val attach =
                 launch(Dispatchers.IO) {
                     try {
-                        ChromeAttacher("${server.localPort}", Dispatchers.IO).start().close()
+                        ChromeAttacher("${server.localPort}", Dispatchers.IO).start().stop()
                     } catch (e: LaunchException) {
                         asked.completeExceptionally(e)
                     }
