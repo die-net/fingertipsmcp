@@ -104,47 +104,53 @@ class ChromeViewer(
         val input: ViewerPageInput,
     )
 
-    val video = VideoFeed { session, spec -> serveVideo(session, spec) }
+    val video = VideoFeed { session, spec -> watchVideo(spec) { viewer -> send(session, viewer) } }
 
-    val audio = AudioFeed { session -> serveAudio(session) }
+    val audio = AudioFeed { session -> watchAudio { viewer -> send(session, viewer) } }
 
     val controls: ViewerControls = Controls()
 
-    private suspend fun serveVideo(session: DefaultWebSocketServerSession, asked: VideoSpec) {
+    private suspend fun send(session: DefaultWebSocketServerSession, viewer: ViewerQueue) {
+        sendUntilClientLeaves(session) { for (frame in viewer.out) session.outgoing.send(frame) }
+    }
+
+    /**
+     * Adds a video viewer, starting capture for the first, and runs [serve] with its queue. The
+     * viewer is counted from inside the `try`, so one whose start fails is removed as one that
+     * leaves is, and capture stops once the last real viewer leaves.
+     */
+    internal suspend fun watchVideo(asked: VideoSpec, serve: suspend (ViewerQueue) -> Unit) {
         val viewer = ViewerQueue { requestKeyFrame() }
-        gate.withLock {
-            videoViewers += viewer
-            if (captured == null) {
-                spec = asked
-                start()
-            } else {
-                header?.let(viewer::text)
-                keyFrame()
-            }
-        }
         try {
-            sendUntilClientLeaves(session) {
-                for (frame in viewer.out) session.outgoing.send(frame)
+            gate.withLock {
+                videoViewers += viewer
+                if (captured == null) {
+                    spec = asked
+                    start()
+                } else {
+                    header?.let(viewer::text)
+                    keyFrame()
+                }
             }
+            serve(viewer)
         } finally {
             withContext(NonCancellable) { leave { videoViewers -= viewer } }
         }
     }
 
-    private suspend fun serveAudio(session: DefaultWebSocketServerSession) {
+    /** Adds an audio viewer, as [watchVideo] does a video one, and runs [serve] with its queue. */
+    internal suspend fun watchAudio(serve: suspend (ViewerQueue) -> Unit) {
         val viewer = ViewerQueue {}
-        gate.withLock {
-            val first = audioViewers.isEmpty()
-            audioViewers += viewer
-            viewer.text(ApiJson.encodeToString(AudioHeader.serializer(), AUDIO_HEADER))
-            audioConfig?.let(viewer::offer)
-            if (captured == null) start()
-            if (first) offscreen("fingertipsViewer.configure({audio: true})")
-        }
         try {
-            sendUntilClientLeaves(session) {
-                for (frame in viewer.out) session.outgoing.send(frame)
+            gate.withLock {
+                val first = audioViewers.isEmpty()
+                audioViewers += viewer
+                viewer.text(ApiJson.encodeToString(AudioHeader.serializer(), AUDIO_HEADER))
+                audioConfig?.let(viewer::offer)
+                if (captured == null) start()
+                if (first) offscreen("fingertipsViewer.configure({audio: true})")
             }
+            serve(viewer)
         } finally {
             withContext(NonCancellable) {
                 leave {
