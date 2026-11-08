@@ -193,7 +193,14 @@ function configureVideo(payload) {
   needKey = true;
 }
 
+// What the input socket's pointer drives: "touch", a phone's screen, or "mouse", a desktop
+// browser's tab. A mouse also hovers and scrolls, and has no phone buttons.
+let pointerKind = "touch";
+
 function onHeader(info) {
+  pointerKind = info.pointer === "mouse" ? "mouse" : "touch";
+  document.getElementById("keys").hidden = pointerKind === "mouse";
+  canvas.style.cursor = pointerKind === "mouse" ? "default" : "";
   const changed = streamWidth !== 0 && (info.width !== streamWidth || info.height !== streamHeight);
   streamWidth = info.width;
   streamHeight = info.height;
@@ -622,9 +629,27 @@ function beginContact(event) {
   sendPointer({ op: "down", id: id, x: point.x, y: point.y, tMs: tMs });
 }
 
+// The last hover sent, so a resting mouse sends nothing.
+let lastHover = { x: -1, y: -1, t: 0 };
+
+// A mouse moving with no button down: the page under it sees the pointer move, as for hover menus.
+function hover(event) {
+  if (pointerKind !== "mouse" || event.pointerType !== "mouse" || !display) return;
+  const point = screenPoint(event);
+  const moved = Math.hypot(point.x - lastHover.x, point.y - lastHover.y);
+  if (moved < MOVE_SLOP || event.timeStamp - lastHover.t < MOVE_MS) return;
+  lastHover = { x: point.x, y: point.y, t: event.timeStamp };
+  if (pointerSocket && pointerSocket.readyState === WebSocket.OPEN) {
+    pointerSocket.send(JSON.stringify({ op: "hover", x: point.x, y: point.y }));
+  }
+}
+
 function extendContact(event) {
   const contact = contacts.get(event.pointerId);
-  if (!contact) return;
+  if (!contact) {
+    hover(event);
+    return;
+  }
   event.preventDefault();
   const point = screenPoint(event);
   const tMs = gestureMs(event.timeStamp);
@@ -674,6 +699,25 @@ canvas.addEventListener("pointermove", extendContact);
 canvas.addEventListener("pointerup", endContact);
 canvas.addEventListener("pointercancel", cancelContact);
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+// Pixels a wheel line or page stands for, when the browser reports the wheel in those.
+const WHEEL_LINE_PX = 40;
+
+// The wheel scrolls the remote page by the same distance it would scroll this one, in its pixels.
+canvas.addEventListener("wheel", (event) => {
+  if (pointerKind !== "mouse" || !display) return;
+  event.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const unit = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? rect.height : 1;
+  const point = screenPoint(event);
+  sendPointer({
+    op: "wheel",
+    x: point.x,
+    y: point.y,
+    dx: event.deltaX * unit * (display.widthPx / rect.width),
+    dy: event.deltaY * unit * (display.heightPx / rect.height),
+  });
+}, { passive: false });
 
 // Cmd+C or Ctrl+C copies the phone's selection to this computer, or the phone's clipboard when
 // nothing is selected, as text or an image. Cmd+V or Ctrl+V puts this computer's text or image on
@@ -819,6 +863,21 @@ document.addEventListener("paste", (event) => {
   if (pointerSocket && pointerSocket.readyState === WebSocket.OPEN) pointerSocket.send(image);
 });
 
+// Keys a desktop page uses that type no text, by the names the input socket's key takes.
+const DESKTOP_KEYS = {
+  Tab: "TAB",
+  Escape: "ESCAPE",
+  ArrowUp: "DPAD_UP",
+  ArrowDown: "DPAD_DOWN",
+  ArrowLeft: "DPAD_LEFT",
+  ArrowRight: "DPAD_RIGHT",
+  Delete: "FORWARD_DEL",
+  Home: "MOVE_HOME",
+  End: "MOVE_END",
+  PageUp: "PAGE_UP",
+  PageDown: "PAGE_DOWN",
+};
+
 document.addEventListener("keydown", (event) => {
   const shortcut = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
   if (shortcut && event.key.toLowerCase() === "c") {
@@ -827,6 +886,12 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+  const named = pointerKind === "mouse" ? DESKTOP_KEYS[event.key] : undefined;
+  if (named) {
+    event.preventDefault();
+    sendPointer({ op: "key", key: named, autoWake: true });
+    return;
+  }
   if (event.key === "Backspace") {
     event.preventDefault();
     sendPointer({ op: "key", key: "DEL", autoWake: true });

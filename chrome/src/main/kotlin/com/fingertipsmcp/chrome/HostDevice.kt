@@ -71,8 +71,9 @@ class HostDevice(
             appsManage = false,
             logcatAll = false,
             browserCdp = true,
-            streamVideoMirror = false,
-            streamAudioSubmix = false,
+            // The viewer captures the tab Chrome shows, picture and sound.
+            streamVideoMirror = true,
+            streamAudioSubmix = true,
             encoderLowLatency = false,
             adbWireless = false,
             settingsSecure = false,

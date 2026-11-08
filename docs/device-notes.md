@@ -1039,7 +1039,7 @@ Checked with Chrome 155 on macOS while the desktop build was first written, and 
 
 ### Tab capture for a viewer
 
-Measured on 2026-11-08 with Chrome 156.0.8078.80 on macOS, headful and headless, on scratch profiles over `--remote-debugging-pipe`, to see how a remote person could watch and use a tab with H.264 and Opus rather than a stream of JPEGs. FingertipsMCP for Chrome has no viewer yet.
+Measured on 2026-11-08 with Chrome 156.0.8078.80 on macOS, headful and headless, on scratch profiles over `--remote-debugging-pipe`, to see how a remote person could watch and use a tab with H.264 and Opus rather than a stream of JPEGs. The viewer built on it is under [The viewer](#the-viewer).
 
 - An extension's `chrome.tabCapture` captured a tab with no picker and no sharing banner, and the page's size did not change, headful or headless. A person watching the screen saw no capture indicator in the tab strip or toolbar. `chrome.tabCapture.getMediaStreamId({targetTabId})` refused with "Extension has not been invoked for the current page" until the extension was invoked on that tab. `Extensions.triggerAction` invoked it, given the tab's target of type `tab` from `Target.getTargets` with `filter: [{}]`; given the page target, it answered "Action can only be triggered on a tab target." The extension's `action.onClicked` then got a stream id, and a page of the extension opened it with `getUserMedia` and `chromeMediaSource: 'tab'`, as a background tab, with tab audio.
 - `Extensions.loadUnpacked` and `Extensions.triggerAction` worked on a plain launch over the pipe, with no extra switch. A loaded extension was gone after a relaunch of the same profile, so it would be loaded at every start.
@@ -1051,4 +1051,23 @@ Measured on 2026-11-08 with Chrome 156.0.8078.80 on macOS, headful and headless,
 
 So a viewer for Chrome could load a small extension at launch, invoke it on the screen holder's tab or the placeholder, capture and encode in the extension's page, take the encoded chunks out through a DevTools binding on that page, and send them on the viewer WebSocket that already decodes H.264 and plays Opus. A stream id is for one tab, so a change of tab means invoking the extension again.
 
-Still to check for capture: whether a page can tell the extension is installed or its tab is captured, beyond staying `visible` in the background; whether an indicator shows anywhere not watched, such as Chrome's menu, the tab's hover card, or the macOS menu bar; how long an invocation lasts across navigations; Linux under Xvfb and in the Docker image, with no GPU, including whether software H.264 is there and what 30 fps costs in CPU; and whether the extension's targets need hiding from listings, as the placeholder is.
+Still to check for capture: whether an indicator shows anywhere not watched, such as Chrome's menu, the tab's hover card, or the macOS menu bar; how long an invocation lasts across navigations; Linux under Xvfb and in the Docker image, with no GPU, including whether software H.264 is there and what 30 fps costs in CPU; and whether the extension's targets need hiding from listings, as the placeholder is.
+
+### The viewer
+
+Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, through the viewer page in another browser:
+
+- `Extensions.triggerAction` takes a `tab` target, which `Target.getTargets` lists apart from the tab's `page` target with nothing that links them: no `parentId`, only the same URL. Attaching to the tab target and turning on `Target.setAutoAttach` reports exactly one page, its own, which links them.
+- The extension's offscreen document is listed twice: as a `background_page` target, which is the one to attach to, and as a `tab` target with the same URL.
+- An action run right after `Extensions.loadUnpacked` was lost, since the new service worker had not yet registered its listener. The worker now opens its offscreen document as it starts, after its listeners, and FingertipsMCP waits for that document before running the action.
+- Chrome kept running the service worker it had stored for an unpacked extension's path, from an earlier load in the same profile, after the files changed. A higher `version` in the manifest changed nothing, and `Storage.clearDataForOrigin` for the extension's origin failed with Internal error. A new path, and so a new id, ran the new worker.
+- At 1200 by 1998 CSS pixels at a pixel ratio of 1, the viewer got 600 by 998 H.264 at about 28 fps, 31 to 40 kbps for a moving box. A switch to another tab moved capture there, with a new header and key frame. The tab no longer shown read `hidden` about 1.7 s after its capture's tracks stopped, not at once.
+- The audio socket sent the Opus config and then 100 packets for a 2 s tone, and none while the tab was silent before and after, so a silent tab captures samples within 8 of zero.
+- A page fetching `chrome-extension://<id>/` for the extension's manifest, worker, and document, with its real id, got the same `TypeError: Failed to fetch` at once as for an id no extension has, and `chrome.runtime` was absent from the page.
+- From the viewer page: a click, mouse moves, a wheel turn, and keys reached the tab. The click landed on the field it was aimed at, and the field held what was typed.
+
+### Still to check for the viewer
+
+- Linux, headless Chrome, and the Docker image with the viewer.
+- Whether the tab's sound played back on the computer while it was captured, which a person has to listen for.
+- Whether the encoding's CPU load shows in a page's own timing.

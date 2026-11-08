@@ -64,6 +64,18 @@ Sessions, tab ownership, and the screen lease work as on the phone ([sharing.md]
 
 Background means background here too, so a workflow that only works while its tab is showing fails every time, not only when another session is busy. A session without the screen opens its tabs hidden, and they stay hidden until it acts on them. Only the screen holder's tab shows. Letting the screen go shows a blank placeholder tab, which `browser_targets` leaves out, unless `screen_release` has `cleanup` false, which leaves the tab showing for a person. The next holder gets no note about it. Switching tabs this way does not bring Chrome over other apps, but a session's first input on a hidden tab does, as a person switching to it would.
 
+## Viewer
+
+`GET /viewer` serves the same WebCodecs page as the phone's, to a token with the `stream` scope, and the `control` scope too to use the tab. It shows the tab Chrome shows, with its sound, and takes the mouse and keyboard. The `fingertips-chrome://viewer` MCP resource gives its address. It needs HTTP on a TCP port, so `--unix` and `--stdio` have no viewer.
+
+When the first viewer connects, FingertipsMCP for Chrome writes a small extension to its data directory and loads it with `Extensions.loadUnpacked`. It runs the extension's action on the tab Chrome shows (`Extensions.triggerAction`), which lets `chrome.tabCapture` capture that tab with no picker and no "sharing this tab" banner. The extension's offscreen document encodes H.264 with WebCodecs, at half the tab's device pixels and no more than `maxSize`, and Opus for its sound. It hands the frames back through a DevTools binding on the same pipe, so it opens no connection and holds no token. Capture follows the tab Chrome shows, as the screen holder or a person switches tabs, and stops when the last viewer leaves.
+
+- **Sound.** Capturing a tab's sound stops it playing on the computer, so the extension plays it back there. The audio socket sends nothing while the tab is silent, as on the phone.
+- **Still tabs.** A tab that does not change gives the capture no frames, so the last frame is sent again every 3 s.
+- **Input.** Clicks, drags, hover, the wheel, keys, and typing reach the tab as mouse and key events, unhumanized, since a person's own hand makes them. The page sends hover and wheel turns, and keys such as Tab, Escape, and the arrows. Taking the screen over works as on the phone. Shortcuts such as Ctrl+A, and pasting an image, are not supported yet.
+- **What a page sees.** The extension has no content scripts and no web-accessible resources, so a page cannot load its files or message it. Fetching its files fails just as for an extension that is not installed. A captured tab reports itself `visible` to its page even after Chrome stops showing it. Capture moves off a tab as soon as Chrome shows another, and that tab reads `hidden` about 1.7 s later.
+- **Updates.** The extension lives in `viewer-extension-<hash>` in the data directory, and a build with other files writes a new one, with a new extension id. Chrome keeps running the service worker it stored for an unpacked extension's path, even when its files change, so a changed extension needs a path of its own.
+
 ## Options
 
 | Option | |
@@ -161,5 +173,6 @@ docker build -f chrome/docker/Dockerfile -t fingertipsmcp-chrome chrome
 | `~/.config/fingertips-chrome/pairing.json` | Address and token for clients (mode 0600) |
 | `~/.local/share/fingertips-chrome/chrome-profile` | Chrome's profile |
 | `~/.local/share/fingertips-chrome/chrome.log` | Chrome's own output |
+| `~/.local/share/fingertips-chrome/viewer-extension-<hash>` | The viewer's extension, written when a viewer connects |
 
 The API is described in [api.md](api.md), with the [differences from Android](api.md#fingertipsmcp-for-chrome-differences).

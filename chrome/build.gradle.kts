@@ -36,6 +36,8 @@ dependencies {
     implementation(libs.kotlinx.io.core)
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.websockets)
+    implementation(libs.ktor.websockets)
     implementation(libs.mcp.server)
     implementation(libs.mcp.core)
     implementation(libs.slf4j.api)

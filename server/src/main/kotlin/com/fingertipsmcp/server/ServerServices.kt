@@ -63,7 +63,7 @@ data class ServerServices(
         add(ApiGroup.CORE)
         add(ApiGroup.BROWSER)
         if (phone != null) add(ApiGroup.PHONE)
-        if (phone != null && streams != null) add(ApiGroup.STREAMS)
+        if (streams != null) add(ApiGroup.STREAMS)
         if (screenshots != null) add(ApiGroup.SCREENSHOTS)
     }
 }
@@ -123,12 +123,13 @@ data class PhoneServices(
     val logcat: LogcatFeed,
 )
 
-/** The WebCodecs viewer and the media sockets it plays. It needs [PhoneServices] too. */
+/** The WebCodecs viewer, the media sockets it plays, and what its input does on this product. */
 data class StreamServices(
     val video: VideoFeed,
     val audio: AudioFeed,
-    val viewerHtml: suspend () -> ByteArray,
+    /** How to reach the viewer, for the MCP resource. */
     val viewerText: () -> String,
+    val controls: ViewerControls,
 )
 
 /** Per-connection logcat. Not part of [ServerServices.events]; only clients that ask receive it. */

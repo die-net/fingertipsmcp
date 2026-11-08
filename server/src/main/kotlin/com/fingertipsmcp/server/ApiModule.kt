@@ -82,7 +82,7 @@ fun Application.fingertipsModule(
         if (screenshots != null) screenshotRoutes(services, screenshots)
         browserRoutes(services)
         waitRoutes(services)
-        if (phone != null && streams != null) streamRoutes(services, phone, streams)
+        if (streams != null) streamRoutes(services, streams)
         sessionRoutes(services, sessions)
     }
     installPhoneMcp(services, sessions, mcpDnsRebindingProtection)

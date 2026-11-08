@@ -19,9 +19,10 @@ internal interface DesktopEvents {
     /** Moves the pointer. [buttons] is the DOM bitmask held during the move: 1 while dragging. */
     suspend fun mouseMove(at: Point, buttons: Int)
 
-    suspend fun mouseDown(at: Point)
+    /** The left button going down, as the [clicks]th click of a run, 2 for a double click. */
+    suspend fun mouseDown(at: Point, clicks: Int = 1)
 
-    suspend fun mouseUp(at: Point)
+    suspend fun mouseUp(at: Point, clicks: Int = 1)
 
     /** One wheel notch at [at], in CSS pixels of scroll. */
     suspend fun wheel(at: Point, dx: Float, dy: Float)
@@ -50,12 +51,12 @@ internal class CdpDesktopEvents(
         )
     }
 
-    override suspend fun mouseDown(at: Point) {
-        cdp.call("Input.dispatchMouseEvent", mouse("mousePressed", at, "left", 1, 1))
+    override suspend fun mouseDown(at: Point, clicks: Int) {
+        cdp.call("Input.dispatchMouseEvent", mouse("mousePressed", at, "left", 1, clicks))
     }
 
-    override suspend fun mouseUp(at: Point) {
-        cdp.call("Input.dispatchMouseEvent", mouse("mouseReleased", at, "left", 0, 1))
+    override suspend fun mouseUp(at: Point, clicks: Int) {
+        cdp.call("Input.dispatchMouseEvent", mouse("mouseReleased", at, "left", 0, clicks))
     }
 
     override suspend fun wheel(at: Point, dx: Float, dy: Float) {

@@ -2,9 +2,17 @@ package com.fingertipsmcp.server
 
 import com.fingertipsmcp.core.ClipImage
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.model.ClipboardWriteRequest
+import com.fingertipsmcp.model.KeyRequest
+import com.fingertipsmcp.model.OrientationRequest
+import com.fingertipsmcp.model.PointerFrame
 import com.fingertipsmcp.model.PointerOp
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.ScreenOrientation
+import com.fingertipsmcp.model.TextRequest
+import com.fingertipsmcp.model.ViewerHover
+import com.fingertipsmcp.model.ViewerPointer
+import com.fingertipsmcp.model.ViewerWheel
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.server.testing.testApplication
@@ -13,6 +21,8 @@ import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -261,6 +271,64 @@ class ViewerSocketTest {
     }
 
     /** The next lease message, skipping anything else. */
+    @Test
+    fun `hover needs the screen`() = testApplication {
+        val mouse = MouseControls()
+        val streams = checkNotNull(api.services.streams).copy(controls = mouse)
+        application { fingertipsModule(api.services.copy(streams = streams)) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    assertEquals("none", lease(this).holder())
+                    // A pointer resting on the picture takes no screen and reaches no page.
+                    send(Frame.Text("""{"op":"hover","x":1,"y":2}"""))
+                    // The wheel takes a free screen, as a touch does.
+                    send(Frame.Text("""{"op":"wheel","x":3,"y":4,"dx":0,"dy":100}"""))
+                    assertEquals("you", lease(this).holder())
+                    send(Frame.Text("""{"op":"hover","x":5,"y":6}"""))
+                    assertEquals("wheel 3,4 by 0,100", mouse.calls.receive())
+                    assertEquals("hover 5,6", mouse.calls.receive())
+                }
+            }
+        }
+        assertTrue(mouse.calls.tryReceive().isFailure, "the first hover reached no page")
+    }
+
+    /** A desktop browser's viewer controls, which record the mouse's hovers and wheel turns. */
+    private class MouseControls : ViewerControls {
+        val calls = Channel<String>(Channel.UNLIMITED)
+
+        override val pointerKind = ViewerPointer.MOUSE
+
+        override suspend fun contacts(frames: ReceiveChannel<PointerFrame>) {
+            for (frame in frames) calls.send("contact ${frame.op}")
+        }
+
+        override suspend fun take(autoWake: Boolean) = Unit
+
+        override suspend fun wake() = Unit
+
+        override suspend fun key(request: KeyRequest): Any = Unit
+
+        override suspend fun text(request: TextRequest): Any = Unit
+
+        override suspend fun orientation(request: OrientationRequest): Any = Unit
+
+        override suspend fun paste(request: ClipboardWriteRequest): Any = Unit
+
+        override suspend fun pasteImage(bytes: ByteArray): Any = Unit
+
+        override suspend fun copy() = ViewerCopy(null, null, changed = false)
+
+        override suspend fun hover(at: ViewerHover): Any =
+            calls.send("hover ${at.x.toInt()},${at.y.toInt()}")
+
+        override suspend fun wheel(turn: ViewerWheel): Any =
+            calls.send(
+                "wheel ${turn.x.toInt()},${turn.y.toInt()} by ${turn.dx.toInt()},${turn.dy.toInt()}"
+            )
+    }
+
     private suspend fun lease(socket: DefaultClientWebSocketSession): JsonObject {
         while (true) {
             val frame = socket.incoming.receive()

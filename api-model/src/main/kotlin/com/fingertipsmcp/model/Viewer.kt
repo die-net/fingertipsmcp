@@ -62,8 +62,9 @@ public data class ViewerError(val id: JsonElement? = null, val message: String) 
 /**
  * The text frame the video socket sends before binary frames, and again when the encoded size or
  * the screen's size changes. [width] and [height] are the encoded picture. [displayWidth] and
- * [displayHeight] are the phone's screen in pixels, in its current rotation, which is the space of
- * the input socket's `x` and `y`, so a viewer maps a point on the picture with these alone.
+ * [displayHeight] are the screen the input socket's `x` and `y` point into, so a viewer maps a
+ * point on the picture with these alone: the phone's screen in pixels, in its current rotation, or
+ * a desktop tab's viewport in CSS pixels.
  */
 @Serializable
 public data class VideoHeader(
@@ -74,7 +75,28 @@ public data class VideoHeader(
     val bitRate: Int,
     val displayWidth: Int,
     val displayHeight: Int,
+    /** What the input socket's pointer drives, so the page sends touch or mouse input. */
+    val pointer: ViewerPointer = ViewerPointer.TOUCH,
 )
+
+/** What a viewer's pointer stands for. */
+@Serializable
+public enum class ViewerPointer {
+    /** A phone's touchscreen: contacts, and the phone's buttons. */
+    @SerialName("touch") TOUCH,
+    /** A desktop browser's mouse: contacts are the left button, with hover and the wheel too. */
+    @SerialName("mouse") MOUSE,
+}
+
+/** `{"op":"hover"}` from a mouse viewer: the pointer moved with no button down, to [x], [y]. */
+@Serializable public data class ViewerHover(val x: Float, val y: Float)
+
+/**
+ * `{"op":"wheel"}` from a mouse viewer: the wheel turned by [dx], [dy] CSS pixels with the pointer
+ * at [x], [y].
+ */
+@Serializable
+public data class ViewerWheel(val x: Float, val y: Float, val dx: Float, val dy: Float)
 
 /** The text frame the audio socket sends once before binary frames. */
 @Serializable
