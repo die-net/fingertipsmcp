@@ -962,6 +962,7 @@ Seen while checking, and not changed:
 - A browser wait's limit on the Android 10 USB path.
 - That `DOM.getBoxModel` lays out a hidden tab on the phone's Chrome 156, and on Chrome 91 and 109, as it does on 133 and 145. Without it, a `visible` wait on a hidden tab doesn't match a new node, as it didn't before.
 - What a look costs on a phone. The times above are from an emulator on a faster CPU.
+- That a DevTools socket which opens after a wait reached its limit is closed, on the adbd path (Android 11 and later) and on the Android 10 USB path. It's a race, so it hasn't been made to happen on an emulator. On adbd, a socket left open kept wireless debugging's connection from ever going idle. Unit tests cover both opens with fakes.
 
 ## Page reads and events
 

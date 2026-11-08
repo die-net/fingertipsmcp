@@ -505,8 +505,9 @@ class AppGraph(
 
     private suspend fun helperScreenshot(): ByteArray? {
         val proxy = helper.require()
-        val pipe = withContext(ioDispatcher) { proxy.screencap() } ?: return null
+        // Opened and read in one block, so a cancel between the two can't leave the pipe open.
         return withContext(ioDispatcher) {
+            val pipe = proxy.screencap() ?: return@withContext null
             try {
                 FileInputStream(pipe.fileDescriptor).use { it.readBytes() }
             } finally {

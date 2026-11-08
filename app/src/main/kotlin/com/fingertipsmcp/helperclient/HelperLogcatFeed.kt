@@ -6,6 +6,7 @@ import android.util.Log
 import com.fingertipsmcp.core.EventBus
 import com.fingertipsmcp.core.LogcatFilter
 import com.fingertipsmcp.core.argv
+import com.fingertipsmcp.core.openOn
 import com.fingertipsmcp.model.Event
 import com.fingertipsmcp.model.EventTypes
 import com.fingertipsmcp.server.LogcatFeed
@@ -17,7 +18,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * One `logcat` process per collector. Closing the pipe when the flow is cancelled unblocks the read
@@ -44,8 +44,8 @@ internal class HelperLogcatFeed(
     }
 
     private suspend fun open(filter: LogcatFilter): ParcelFileDescriptor? =
-        withContext(ioDispatcher) {
-            val remote = helper.getOrNull() ?: return@withContext null
+        openOn(ioDispatcher) {
+            val remote = helper.getOrNull() ?: return@openOn null
             try {
                 remote.logcat(filter.argv())
             } catch (e: RemoteException) {

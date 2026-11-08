@@ -120,7 +120,8 @@ class SocketEndpoints(
     override suspend fun targets(endpoint: DevtoolsSocketInfo): List<BrowserTarget> {
         if (endpoint.name != tabs) {
             return listJsonTargets(
-                devtools = withContext(io) { open(endpoint.name, readTimeoutMs) },
+                // Not in withContext, as in openSession. listJsonTargets closes the socket.
+                devtools = open(endpoint.name, readTimeoutMs),
                 endpoint.name,
                 endpoint.pid,
                 endpoint.packageName,

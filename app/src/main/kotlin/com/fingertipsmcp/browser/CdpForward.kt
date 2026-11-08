@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import com.fingertipsmcp.core.openOn
 import com.fingertipsmcp.helperclient.AdbEndpointFinder
 import com.fingertipsmcp.helperclient.KeystorePrivateKeyStore
 import com.fingertipsmcp.helperclient.SecureSettings
@@ -17,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Opens Chrome's DevTools socket by asking adbd to connect. The helper runs as shell and cannot
@@ -42,9 +42,13 @@ internal class CdpForward(
     private var lastUseMs = 0L
     private var generation = 0
 
+    /**
+     * Opens Chrome's abstract socket [name]. A socket that opens after the caller was cancelled is
+     * closed, so its adb stream does not count as in use and keep the connection up forever.
+     */
     @Suppress("MissingUseCall") // The caller closes the socket. This connection closes when idle.
     suspend fun open(name: String, answerTimeoutMs: Long = ANSWER_TIMEOUT_MS): DevtoolsSocket =
-        withContext(io) { openStream(name, answerTimeoutMs, retry = true) }
+        openOn(io) { openStream(name, answerTimeoutMs, retry = true) }
 
     @Suppress("MissingUseCall") // closeStream closes the adb stream when the caller finishes.
     private suspend fun openStream(
