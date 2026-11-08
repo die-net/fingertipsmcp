@@ -47,6 +47,15 @@ class DomKeysTest {
     }
 
     @Test
+    fun `shift types a digit's symbol`() = runTest {
+        val page = KeyPage()
+        dispatchDomKey(page, domKey("1", 1), CdpModifier.fromMetaState(1), longPress = false)
+        dispatchDomKey(page, domKey("SPACE", 1), CdpModifier.fromMetaState(1), longPress = false)
+        assertEquals(listOf("keyDown ! 8", "keyUp ! 8", "keyDown   8", "keyUp   8"), page.keys)
+        assertEquals("Digit1", domKey("1", 1).code)
+    }
+
+    @Test
     fun `backspace has no text`() {
         assertNull(domKey("DEL", 0).text)
     }

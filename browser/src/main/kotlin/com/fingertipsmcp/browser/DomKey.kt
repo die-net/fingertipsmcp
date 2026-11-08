@@ -12,7 +12,8 @@ internal data class DomKey(
 
 /**
  * Maps a [com.fingertipsmcp.model.KeyRequest] name onto a page key. Device keys such as HOME have
- * no page equivalent.
+ * no page equivalent. With Shift in [metaState], a key that types a character types the one Shift
+ * gives on a US layout, such as `!` for 1, as an injected key does.
  */
 internal fun domKey(name: String, metaState: Int): DomKey {
     val normalized = name.trim().uppercase().removePrefix("KEYCODE_")
@@ -27,12 +28,8 @@ internal fun domKey(name: String, metaState: Int): DomKey {
             ?: letter(normalized)
             ?: digit(normalized)
             ?: throw ApiException.badRequest("Unknown key '$name'")
-    return if (shifted(metaState) && base.text?.length == 1 && base.text[0].isLetter()) {
-        val upper = base.text.uppercase()
-        base.copy(key = upper, text = upper)
-    } else {
-        base
-    }
+    val shiftedText = if (shifted(metaState)) base.text?.singleOrNull()?.let(::usShifted) else null
+    return if (shiftedText == null) base else base.copy(key = "$shiftedText", text = "$shiftedText")
 }
 
 /**
