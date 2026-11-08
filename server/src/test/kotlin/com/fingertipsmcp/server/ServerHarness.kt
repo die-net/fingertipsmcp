@@ -552,6 +552,10 @@ internal open class FakeBrowser : BaseBrowser {
     // Chrome has the tab, so a session can claim it without opening it first.
     override suspend fun targets(): List<BrowserTarget> = listOfNotNull(tab, blank)
 
+    // Its tabs are all Chrome's, whatever a subclass adds to the full listing.
+    override suspend fun tabTargets(): List<BrowserTarget> =
+        targets().filter { it.socket == tab.socket }
+
     // Like Chrome on Android, so a session without the screen opens a tab that may show.
     override val backgroundStaysHidden = false
 

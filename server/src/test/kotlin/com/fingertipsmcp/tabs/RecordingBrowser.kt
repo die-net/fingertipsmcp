@@ -112,9 +112,23 @@ internal class RecordingBrowser(
     /** False while Chrome cannot be reached, so its tabs cannot be listed. */
     var listing = true
 
+    /**
+     * A WebView's DevTools socket never answers, as a cached app's can on Android 17. A full
+     * listing waits out its 5 s limit for it, then leaves it out. Chrome's own listing never asks.
+     */
+    var webViewHangs = false
+
     override suspend fun targets(): List<BrowserTarget> {
         if (!listing) throw ApiException.unavailable("cdp_error", "no answer")
         val listed = open.toList()
+        if (listMs > 0) delay(listMs)
+        if (webViewHangs) delay(WEBVIEW_LIST_MS)
+        return listed
+    }
+
+    override suspend fun tabTargets(): List<BrowserTarget> {
+        if (!listing) throw ApiException.unavailable("cdp_error", "no answer")
+        val listed = open.filter { it.socket == socket }
         if (listMs > 0) delay(listMs)
         return listed
     }
@@ -304,4 +318,9 @@ internal class RecordingBrowser(
     }
 
     override suspend fun console(id: String, request: ConsoleRequest) = ConsoleResult()
+
+    private companion object {
+        /** How long a full listing waits for a WebView, as `SocketEndpoints` does. */
+        const val WEBVIEW_LIST_MS = 5_000L
+    }
 }

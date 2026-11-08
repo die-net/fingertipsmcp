@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -428,6 +429,27 @@ class TabsTest {
         tabs.finish(a)
         assertEquals(listOf(tab.id), browser.closed)
         assertEquals(emptySet<String>(), store.ids)
+    }
+
+    @Test
+    fun `a hung WebView delays no close`() = runTest {
+        val tabs = tabs()
+        browser.add(
+            "p",
+            socket = "webview_devtools_remote_9",
+            pkg = "com.google.android.googlequicksearchbox",
+        )
+        val first = tabs.browserFor(a).openTab("https://one.example/")
+        val second = tabs.browserFor(a).openTab("https://two.example/")
+        browser.webViewHangs = true
+        tabs.browserFor(a).closeTab(first.id)
+        // Ending closes Chrome's last tab, so the placeholder opens, and cleanup shows it.
+        tabs.finish(a)
+        front = CHROME
+        tabs.showPlaceholder()
+        assertEquals(listOf(first.id, second.id), browser.closed)
+        assertEquals("about:blank", browser.open.first { it.id == browser.shown }.url)
+        assertEquals(0L, currentTime)
     }
 
     @Test

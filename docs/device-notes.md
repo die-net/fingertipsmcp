@@ -211,6 +211,8 @@ On the Android 10 emulator (kernel 4.14) the same day, the listeners had the sam
 
 On the Android 11 test phone on 2026-11-07, at 9e047f7, with 3 idle connections to Chrome open, `/proc/net/unix` showed 4 rows under Chrome's socket name, and 1 again after they closed. Each of 5 listings returned the 2 tabs once, in 0.10 to 0.12 s. No frozen WebView could be tried there: no `webview_devtools_remote` socket was listed, and `cached_apps_freezer` is unset.
 
+Closing a tab used to list every DevTools socket first, to see whether the tab was Chrome's last, so a WebView that did not answer held each close for the listing's 5 s limit. Now that check, and the rest of FingertipsMCP's questions about which tabs Chrome has, list Chrome's socket alone. On the Android 17 emulator with Chrome 145 on 2026-11-08, the Google app's search results put a `webview_devtools_remote_*` socket in its `googleapp` process, which was then sent home and frozen with `am freeze --sticky`. A full listing (`GET /v1/browser/targets`) still took 5.0 to 5.1 s, 3 of 3, with Chrome running. Opening a tab and closing it over REST took 0.08 to 0.15 s for the close, 8 of 8. Ending a session with 3 tabs, after it had given the screen back, took 0.30 s. Ending one that held the screen with Chrome in front, holding 2 tabs, took 0.13 to 0.18 s, and the launcher had focus 0.19 to 0.55 s after the end was sent, 3 of 3.
+
 ### Still to check
 
 - That binding Chrome's Custom Tabs service works on a real Android 12 or later phone, and does not change anything visible on the Android 11 test phone.
