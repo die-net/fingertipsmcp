@@ -106,7 +106,7 @@ class ChromeApp(
         ChromeViewer(
             connection = { supervisor.connection() },
             browser = browser,
-            extensionHome = paths.data,
+            extensionHome = profile,
             scope = scope,
             pointer = pointer,
         )

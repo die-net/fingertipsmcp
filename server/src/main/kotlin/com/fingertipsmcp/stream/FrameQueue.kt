@@ -13,7 +13,7 @@ import kotlinx.coroutines.channels.Channel
  *
  * A new queue waits for a key frame too, since the viewer cannot decode a delta frame first.
  */
-internal class FrameQueue(capacity: Int) {
+class FrameQueue(capacity: Int) {
     val frames = Channel<ByteArray>(capacity)
 
     @Volatile private var needsKey = true
@@ -61,9 +61,9 @@ internal class FrameQueue(capacity: Int) {
  * reading would otherwise cost the others a key frame twice a second. The gap resets once no viewer
  * waits.
  *
- * Not thread-safe; the stream uses it from the codec's callback thread.
+ * Not thread-safe; [VideoViewers] uses it from the one thread frames come on.
  */
-internal class KeyRequests(
+class KeyRequests(
     private val firstGapMs: Long = FIRST_GAP_MS,
     private val maxGapMs: Long = MAX_GAP_MS,
 ) {
