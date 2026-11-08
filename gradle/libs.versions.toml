@@ -6,6 +6,7 @@ detekt = "2.0.0-alpha.6"
 spotless = "8.10.4"
 ktfmt = "0.64"
 mcp = "0.16.0"
+slf4j = "2.0.20"
 serialization = "1.12.0"
 coroutines = "1.11.0"
 kotlinx-io = "0.9.2"
@@ -54,6 +55,7 @@ jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
 mcp-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp" }
 mcp-client = { module = "io.modelcontextprotocol:kotlin-sdk-client", version.ref = "mcp" }
 mcp-core = { module = "io.modelcontextprotocol:kotlin-sdk-core", version.ref = "mcp" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 
 kadb = { module = "com.flyfishxu:kadb", version.ref = "kadb" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }

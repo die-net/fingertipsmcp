@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
+import android.os.RemoteException
 import android.util.Log
 import com.fingertipsmcp.apps.ActivityStart
 import com.fingertipsmcp.apps.AppsServiceImpl
@@ -17,11 +18,11 @@ import com.fingertipsmcp.browser.DevtoolsPreconditions
 import com.fingertipsmcp.browser.DevtoolsSocket
 import com.fingertipsmcp.browser.FREEZER_ARGS
 import com.fingertipsmcp.browser.OPEN_PRIVATE_TAB
+import com.fingertipsmcp.browser.PageNodes
 import com.fingertipsmcp.browser.TabProbe
 import com.fingertipsmcp.browser.USB_DEVTOOLS_SOCKET
 import com.fingertipsmcp.browser.UsbDevtools
 import com.fingertipsmcp.browser.freezerOn
-import com.fingertipsmcp.browser.pdfSource
 import com.fingertipsmcp.core.AppsService
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.core.ClipboardService
@@ -83,7 +84,6 @@ import com.fingertipsmcp.stream.VideoStream
 import com.fingertipsmcp.tabs.FileTabStore
 import com.fingertipsmcp.tabs.Tabs
 import com.fingertipsmcp.tree.HelperUiService
-import com.fingertipsmcp.tree.PageNodes
 import com.fingertipsmcp.tree.TreeSession
 import com.fingertipsmcp.wait.WaitServiceImpl
 import java.io.File
@@ -434,7 +434,13 @@ class AppGraph(
     private fun browserService(): BrowserService =
         BrowserServiceImpl(
             io = ioDispatcher,
-            listSockets = { helper.require().listDevtoolsSockets() },
+            listSockets = {
+                try {
+                    helper.require().listDevtoolsSockets()
+                } catch (e: RemoteException) {
+                    throw ApiException.helperDropped(e)
+                }
+            },
             open = { name -> openDevtools(name, DEVTOOLS_READ_MS) },
             openProbe = { name -> openDevtools(name, TabProbe.PROBE_MS) },
             openCapture = { name -> openDevtools(name, 0) },
@@ -453,24 +459,6 @@ class AppGraph(
             inFront = { pkg -> appInFront(pkg) },
             // Unknown counts as no dialog, so the call goes on as for any other timeout.
             pageDialog = { chromeDialog.shown() == true },
-            pageScript = {
-                asset("readability/Readability.js").decodeToString() +
-                    "\n" +
-                    asset("page-pending.js").decodeToString() +
-                    "\n" +
-                    asset("page-data.js").decodeToString() +
-                    "\n" +
-                    asset("page-read.js").decodeToString()
-            },
-            dataScript = { asset("page-data.js").decodeToString() },
-            pendingScript = { asset("page-pending.js").decodeToString() },
-            pdfScript = {
-                pdfSource(
-                    asset("pdfjs/pdf.worker.min.mjs").decodeToString(),
-                    asset("pdfjs/pdf.min.mjs").decodeToString(),
-                    asset("pdf-read.js").decodeToString(),
-                )
-            },
             devtoolsGap = DevtoolsPreconditions(context)::explain,
             refreshHz = { deviceInfo.display().refreshRate },
             touchscreen = { touchBackend.touchscreen() },

@@ -4,6 +4,7 @@ import android.os.RemoteException
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import com.fingertipsmcp.helper.AxisRange as HelperAxisRange
 import com.fingertipsmcp.helper.IHelper
 import com.fingertipsmcp.helper.TouchscreenInfo
 import com.fingertipsmcp.helperclient.HelperConnection
@@ -28,10 +29,10 @@ internal class InjectTouchBackend(
     override val name = "inject"
 
     /** The touchscreen axes. CDP maps the same finger fractions through them. */
-    internal suspend fun touchscreen(): TouchscreenInfo {
+    internal suspend fun touchscreen(): TouchscreenAxes {
         val proxy = helper.require()
         return try {
-            touchscreen(proxy)
+            touchscreen(proxy).axes()
         } catch (e: RemoteException) {
             throw ApiException.helperDropped(e)
         }
@@ -174,6 +175,7 @@ private fun obtain(
     pointers: List<TouchSample>,
     screen: TouchscreenInfo,
 ): MotionEvent {
+    val axes = screen.axes()
     val properties =
         Array(pointers.size) { index ->
             MotionEvent.PointerProperties().apply {
@@ -185,7 +187,7 @@ private fun obtain(
         Array(pointers.size) { index ->
             MotionEvent.PointerCoords().apply {
                 val sample = pointers[index]
-                val contact = FingerContact.from(screen, sample.shape)
+                val contact = FingerContact.from(axes, sample.shape)
                 x = sample.x
                 y = sample.y
                 pressure = contact.pressure
@@ -214,3 +216,15 @@ private fun obtain(
         0,
     )
 }
+
+/** The helper's parcelable axes as the browser module's plain types. */
+internal fun TouchscreenInfo.axes(): TouchscreenAxes =
+    TouchscreenAxes(
+        pressure = pressure?.plain(),
+        size = size?.plain(),
+        touchMajor = touchMajor?.plain(),
+        touchMinor = touchMinor?.plain(),
+        orientation = orientation?.plain(),
+    )
+
+private fun HelperAxisRange.plain(): AxisRange = AxisRange(min, max)

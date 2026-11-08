@@ -42,35 +42,5 @@ internal suspend fun awaitChecked(
     return withTimeoutOrNull(timeoutMs) { merge(changes, ticks).first { check() } } != null
 }
 
-/**
- * Polls [done] until it holds or [timeoutMs] is up, and says whether it held. This is for a result
- * nothing announces, such as a tab switch or a keyboard redrawing, which takes as long as the phone
- * takes.
- */
-internal suspend fun settled(timeoutMs: Long, done: suspend () -> Boolean): Boolean =
-    withTimeoutOrNull(timeoutMs) {
-        while (!done()) delay(SETTLE_POLL_MS)
-        true
-    } == true
-
-/**
- * Returns once [read] gives the same answer twice in a row, [gapMs] apart, or at [timeoutMs]. Past
- * that the thing keeps moving by itself, as a page that animates its size can, so waiting longer
- * would not help.
- */
-internal suspend fun <T> holdsStill(timeoutMs: Long, gapMs: Long, read: suspend () -> T) {
-    withTimeoutOrNull(timeoutMs) {
-        var last = read()
-        while (true) {
-            delay(gapMs)
-            val now = read()
-            if (now == last) break
-            last = now
-        }
-    }
-}
-
 /** How often screen and keyguard state is read again while a wait has heard nothing. */
 internal const val STATE_POLL_MS = 100L
-
-private const val SETTLE_POLL_MS = 50L

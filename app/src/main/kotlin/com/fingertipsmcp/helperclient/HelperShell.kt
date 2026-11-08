@@ -3,26 +3,11 @@ package com.fingertipsmcp.helperclient
 import android.content.Intent
 import android.os.RemoteException
 import com.fingertipsmcp.apps.ActivityStart
+import com.fingertipsmcp.core.ShellResult
 import com.fingertipsmcp.helper.ShellResult as HelperShellResult
 import com.fingertipsmcp.model.ApiException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
-
-/** One finished helper command. Output is truncated by the helper, not here. */
-data class ShellResult(val exit: Int, val stdout: String = "", val stderr: String = "") {
-    val ok: Boolean
-        get() = exit == 0
-}
-
-/** A one-line reason for a failure, preferring stderr, for error messages and logs. */
-fun ShellResult.failureMessage(): String =
-    listOf(stderr, stdout)
-        .firstOrNull { it.isNotBlank() }
-        ?.trim()
-        ?.lineSequence()
-        ?.first()
-        ?.take(MAX_MESSAGE)
-        .orEmpty()
 
 /**
  * Runs commands as the shell UID through the helper. Every call needs the helper, so callers that
@@ -100,5 +85,3 @@ private fun HelperShellResult.toShellResult(): ShellResult =
 
 private fun helperError(message: String, cause: Throwable? = null) =
     ApiException(503, "helper_error", message, cause = cause)
-
-private const val MAX_MESSAGE = 200

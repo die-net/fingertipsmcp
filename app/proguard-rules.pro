@@ -10,3 +10,7 @@
 # agent is attached. It catches the Throwable and answers false, so the reference is harmless.
 -dontwarn java.lang.management.ManagementFactory
 -dontwarn java.lang.management.RuntimeMXBean
+
+# slf4j finds the logcat provider through ServiceLoader.
+-keep class org.slf4j.spi.SLF4JServiceProvider
+-keep class com.fingertipsmcp.core.LogcatServiceProvider { <init>(); }

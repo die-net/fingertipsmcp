@@ -2,11 +2,11 @@
 
 FingertipsMCP is an Android app that lets a paired computer drive the phone and its Chrome tabs over HTTP, WebSocket, and MCP. Read `docs/architecture.md` first, then `docs/api.md` for the wire surface and `docs/sharing.md` for sessions, the screen lease, and tabs. `docs/device-notes.md` has what Android and Chrome were measured to do. `docs/development.md` has the build, `fingertips-dev`, and emulator setup.
 
-The modules are `app/` (Ktor server, MCP, CDP, encoders; `AppGraph` is the composition root), `helper/` (the `app_process` daemon that runs as the shell user), and `api-model/` (the `@Serializable` DTOs shared by both and by the MCP and OpenAPI schemas).
+The modules are `app/` (the Android app: helper client, adb DevTools sockets, injection, encoders, settings UI; `AppGraph` is the composition root), `helper/` (the `app_process` daemon that runs as the shell user), `browser/` (JVM: DevTools sessions, the browser service, page reading, the humanizer), `server/` (JVM: Ktor routes, auth, tokens, MCP, sessions, the screen lease, tab ownership), and `api-model/` (the `@Serializable` DTOs shared by all of them and by the MCP and OpenAPI schemas). `browser/` and `server/` have no Android types; `app/` converts at its edge.
 
 ## Checks
 
-- Before work is done, run what CI runs: `./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleDebug buildHealth --continue`. It passes clean, including issues you did not cause. Kotlin and Lint warnings are errors. A change only to `docs/` or a top-level `.md` file skips this, since nothing in it reads them.
+- Before work is done, run what CI runs: `./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleDebug buildHealth --continue`. It passes clean, including issues you did not cause. Kotlin and Lint warnings are errors. A change only to `docs/` or a top-level `.md` file skips this, since nothing in it reads them.
 - Format with `./gradlew spotlessApply` (ktfmt, kotlinlang style). Don't hand-format around it.
 - `buildHealth` fails on an unused dependency or one used but not declared. Declare what a module uses directly, in that module.
 - Test back to the Chrome that the bundled pdf.js supports, as `docs/development.md` says. That is Chrome 125 now. Older Chrome gets only a quick happy-path look, without PDFs. What doesn't depend on Chrome is tested back to Android 10.
@@ -43,7 +43,7 @@ The agent is meant to use the phone the way its owner would. Many apps and sites
 - A failure a client sees is an `ApiException`, built with its factories (`badRequest`, `notFound`, `unavailable`, `helperUnavailable`) where one fits. The `error` code is snake_case and listed in `docs/api.md`'s error table. On MCP it becomes a tool error.
 - Never swallow `CancellationException`. A broad `catch (e: Exception)` in a coroutine is preceded by `catch (e: CancellationException) { throw e }`. `runCatching` wraps only code that doesn't suspend, since it catches cancellation too.
 - Work launches in `AppGraph.scope` on an injected dispatcher (`AppGraph.ioDispatcher`), never `GlobalScope` or a hard-coded `Dispatchers.IO`. `runBlocking` stays on the helper's binder threads, where the caller is already blocked.
-- Log with `android.util.Log` and a `private const val TAG` that starts with `Fingertips`.
+- In `app/` and `helper/`, log with `android.util.Log` and a `private const val TAG` that starts with `Fingertips`. `browser/` and `server/` log through slf4j with a logger named the same way, which `app/` sends to logcat under that name.
 - Hidden and reflective framework calls live in `helper/.../compat/`, behind a `Build.VERSION.SDK_INT` check where the API varies by release. When one is missing, the call fails with a clear error and the helper keeps running. minSdk is 29, so there is no check for older releases.
 - Tests use JUnit Jupiter (`org.junit.jupiter.api.Assertions`) and `kotlinx-coroutines-test` for virtual time. Routes are tested through `ServerHarness` with fakes of the `ServerServices` interfaces, not a mocking library.
 - Tests don't sleep, wait out a real timer, or depend on a long timeout. Use virtual time, or wait for the event itself. A wait inside a library or test engine counts too. A test normally finishes well under 1 second. That is how long it should take, not a deadline: a safety timeout that fires only on failure can stay generous, and a tight one only makes the test flaky.

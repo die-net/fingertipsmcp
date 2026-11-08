@@ -37,7 +37,7 @@ jobs:
           FINGERTIPS_KEYSTORE_PASSWORD: ${{ secrets.PHONEAPI_KEYSTORE_PASSWORD }}
           FINGERTIPS_KEY_ALIAS: ${{ secrets.PHONEAPI_KEY_ALIAS }}
           FINGERTIPS_KEY_PASSWORD: ${{ secrets.PHONEAPI_KEY_PASSWORD }}
-        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleRelease buildHealth
+        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleRelease buildHealth
 
       - name: Collect artifacts
         run: |

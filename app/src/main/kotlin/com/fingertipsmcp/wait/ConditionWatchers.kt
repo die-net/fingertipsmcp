@@ -13,13 +13,6 @@ import com.fingertipsmcp.tree.TreeSession
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 
-/** Whether a condition holds right now, and when to look again if nothing else happens. */
-internal data class Check(val satisfied: Boolean, val recheckAtMs: Long? = null)
-
-internal fun interface ConditionWatcher {
-    suspend fun check(): Check
-}
-
 /**
  * Turns [WaitCondition]s into watchers. Selectors and state names are validated while the watcher
  * is built, so a bad request fails before the engine starts waiting.

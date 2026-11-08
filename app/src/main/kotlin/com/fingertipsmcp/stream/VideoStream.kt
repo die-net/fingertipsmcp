@@ -36,8 +36,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class VideoSpec(val maxSize: Int, val fps: Int, val bitRate: Int)
-
 /**
  * One H.264 encoder shared by every video viewer. The helper mirrors the display into a
  * [FrameRelay], which draws onto the encoder's input surface and redraws the last frame on demand.

@@ -126,7 +126,7 @@ Full route reference: [api.md](api.md).
 Same suite CI runs on pull requests:
 
 ```sh
-./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleDebug buildHealth --continue
+./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleDebug buildHealth --continue
 ```
 
 Useful pieces on their own:
@@ -136,7 +136,7 @@ Useful pieces on their own:
 ./gradlew spotlessCheck
 ./gradlew detektMain detektTest
 ./gradlew lint
-./gradlew testDebugUnitTest :api-model:test
+./gradlew testDebugUnitTest :api-model:test :browser:test :server:test
 ```
 
 Release tags also build a signed release APK (`assembleRelease`) after those checks.

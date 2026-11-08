@@ -17,17 +17,6 @@ private const val NAL_SPS = 7
 private const val NAL_LENGTH_BYTES = 4
 private const val AVCC_HEADER_BYTES = 5
 
-/** Longest side of an encoded frame, in pixels. */
-internal const val MIN_MAX_SIZE = 160
-internal const val MAX_MAX_SIZE = 1920
-internal const val DEFAULT_MAX_SIZE = 1280
-internal const val MIN_FPS = 1
-internal const val MAX_FPS = 60
-internal const val DEFAULT_FPS = 30
-internal const val MIN_BIT_RATE = 100_000
-internal const val MAX_BIT_RATE = 20_000_000
-internal const val DEFAULT_BIT_RATE = 4_000_000
-
 /**
  * Text frame sent on the video socket before binary frames, and again when the encoded size or the
  * screen's size changes. [screen] is the display the frames show, so the viewer maps its points

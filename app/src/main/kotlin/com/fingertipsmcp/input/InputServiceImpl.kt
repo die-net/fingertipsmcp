@@ -2,6 +2,7 @@ package com.fingertipsmcp.input
 
 import android.accessibilityservice.AccessibilityService
 import android.view.KeyEvent
+import com.fingertipsmcp.browser.PageNodes
 import com.fingertipsmcp.core.DeviceStateTracker
 import com.fingertipsmcp.core.InputService
 import com.fingertipsmcp.model.ActionResult
@@ -20,7 +21,6 @@ import com.fingertipsmcp.model.SwipeDirection
 import com.fingertipsmcp.model.SwipeRequest
 import com.fingertipsmcp.model.TapRequest
 import com.fingertipsmcp.model.TextRequest
-import com.fingertipsmcp.tree.PageNodes
 import com.fingertipsmcp.tree.TreeSession
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.ReceiveChannel

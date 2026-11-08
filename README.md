@@ -76,6 +76,6 @@ Copyright 2026 Aaron Hopkins and contributors. All rights reserved.
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-`app/src/main/assets/readability/` is Mozilla's [Readability.js](https://github.com/mozilla/readability) 0.6.0, under the Apache License 2.0; see its `LICENSE.md`.
+`browser/src/main/resources/com/fingertipsmcp/browser/readability/` is Mozilla's [Readability.js](https://github.com/mozilla/readability) 0.6.0, under the Apache License 2.0; see its `LICENSE.md`.
 
-`app/src/main/assets/pdfjs/` is the legacy build of Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) 6.4.299 (`pdfjs-dist`), unmodified, under the Apache License 2.0; see its `LICENSE`.
+`browser/src/main/resources/com/fingertipsmcp/browser/pdfjs/` is the legacy build of Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) 6.4.299 (`pdfjs-dist`), unmodified, under the Apache License 2.0; see its `LICENSE`.

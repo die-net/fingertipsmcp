@@ -10,8 +10,8 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import com.fingertipsmcp.core.AppsService
 import com.fingertipsmcp.core.IntentStart
+import com.fingertipsmcp.core.failureMessage
 import com.fingertipsmcp.helperclient.HelperShell
-import com.fingertipsmcp.helperclient.failureMessage
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.AppInfo
