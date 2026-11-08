@@ -24,7 +24,7 @@ class ConsoleLogTest {
             )
         val result =
             harness.clock.run {
-                CdpSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
+                CdpSocketSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
                     .use { cdp ->
                         cdp.open("/devtools/page/t")
                         collectLogs(cdp, timeoutMs = 1_000)

@@ -7,27 +7,24 @@ import java.io.Closeable
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** A DevTools session on a page that outlives one call, with the socket under it. */
-internal class PageLink(val cdp: CdpSession, private val socket: Closeable) : Closeable {
+/** A DevTools session on a page that outlives one call. Closing it closes the session once. */
+internal class PageLink(val cdp: OpenCdpSession) : Closeable {
     private val closed = AtomicBoolean(false)
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         cdp.close()
-        socket.close()
     }
 }
 
@@ -318,26 +315,15 @@ internal class NetworkCapture(
 }
 
 /**
- * Opens a [PageLink] on a page by its target id: a socket from [openSocket], which must have no
- * read timeout, and a DevTools session on it. The link closes both.
+ * Opens a [PageLink] on a page by its target id, through [devtools], with no read timeout, since a
+ * capture waits on it for as long as it records.
  */
-@Suppress("MissingUseCall") // The PageLink it returns closes the session and the socket.
-internal fun pageLinker(
-    openSocket: suspend (String) -> DevtoolsSocket,
-    io: CoroutineContext,
-    websocketKey: () -> String,
-): suspend (String) -> PageLink = { id ->
+@Suppress("MissingUseCall") // The PageLink it returns closes the session.
+internal fun pageLinker(devtools: DevtoolsEndpoints): suspend (String) -> PageLink = { id ->
     val (socket, chromeId) = parseBrowserTargetId(id)
-    val devtools = withContext(io) { openSocket(socket) }
     try {
-        val cdp = devtools.withStreams { input, output ->
-            CdpSession(input, output, io, websocketKey).also {
-                it.open("/devtools/page/$chromeId")
-            }
-        }
-        PageLink(cdp, devtools)
+        PageLink(devtools.openPage(socket, chromeId, readTimeoutMs = 0))
     } catch (e: ApiException) {
-        devtools.close()
         throw if (tabGone(e)) tabClosed(id) else e
     }
 }

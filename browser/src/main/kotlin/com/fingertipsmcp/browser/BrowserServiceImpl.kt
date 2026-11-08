@@ -1,6 +1,5 @@
 package com.fingertipsmcp.browser
 
-import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.core.holdsStill
 import com.fingertipsmcp.core.settled
@@ -33,29 +32,19 @@ import com.fingertipsmcp.model.Point
 import com.fingertipsmcp.model.Rect
 import com.fingertipsmcp.model.TextRequest
 import com.fingertipsmcp.model.TimedPoint
-import java.io.InputStream
-import java.io.OutputStream
 import java.util.LinkedHashMap
-import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.serializer
 
-/**
- * Talks to Chrome and WebView over an adb DevTools stream. One service call keeps a single
- * connection. The last accessibility tree for a target is kept so a later tap can reuse a snapshot
- * ref without fetching the tree again.
- */
+/** An element to act on: a snapshot ref, or a CSS selector. */
 internal sealed interface TapTarget {
     data class Ref(val id: String) : TapTarget
 
@@ -63,18 +52,19 @@ internal sealed interface TapTarget {
     data class Css(val selector: String, val waitMs: Long = 0) : TapTarget
 }
 
+/**
+ * Talks to Chrome and WebViews through [devtools]: on Android an adb DevTools stream per call, on a
+ * desktop one connection to the browser. One service call keeps a single session. The last
+ * accessibility tree for a target is kept so a later tap can reuse a snapshot ref without fetching
+ * the tree again.
+ */
 class BrowserServiceImpl(
-    private val io: CoroutineContext,
-    private val listSockets: suspend () -> String,
-    private val open: suspend (String) -> DevtoolsSocket,
-    private val websocketKey: () -> String = ::websocketKey,
-    /** Opens a DevTools socket with a short read timeout, for [TabProbe]. Null probes nothing. */
-    openProbe: (suspend (String) -> DevtoolsSocket)? = null,
+    private val devtools: DevtoolsEndpoints,
     /**
-     * Opens a DevTools socket with no read timeout, for [NetworkCapture], which closes it. Null
-     * records nothing.
+     * Whether the browser freezes and unloads background tabs, as Chrome on Android does. Turns on
+     * [TabProbe], and with a [scope], [TimerWatch].
      */
-    openCapture: (suspend (String) -> DevtoolsSocket)? = null,
+    freezesTabs: Boolean = false,
     private val contentBounds: suspend (String?) -> Rect = { Rect(0, 0, 0, 0) },
     private val touchAt: suspend (Rect, Boolean) -> ActionResult = { _, _ ->
         ActionResult(ok = false)
@@ -88,7 +78,6 @@ class BrowserServiceImpl(
         },
     private val pressKey: suspend (KeyRequest) -> ActionResult = { ActionResult(ok = false) },
     private val typeText: suspend (TextRequest) -> ActionResult = { ActionResult(ok = false) },
-    private val targetTimeoutMs: Long = TARGET_LIST_MS,
     private val axTreeCap: Int = AX_TREE_CACHE_CAP,
     private val prepare: suspend (Boolean) -> Boolean = { false },
     private val sequence: () -> Long = { 0L },
@@ -108,24 +97,21 @@ class BrowserServiceImpl(
     private val pendingScript: suspend () -> String = PageScripts::pending,
     /** pdf.js and pdf-read.js, as [pdfSource] joins them. */
     pdfScript: suspend () -> String = PageScripts::pdf,
-    private val devtoolsGap: (BrowserGap) -> String = { gap ->
-        browserGapMessage(gap, chromeInstalled = true, usbDebugging = true)
-    },
     private val refreshHz: () -> Float = { 60f },
     private val touchscreen: suspend () -> TouchscreenAxes = { fallbackTouchscreen() },
     /** Starts Chrome's incognito shortcut in the package given, which opens an incognito tab. */
     openPrivateTab: suspend (String) -> Unit = {
         throw ApiException.unavailable("browser_unavailable", "Incognito tabs need the helper")
     },
-    /** Where background timer checks run. Null checks nothing. */
+    /** Where background timer checks and network captures run. Null runs neither. */
     scope: CoroutineScope? = null,
 ) : BrowserService {
     private val axTrees = newAxCache()
-    private val probe = openProbe?.let { TabProbe(io, it, websocketKey) }
+    private val probe = if (freezesTabs) TabProbe(devtools) else null
     private val privateTabs =
         IncognitoTabs(
             targets = { socket ->
-                useCdp(socket, "/devtools/browser") { it.call("Target.getTargets") }
+                devtools.withBrowser(socket) { it.call("Target.getTargets") }
             },
             createBlank = { socket -> createTab(socket, BLANK) },
             close = { id -> closeQuietly(id) },
@@ -133,21 +119,19 @@ class BrowserServiceImpl(
         )
     private val locator = ElementLocator(axTrees)
     private val unanswered = UnansweredTabs()
-    private val timers = scope?.let {
-        TimerWatch(
-            it,
-            { id, block ->
-                val (socket, chromeId) = parseBrowserTargetId(id)
-                usePage(socket, chromeId) { cdp -> block(cdp) }
-            },
-        )
-    }
-    private val recorder =
-        if (scope != null && openCapture != null) {
-            NetworkCapture(scope, pageLinker(openCapture, io, websocketKey))
+    private val timers =
+        if (freezesTabs && scope != null) {
+            TimerWatch(
+                scope,
+                { id, block ->
+                    val (socket, chromeId) = parseBrowserTargetId(id)
+                    usePage(socket, chromeId) { cdp -> block(cdp) }
+                },
+            )
         } else {
             null
         }
+    private val recorder = scope?.let { NetworkCapture(it, pageLinker(devtools)) }
     private val reader =
         PageReader(pageScript, dataScript, pdfScript, recorder) { id, run ->
             val (socket, chromeId) = parseBrowserTargetId(id)
@@ -195,9 +179,9 @@ class BrowserServiceImpl(
     private fun newAxCache(): AxTreeCache = AxTreeCache(axTreeCap)
 
     override suspend fun targets(): List<BrowserTarget> {
-        val sockets = socketList()
+        val sockets = devtools.endpoints()
         if (sockets.isEmpty()) {
-            throw ApiException.unavailable("browser_unavailable", devtoolsGap(BrowserGap.NONE))
+            throw ApiException.unavailable("browser_unavailable", devtools.gap(BrowserGap.NONE))
         }
         val found = queryTargets(sockets)
         val live = found.map { it.id }.toSet()
@@ -220,7 +204,7 @@ class BrowserServiceImpl(
                 when (result) {
                     is SocketList.Ready -> out += result.targets
                     is SocketList.Failed -> {
-                        if (sockets[i].name == CHROME_SOCKET) throw result.error
+                        if (sockets[i].name == devtools.tabs) throw result.error
                         failures += result.error
                     }
                 }
@@ -239,7 +223,7 @@ class BrowserServiceImpl(
 
     private suspend fun listQuietly(socket: DevtoolsSocketInfo): SocketList =
         try {
-            SocketList.Ready(listOne(socket))
+            SocketList.Ready(devtools.targets(socket))
         } catch (e: CancellationException) {
             throw e
         } catch (e: ApiException) {
@@ -255,8 +239,12 @@ class BrowserServiceImpl(
     ): BrowserTarget {
         val pageUrl = webUrl(url)
         val chrome =
-            startedChrome(::socketList, { showPackage(CHROME_PACKAGE) }) {
-                devtoolsGap(BrowserGap.CHROME)
+            startedChrome(
+                devtools.tabs,
+                devtools::endpoints,
+                { devtools.tabsPackage?.let { showPackage(it) } },
+            ) {
+                devtools.gap(BrowserGap.CHROME)
             }
         // Chrome on Android ignores createTarget's background flag and switches to a new tab
         // while it is in front, so say whether this call took the screen. Chrome's incognito
@@ -306,7 +294,7 @@ class BrowserServiceImpl(
         events: TabEvents,
         hook: (String) -> suspend (String) -> Unit,
     ): BrowserTarget {
-        val pkg = browserPackage(chrome, chrome.name) ?: CHROME_PACKAGE
+        val pkg = browserPackage(chrome, chrome.name) ?: devtools.tabsPackage ?: throw noIncognito()
         val id = browserTargetId(chrome.name, privateTabs.open(chrome, pkg))
         return opener.follow(tab.copy(id = id), true, true, events, hook(id))
     }
@@ -320,19 +308,23 @@ class BrowserServiceImpl(
     override suspend fun incognitoTabs(): Set<String> = privateTabs.listed(chromeSocket())
 
     private suspend fun chromeSocket(): DevtoolsSocketInfo =
-        socketList().firstOrNull { it.name == CHROME_SOCKET }
-            ?: throw ApiException.unavailable("browser_unavailable", devtoolsGap(BrowserGap.CHROME))
+        devtools.endpoints().firstOrNull { it.name == devtools.tabs }
+            ?: throw ApiException.unavailable(
+                "browser_unavailable",
+                devtools.gap(BrowserGap.CHROME),
+            )
 
-    override suspend fun chromeStopped(): Boolean = noChromeSocket(::socketList)
+    override suspend fun chromeStopped(): Boolean =
+        noChromeSocket(devtools.tabs, devtools::endpoints)
 
     private suspend fun createTab(socket: String, url: String): String =
-        useCdp(socket, "/devtools/browser") { cdp ->
+        devtools.withBrowser(socket) { cdp ->
             withTabEvents(cdp) { events -> events.newTab(url) }
         }
 
     /** Runs [block] on a browser session hearing tabs and downloads on [socket]. */
     private suspend fun <T> onTabEvents(socket: String, block: suspend (TabEvents) -> T): T =
-        useCdp(socket, "/devtools/browser") { cdp ->
+        devtools.withBrowser(socket) { cdp ->
             withTabEvents(cdp) { events ->
                 events.hearDownloads()
                 block(events)
@@ -392,7 +384,7 @@ class BrowserServiceImpl(
     private suspend fun onTarget(id: String, method: String): JsonObject {
         val (socket, chromeId) = parseBrowserTargetId(id)
         return try {
-            useCdp(socket, "/devtools/browser") { cdp ->
+            devtools.withBrowser(socket) { cdp ->
                 cdp.call(method, buildJsonObject { put("targetId", chromeId) })
             }
         } catch (e: ApiException) {
@@ -488,9 +480,9 @@ class BrowserServiceImpl(
                 if (input == BrowserInput.CDP_MOUSE) {
                     null
                 } else {
-                    browserPackage(socketList().firstOrNull { it.name == socket }, socket)
+                    packageOf(socket)
                 }
-            val background = input !in TOUCH_INPUTS && socket == CHROME_SOCKET
+            val background = input !in TOUCH_INPUTS && socket == devtools.tabs
             if (pointer && input == BrowserInput.CDP) requireOnScreen(pkg)
             if (background && timersStalled(id)) throw timersStopped(id)
             val result =
@@ -594,7 +586,7 @@ class BrowserServiceImpl(
         timers?.clear(id)
         val (socket, chromeId) = parseBrowserTargetId(id)
         prepare(true)
-        val pkg = browserPackage(socketList().firstOrNull { it.name == socket }, socket)
+        val pkg = packageOf(socket)
         try {
             usePage(socket, chromeId) { cdp ->
                 var front = pkg == null || inFront(pkg)
@@ -613,28 +605,14 @@ class BrowserServiceImpl(
     /**
      * Whether the tab is being drawn. A tab can report `visible` while Chrome itself is hidden,
      * such as one opened while Chrome was in the background, so a visible tab also needs its app in
-     * front. Null when that cannot be told.
+     * front. A desktop browser has no app to be behind, so its visible tab is drawn. Null when that
+     * cannot be told.
      */
     private suspend fun drawn(socket: String, visibility: String?): Boolean? {
         if (visibility == null) return null
         if (visibility != "visible") return false
-        val pkg = browserPackage(socketList().firstOrNull { it.name == socket }, socket)
-        return pkg?.let { inFront(it) }
-    }
-
-    private suspend fun listOne(socket: DevtoolsSocketInfo): List<BrowserTarget> {
-        if (socket.name != CHROME_SOCKET) {
-            return listJsonTargets(
-                devtools = withContext(io) { open(socket.name) },
-                socket.name,
-                socket.pid,
-                socket.packageName,
-                io,
-                targetTimeoutMs,
-            )
-        }
-        val result = useCdp(socket.name, "/devtools/browser") { it.call("Target.getTargets") }
-        return chromeTargets(result, socket.name, socket.pid, socket.packageName)
+        val pkg = packageOf(socket) ?: return if (socket == devtools.tabs) true else null
+        return inFront(pkg)
     }
 
     /**
@@ -652,34 +630,22 @@ class BrowserServiceImpl(
         unanswered.requireAnswered(browserTargetId(socket, chromeId))
         var started = false
         try {
-            return useCdp(socket, "/devtools/page/$chromeId") { cdp ->
+            return devtools.withPage(socket, chromeId) { cdp ->
                 started = true
                 block(cdp)
             }
         } catch (e: ApiException) {
-            val reconnect: suspend () -> Unit = { useCdp(socket, "/devtools/page/$chromeId") {} }
+            val reconnect: suspend () -> Unit = { devtools.withPage(socket, chromeId) {} }
             if (if (started) e.dropped && refused(reconnect) else tabGone(e)) {
                 throw tabClosed(browserTargetId(socket, chromeId))
             }
-            if (e.error != "cdp_timeout" || socket != CHROME_SOCKET) throw e
+            if (e.error != "cdp_timeout" || socket != devtools.tabs) throw e
             if (pageDialog()) throw dialogOpen(e)
             // A page that never answered the handshake: Chrome as a whole may not answer.
             if (!started && probe?.frozen(socket) == true) throw browserFrozen()
             throw e
         }
     }
-
-    private suspend fun <T> useCdp(
-        socket: String,
-        path: String,
-        block: suspend (CdpSession) -> T,
-    ): T =
-        useSocket(socket) { input, output ->
-            CdpSession(input, output, io, websocketKey).use { cdp ->
-                cdp.open(path)
-                block(cdp)
-            }
-        }
 
     /**
      * Brings [pkg] up for touch input when it is not in front, as after cleanup, where
@@ -725,40 +691,25 @@ class BrowserServiceImpl(
     }
 
     private fun browserPackage(socket: DevtoolsSocketInfo?, name: String): String? =
-        socket?.packageName ?: if (name == CHROME_SOCKET) CHROME_PACKAGE else null
+        socket?.packageName ?: if (name == devtools.tabs) devtools.tabsPackage else null
 
-    private suspend fun <T> useSocket(
-        name: String,
-        block: suspend (InputStream, OutputStream) -> T,
-    ): T = withContext(io) { open(name).use { socket -> socket.withStreams(block) } }
+    /** The app that shows [socket]'s pages, or null when there is none to bring forward. */
+    private suspend fun packageOf(socket: String): String? =
+        browserPackage(devtools.endpoints().firstOrNull { it.name == socket }, socket)
 
-    private suspend fun socketList(): List<DevtoolsSocketInfo> =
-        withContext(io) {
-            val json = listSockets()
-            try {
-                ApiJson.decodeFromString(serializer<List<DevtoolsSocketInfo>>(), json)
-            } catch (e: SerializationException) {
-                throw ApiException(
-                    503,
-                    "helper_error",
-                    "The helper returned ${json.take(ERROR_SNIPPET)}",
-                    cause = e,
-                )
-            }
-        }
+    private fun noIncognito() =
+        ApiException(422, "unsupported", "This browser cannot open incognito tabs.")
 
     private companion object {
         const val BLANK = "about:blank"
         const val MAX_EXPRESSION = 20_000
         const val MAX_CONSOLE_MS = 5_000L
         const val MAX_SNAPSHOT_NODES = 5_000
-        const val TARGET_LIST_MS = MAX_CONSOLE_MS
         const val APPEAR_MS = 5_000L
         const val LAYOUT_STILL_MS = 2_000L
         const val LAYOUT_GAP_MS = 200L
         const val SHOWING_MS = 2_000L
         const val SHOW_ATTEMPTS = 3
-        const val ERROR_SNIPPET = 80
     }
 
     private sealed interface SocketList {

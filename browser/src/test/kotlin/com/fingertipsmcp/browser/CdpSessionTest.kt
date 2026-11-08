@@ -35,7 +35,8 @@ class CdpSessionTest {
                         client.soTimeout = 8_000
                         accepted.soTimeout = 8_000
                         val streams = client.getInputStream() to client.getOutputStream()
-                        CdpSession(streams.first, streams.second, Dispatchers.IO).use { session ->
+                        CdpSocketSession(streams.first, streams.second, Dispatchers.IO).use {
+                            session ->
                             val served = launch(Dispatchers.IO) { serve(accepted) }
                             val events = ArrayList<CdpEvent>()
                             session.listen(events::add).use {
@@ -64,7 +65,7 @@ class CdpSessionTest {
         // has to end the session.
         val harness = BrowserServiceTest()
         StallingSocket(harness.switched()).use { page ->
-            CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
+            CdpSocketSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
                 .use { session ->
                     session.close()
                     withTimeout(5_000) { session.awaitClosed() }
@@ -81,7 +82,7 @@ class CdpSessionTest {
     fun `closed session is a cdp_error`() = runBlocking {
         val harness = BrowserServiceTest()
         StallingSocket(harness.switched()).use { page ->
-            CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
+            CdpSocketSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
                 .use { session ->
                     session.open("/devtools/page/abc")
                     session.close()

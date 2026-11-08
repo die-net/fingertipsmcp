@@ -67,7 +67,7 @@ class PageEvalTest {
     private fun <T> onPage(page: StallingSocket, block: suspend (CdpSession) -> T): T =
         runBlocking {
             try {
-                CdpSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
+                CdpSocketSession(page.input, page.output, Dispatchers.IO) { BrowserServiceTest.KEY }
                     .use { cdp ->
                         cdp.open("/devtools/page/t")
                         block(cdp)

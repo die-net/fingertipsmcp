@@ -520,16 +520,21 @@ class BrowserServiceTest {
         scope: CoroutineScope? = null,
     ) =
         BrowserServiceImpl(
-            io = io,
-            listSockets = listSockets,
-            open = open,
-            websocketKey = { KEY },
+            devtools =
+                testEndpoints(io, { listSockets() }, { KEY }, targetTimeoutMs) { name, timeoutMs ->
+                    // Only the probe opens with its short timeout.
+                    if (openProbe != null && timeoutMs == TabProbe.PROBE_MS) {
+                        openProbe(name)
+                    } else {
+                        open(name)
+                    }
+                },
+            freezesTabs = openProbe != null,
             contentBounds = content,
             touchAt = touch,
             swipeAt = swipe,
             pressKey = press,
             typeText = type,
-            targetTimeoutMs = targetTimeoutMs,
             axTreeCap = axTreeCap,
             prepare = prepare,
             sequence = sequence,
@@ -538,7 +543,6 @@ class BrowserServiceTest {
             showPackage = showPackage,
             pageDialog = pageDialog,
             openPrivateTab = openPrivateTab,
-            openProbe = openProbe?.let { probe -> { name: String -> probe(name) } },
             touchscreen = touchscreen,
             scope = scope,
         )

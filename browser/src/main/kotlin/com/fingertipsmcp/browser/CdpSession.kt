@@ -44,49 +44,17 @@ internal val ApiException.dropped: Boolean
 data class CdpReply(val result: JsonObject, val eventsBefore: Long)
 
 /**
- * One DevTools WebSocket. Commands are matched by id; everything without an id is an event, for
- * [listen]. The reader runs on [dispatcher].
+ * Commands and events for one DevTools target. Android opens a WebSocket per target; a desktop
+ * browser multiplexes flattened sessions over one connection. Callers do not see the difference.
  */
-class CdpSession(
-    input: InputStream,
-    output: OutputStream,
-    dispatcher: CoroutineContext,
-    newKey: () -> String = ::websocketKey,
-) : Closeable {
-    private val socket = ChromeSocket(input, output, dispatcher, newKey)
-    private val pending = HashMap<Int, CompletableDeferred<CdpReply>>()
-    private val gate = Any()
-    // Set once the reader stops, so a later command fails instead of waiting for its timeout.
-    private var closedBy: IOException? = null
-    private val nextId = AtomicInteger(0)
-    private val stopped = CompletableDeferred<Unit>()
-    private val listeners = CopyOnWriteArrayList<(CdpEvent) -> Unit>()
-    /** Events read so far. Only the reader touches it. */
-    private var eventsRead = 0L
-
+interface CdpSession {
     /**
      * Calls [onEvent] with every event from now on, in the order Chrome sent them, on the reader,
      * until the returned handle is closed. It runs before the next message is read, so it must not
      * block or wait, and an event sent before a command's reply has reached it once that command
      * returns.
      */
-    fun listen(onEvent: (CdpEvent) -> Unit): Closeable {
-        // A holder of its own, so closing removes this listener and no other.
-        val holder: (CdpEvent) -> Unit = { onEvent(it) }
-        listeners += holder
-        return Closeable { listeners -= holder }
-    }
-
-    /** Returns once the reader has stopped: the page closed, the socket failed, or [close]. */
-    suspend fun awaitClosed() {
-        stopped.await()
-    }
-
-    fun open(path: String) {
-        socket.handshake(path)
-        socket.connect()
-        socket.launch { readLoop() }
-    }
+    fun listen(onEvent: (CdpEvent) -> Unit): Closeable
 
     suspend fun call(method: String, params: JsonObject? = null): JsonObject =
         callCounted(method, params).result
@@ -94,13 +62,95 @@ class CdpSession(
     /**
      * [call], also saying how many events came before the reply, in the order the session read
      * them. Chrome sends what a command replays, such as the console's buffer on Runtime.enable,
-     * before it answers, so those events have a [CdpEvent.seq] below [CdpReply.eventsBefore].
+     * before it answers, so those events have a [CdpEvent.seq] below [CdpReply.eventsBefore]. Only
+     * this call's own timeout is `cdp_timeout`; a caller's shorter one stays a cancellation, so
+     * withTimeoutOrNull around a call works.
      */
-    suspend fun callCounted(method: String, params: JsonObject? = null): CdpReply =
+    suspend fun callCounted(method: String, params: JsonObject? = null): CdpReply
+
+    /**
+     * Sends a command whose answer no one waits for, for one that Chrome may never answer. An
+     * answer that does come is dropped. Commands on one session reach Chrome in the order sent.
+     */
+    fun post(method: String, params: JsonObject? = null)
+
+    /**
+     * Returns once the session has stopped: the page closed, the connection failed, or it closed.
+     */
+    suspend fun awaitClosed()
+}
+
+/** A [CdpSession] the caller closes, such as one held for a whole wait. */
+interface OpenCdpSession : CdpSession, Closeable
+
+/**
+ * Matches replies to commands by id, for one DevTools connection. Replies and events go to the
+ * session named by their `sessionId`, or to the root session when there is none, and each session
+ * counts its own events. A reader failure fails the commands still waiting, so they do not sit out
+ * their timeout. [send] writes one message and may block.
+ */
+internal class CdpRouter(private val send: (String) -> Unit) {
+    private val pending = HashMap<Int, Pending>()
+    private val routes = HashMap<String, Route>()
+    private val gate = Any()
+    // Set once the reader stops, so a later command fails instead of waiting for its timeout.
+    private var closedBy: IOException? = null
+    private val nextId = AtomicInteger(0)
+
+    private data class Pending(val session: String, val deferred: CompletableDeferred<CdpReply>)
+
+    /**
+     * Where one session's events go. A session keeps its route from when it opens, so one that has
+     * stopped stays stopped for whoever asks later.
+     */
+    class Route internal constructor() {
+        internal val listeners = CopyOnWriteArrayList<(CdpEvent) -> Unit>()
+        internal val stopped = CompletableDeferred<Unit>()
+        /** Events read so far for this session. Only the reader touches it. */
+        internal var eventsRead = 0L
+
+        fun listen(onEvent: (CdpEvent) -> Unit): Closeable {
+            // A holder of its own, so closing removes this listener and no other.
+            val holder: (CdpEvent) -> Unit = { onEvent(it) }
+            listeners += holder
+            return Closeable { listeners -= holder }
+        }
+
+        suspend fun awaitStopped() {
+            stopped.await()
+        }
+    }
+
+    /** Whether the connection has stopped. */
+    val closed: Boolean
+        get() = synchronized(gate) { closedBy != null }
+
+    /**
+     * The route for [session], or the root for null, made when first asked for. A session's route
+     * is stopped at once when the connection has.
+     */
+    fun route(session: String?): Route =
+        synchronized(gate) {
+            routes.getOrPut(session ?: ROOT) {
+                Route().also { if (closedBy != null) it.stopped.complete(Unit) }
+            }
+        }
+
+    /** Stops routing to [session] and fails its commands, once it detached. */
+    fun detached(session: String, error: IOException) {
+        val (route, waiting) =
+            synchronized(gate) {
+                val gone = pending.filterValues { it.session == session }
+                pending -= gone.keys
+                routes.remove(session) to gone.values.map { it.deferred }
+            }
+        waiting.forEach { it.completeExceptionally(error) }
+        route?.stopped?.complete(Unit)
+    }
+
+    suspend fun callCounted(method: String, params: JsonObject?, session: String?): CdpReply =
         try {
-            // Only this call's own timeout is cdp_timeout. A caller's shorter one stays a
-            // cancellation, so withTimeoutOrNull around a call works.
-            withTimeoutOrNull(CALL_TIMEOUT_MS) { roundTrip(method, params) }
+            withTimeoutOrNull(CALL_TIMEOUT_MS) { roundTrip(method, params, session) }
                 ?: throw ApiException.unavailable("cdp_timeout", "DevTools did not answer in time")
         } catch (e: CancellationException) {
             throw e
@@ -117,62 +167,37 @@ class CdpSession(
             throw connectionFailed(e)
         }
 
-    /**
-     * Sends a command whose answer no one waits for, for one that Chrome may never answer. An
-     * answer that does come is dropped. Commands on one session reach Chrome in the order sent.
-     */
-    fun post(method: String, params: JsonObject? = null) {
+    fun post(method: String, params: JsonObject?, session: String?) {
         try {
-            socket.sendText(command(nextId.incrementAndGet(), method, params))
+            send(command(nextId.incrementAndGet(), method, params, session))
         } catch (e: IOException) {
             throw connectionFailed(e)
         }
     }
 
-    override fun close() {
-        socket.close()
-        // Closing cancels the reader, which never runs at all if it had not started yet, so the
-        // session is marked closed here too.
-        failAll(IOException(DEVTOOLS_CLOSED))
-    }
-
-    private fun connectionFailed(e: IOException) =
-        ApiException(
-            502,
-            "cdp_error",
-            e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
-            cause = e,
-        )
-
-    private suspend fun roundTrip(method: String, params: JsonObject?): CdpReply {
+    private suspend fun roundTrip(
+        method: String,
+        params: JsonObject?,
+        session: String?,
+    ): CdpReply {
         val id = nextId.incrementAndGet()
         val deferred = CompletableDeferred<CdpReply>()
         synchronized(gate) {
-            // A session that has already stopped has nowhere to send to.
+            // A connection that has already stopped has nowhere to send to.
             closedBy?.let { throw IOException(it.message, it) }
             // Listed before the command goes out, so its reply always finds it.
-            pending[id] = deferred
+            pending[id] = Pending(session ?: ROOT, deferred)
         }
         try {
-            socket.sendText(command(id, method, params))
+            send(command(id, method, params, session))
             return deferred.await()
         } finally {
             synchronized(gate) { pending.remove(id) }
         }
     }
 
-    private suspend fun readLoop() {
-        var failure: IOException? = null
-        try {
-            socket.relayText(::dispatch)
-        } catch (e: IOException) {
-            failure = e
-        } finally {
-            failAll(failure ?: IOException("DevTools closed the WebSocket"))
-        }
-    }
-
-    private fun dispatch(text: String) {
+    /** Handles one message from the connection, on its reader. */
+    fun dispatch(text: String) {
         val message =
             try {
                 ApiJson.decodeFromString<Envelope>(text)
@@ -181,11 +206,15 @@ class CdpSession(
             } catch (e: IllegalArgumentException) {
                 throw IOException("DevTools sent malformed JSON", e)
             }
+        val route = synchronized(gate) { routes[message.sessionId ?: ROOT] }
         val id = message.id
         if (id == null) {
             val method = message.method ?: return
-            val event = CdpEvent(method, message.params ?: JsonObject(emptyMap()), eventsRead++)
-            listeners.forEach { it(event) }
+            // Events for a session nobody listens on have nowhere to go.
+            route ?: return
+            val event =
+                CdpEvent(method, message.params ?: JsonObject(emptyMap()), route.eventsRead++)
+            route.listeners.forEach { it(event) }
             return
         }
         val error = message.error
@@ -195,33 +224,40 @@ class CdpSession(
             deliver(id, Result.failure(ApiException(502, "cdp_error", reason, cause = refusal)))
             return
         }
-        deliver(id, Result.success(CdpReply(message.result ?: JsonObject(emptyMap()), eventsRead)))
+        val before = route?.eventsRead ?: 0L
+        deliver(id, Result.success(CdpReply(message.result ?: JsonObject(emptyMap()), before)))
+    }
+
+    /** Fails every command and stops every session, once the connection is gone. */
+    fun failAll(error: IOException) {
+        val (stopped, waiting) =
+            synchronized(gate) {
+                // The first reason the connection stopped is the one later commands report.
+                if (closedBy == null) closedBy = error
+                val values = pending.values.map { it.deferred }
+                pending.clear()
+                routes.values.toList() to values
+            }
+        waiting.forEach { it.completeExceptionally(error) }
+        stopped.forEach { it.stopped.complete(Unit) }
     }
 
     /** Hands a reply to its call. One whose call has given up, as on a timeout, is dropped. */
     private fun deliver(id: Int, result: Result<CdpReply>) {
         val waiter = synchronized(gate) { pending.remove(id) } ?: return
-        result.fold(onSuccess = waiter::complete, onFailure = waiter::completeExceptionally)
+        result.fold(
+            onSuccess = waiter.deferred::complete,
+            onFailure = waiter.deferred::completeExceptionally,
+        )
     }
 
-    private fun failAll(error: IOException) {
-        val waiting =
-            synchronized(gate) {
-                // The first reason the session stopped is the one later commands report.
-                if (closedBy == null) closedBy = error
-                val values = pending.values.toList()
-                pending.clear()
-                values
-            }
-        waiting.forEach { it.completeExceptionally(error) }
-        stopped.complete(Unit)
-    }
-
-    private fun command(id: Int, method: String, params: JsonObject?): String = buildJsonObject {
-        put("id", id)
-        put("method", method)
-        if (params != null) put("params", params)
-    }
+    private fun command(id: Int, method: String, params: JsonObject?, session: String?): String =
+        buildJsonObject {
+            put("id", id)
+            put("method", method)
+            if (params != null) put("params", params)
+            if (session != null) put("sessionId", session)
+        }
         .toString()
 
     @Serializable
@@ -231,11 +267,90 @@ class CdpSession(
         val params: JsonObject? = null,
         val result: JsonObject? = null,
         val error: Rejected? = null,
+        val sessionId: String? = null,
     )
 
     @Serializable private data class Rejected(val code: Int? = null, val message: String? = null)
 
     private companion object {
         const val CALL_TIMEOUT_MS = 15_000L
+        // Not a valid session id, so the root session cannot collide with an attached one.
+        const val ROOT = ""
+    }
+}
+
+private fun connectionFailed(e: IOException) =
+    ApiException(
+        502,
+        "cdp_error",
+        e.message?.takeIf { it.isNotBlank() } ?: DEVTOOLS_CLOSED,
+        cause = e,
+    )
+
+/**
+ * One DevTools WebSocket to one target, as Android's abstract sockets serve them. Commands are
+ * matched by id; everything without an id is an event, for [listen]. The reader runs on
+ * [dispatcher].
+ */
+class CdpSocketSession(
+    input: InputStream,
+    output: OutputStream,
+    dispatcher: CoroutineContext,
+    newKey: () -> String = ::websocketKey,
+) : OpenCdpSession {
+    private val socket = ChromeSocket(input, output, dispatcher, newKey)
+    private val router = CdpRouter(socket::sendText)
+    private val route = router.route(null)
+
+    @Suppress("MissingUseCall") // The caller closes the listener.
+    override fun listen(onEvent: (CdpEvent) -> Unit): Closeable = route.listen(onEvent)
+
+    override suspend fun awaitClosed() {
+        route.awaitStopped()
+    }
+
+    fun open(path: String) {
+        socket.handshake(path)
+        socket.connect()
+        socket.launch { readLoop() }
+    }
+
+    override suspend fun callCounted(method: String, params: JsonObject?): CdpReply =
+        router.callCounted(method, params, null)
+
+    override fun post(method: String, params: JsonObject?) {
+        router.post(method, params, null)
+    }
+
+    override fun close() {
+        socket.close()
+        // Closing cancels the reader, which never runs at all if it had not started yet, so the
+        // session is marked closed here too.
+        router.failAll(IOException(DEVTOOLS_CLOSED))
+    }
+
+    private suspend fun readLoop() {
+        var failure: IOException? = null
+        try {
+            socket.relayText(router::dispatch)
+        } catch (e: IOException) {
+            failure = e
+        } finally {
+            router.failAll(failure ?: IOException("DevTools closed the WebSocket"))
+        }
+    }
+}
+
+/** A [CdpSocketSession] and the socket under it, closed together. */
+internal class SocketCdpSession(
+    private val session: CdpSocketSession,
+    private val socket: Closeable,
+) : OpenCdpSession by session {
+    override fun close() {
+        try {
+            session.close()
+        } finally {
+            socket.close()
+        }
     }
 }

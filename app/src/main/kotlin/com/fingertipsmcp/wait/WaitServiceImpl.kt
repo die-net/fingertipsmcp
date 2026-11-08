@@ -1,7 +1,7 @@
 package com.fingertipsmcp.wait
 
 import android.os.SystemClock
-import com.fingertipsmcp.browser.DevtoolsSocket
+import com.fingertipsmcp.browser.DevtoolsEndpoints
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.core.DeviceStateTracker
 import com.fingertipsmcp.core.EventBus
@@ -43,7 +43,7 @@ internal class WaitServiceImpl(
     private val bus: EventBus,
     private val io: CoroutineDispatcher,
     private val browser: BrowserService,
-    private val openDevtools: suspend (String, Long) -> DevtoolsSocket,
+    private val devtools: DevtoolsEndpoints,
     /** Who holds the screen, for `screen` with `person`. */
     private val lease: StateFlow<LeaseState>,
     /** Whether Chrome shows a dialog from a page at this host, for `browser.dialog`. */
@@ -59,7 +59,7 @@ internal class WaitServiceImpl(
             BrowserWatch(
                     browser,
                     io,
-                    openDevtools,
+                    devtools,
                     now = SystemClock::uptimeMillis,
                     dialogFrom = dialogFrom,
                 )
