@@ -60,7 +60,9 @@ The tools are the phone's `device_info`, `session_start`, `session_end`, `screen
 
 ## Sessions and the screen
 
-Sessions, tab ownership, and the screen lease work as on the phone ([sharing.md](sharing.md)). Each session sees its own tabs and tabs no session owns, and its tabs close when it ends. The screen is the browser's one mouse and keyboard: clicks, scrolls, gestures, keys, and typing take it, since they bring their tab to the front of its window and move one pointer. Reading, snapshots, scripts, and waits do not. Letting the screen go needs no cleanup, so the next holder gets it at once and with no note.
+Sessions, tab ownership, and the screen lease work as on the phone ([sharing.md](sharing.md)). Each session sees its own tabs and tabs no session owns, and its tabs close when it ends. The screen is the browser's one mouse and keyboard: clicks, scrolls, gestures, keys, and typing take it, since they bring their tab to the front and move one pointer. Reading, snapshots, scripts, and waits do not.
+
+Background means background here too, so a workflow that only works while its tab is showing fails every time, not only when another session is busy. A session without the screen opens its tabs hidden, and they stay hidden until it acts on them. Only the screen holder's tab shows. Letting the screen go shows a blank placeholder tab, which `browser_targets` leaves out, unless `screen_release` has `cleanup` false, which leaves the tab showing for a person. The next holder gets no note about it. Switching tabs this way does not bring Chrome over other apps, but a session's first input on a hidden tab does, as a person switching to it would.
 
 ## Options
 

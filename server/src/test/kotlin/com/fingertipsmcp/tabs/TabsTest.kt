@@ -67,6 +67,17 @@ class TabsTest {
         intent(holder) { IntentStart(ActionResult(ok = true), app) }
 
     @Test
+    fun `only the holder's tab shows`() = runTest {
+        // A tab that starts out on screen has already begun loading as if it had the screen.
+        val tabs = tabs()
+        tabs.browserFor(a).openTab("https://hidden.example/")
+        assertEquals(listOf("https://hidden.example/"), browser.backgrounded)
+        lease.withScreen(a) {}
+        tabs.browserFor(a).openTab("https://shown.example/")
+        assertEquals(listOf("https://hidden.example/"), browser.backgrounded)
+    }
+
+    @Test
     fun `intent tabs become yours`() = runTest {
         val tabs = tabs()
         // Chrome opens the intent's tab itself, a moment after the call that sent it.

@@ -42,6 +42,10 @@ interface TabStore {
 class Tabs(
     private val base: BrowserService,
     private val lease: ScreenLease,
+    /**
+     * Whether the app in this package is in front. A desktop browser counts as always in front: a
+     * person can see its window, and selecting a tab there does not bring it over other apps.
+     */
     private val inFront: suspend (String) -> Boolean,
     private val store: TabStore,
     private val perSession: Int = PER_SESSION,
@@ -259,7 +263,14 @@ class Tabs(
                         base.openTab(url, capture, incognito = true, created = placing)
                     }
                 } else {
-                    base.openTab(url, capture, created = placing)
+                    // Only the screen holder's tab may show. A desktop Chrome opens any other
+                    // hidden, so its page never starts loading on screen.
+                    base.openTab(
+                        url,
+                        capture,
+                        background = !lease.holds(holder),
+                        created = placing,
+                    )
                 }
             kept = tab.id
             return if (lease.holds(holder)) tab else tab.copy(tookScreen = false)

@@ -37,6 +37,7 @@ internal open class TabBrowser : BrowserService {
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget = unused()
 

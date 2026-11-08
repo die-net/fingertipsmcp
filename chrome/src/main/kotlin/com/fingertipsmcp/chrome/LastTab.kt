@@ -12,8 +12,7 @@ import com.fingertipsmcp.model.ActionResult
 class LastTab(private val browser: BrowserService) : BrowserService by browser {
     override suspend fun closeTab(id: String): ActionResult {
         val pages = browser.targets().filter { it.type == "page" }
-        if (pages.size == 1 && pages.single().id == id)
-            browser.openTab("about:blank", capture = false, incognito = false)
+        if (pages.size == 1 && pages.single().id == id) browser.openTab("about:blank")
         return browser.closeTab(id)
     }
 }

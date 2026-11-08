@@ -134,6 +134,9 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
     /** Chrome saves the page, so its tab closes and a second tab takes its place. */
     var saves = false
 
+    /** The URLs of tabs asked to open in the background. */
+    val backgrounded = mutableListOf<String>()
+
     /** Holds a new tab back until it completes, as Chrome takes a while to open one. */
     var opening: CompletableDeferred<Unit>? = null
 
@@ -144,9 +147,11 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
         opening?.await()
+        if (background) backgrounded += url
         if (capture) captures += "new" to true
         val tab = newTab(url, incognito, created)
         whileOpening(tab.id)

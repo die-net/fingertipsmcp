@@ -30,7 +30,9 @@ interface BrowserService {
      * than shows is put in a tab of FingertipsMCP's own, with `savedPdf` set, and any other
      * download fails with `download_saved`. With [capture], the tab records the JSON responses its
      * page fetches from the start of its load, as [capture] does. With [incognito], the tab is in
-     * Chrome's incognito profile, which brings Chrome forward, so the caller holds the screen.
+     * Chrome's incognito profile, which brings Chrome forward, so the caller holds the screen. With
+     * [background], a desktop Chrome leaves the tab hidden from its first load, and the tab showing
+     * stays showing. Chrome on Android ignores it.
      *
      * [created] runs with each tab's id as soon as Chrome has made it, before the wait, for what
      * must not wait for the page, such as owning the tab. A failure in it closes the tab and fails
@@ -41,6 +43,7 @@ interface BrowserService {
         url: String,
         capture: Boolean = false,
         incognito: Boolean = false,
+        background: Boolean = false,
         created: suspend (String) -> Unit = {},
     ): BrowserTarget
 

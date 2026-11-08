@@ -242,6 +242,7 @@ class BrowserServiceImpl(
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
         val pageUrl = webUrl(url)
@@ -283,7 +284,7 @@ class BrowserServiceImpl(
         // follows is heard on the browser session, which is listening before the tab exists.
         return onTabEvents(chrome.name) { events ->
             if (incognito) return@onTabEvents openPrivate(chrome, tab, events, ::hook)
-            val chromeId = events.newTab(if (recording) BLANK else pageUrl)
+            val chromeId = events.newTab(if (recording) BLANK else pageUrl, background)
             val id = browserTargetId(chrome.name, chromeId)
             events.cancellingPdf(chromeId) {
                 opener.follow(tab.copy(id = id), recording, false, events, hook(id))
