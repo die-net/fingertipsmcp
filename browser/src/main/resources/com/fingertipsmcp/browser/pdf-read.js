@@ -599,7 +599,8 @@ async function readPage(doc, progress) {
   progress.pages.push(Object.assign(found, { lines: kept }));
 }
 
-// The page facts and blocks of a document whose pages have all been read.
+// The facts and blocks of a document whose pages have all been read, without the page's own state,
+// which `read` adds each time.
 async function finish(doc, url, progress) {
   const pages = progress.pages;
   dropRunning(pages);
@@ -615,8 +616,6 @@ async function finish(doc, url, progress) {
   return {
     title: title || null,
     url: url,
-    readyState: document.readyState,
-    visibility: document.visibilityState,
     pending: [],
     status: 0,
     pageChars: progress.chars,
@@ -744,7 +743,8 @@ globalThis.fingertipsPdf = {
     }
     return progress.clipped || progress.next > doc.numPages;
   },
-  // The document's facts and blocks, once `step` has read every page, worked out once.
+  // The document's facts and blocks, once `step` has read every page, worked out once, with whether
+  // the page is loaded and drawn now, which can change between reads.
   async read() {
     if (!doc) throw new Error("No PDF is loaded");
     if (!extract) {
@@ -752,7 +752,10 @@ globalThis.fingertipsPdf = {
       extract = await finish(doc, url, progress);
       progress = null;
     }
-    return extract;
+    return Object.assign(
+      { readyState: document.readyState, visibility: document.visibilityState },
+      extract,
+    );
   },
   drop: drop,
 };
