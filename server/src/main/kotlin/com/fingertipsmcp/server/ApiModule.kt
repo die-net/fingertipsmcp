@@ -11,6 +11,8 @@ import com.fingertipsmcp.server.routes.deviceRoutes
 import com.fingertipsmcp.server.routes.eventRoutes
 import com.fingertipsmcp.server.routes.inputRoutes
 import com.fingertipsmcp.server.routes.openApiRoutes
+import com.fingertipsmcp.server.routes.powerRoutes
+import com.fingertipsmcp.server.routes.screenshotRoutes
 import com.fingertipsmcp.server.routes.sessionRoutes
 import com.fingertipsmcp.server.routes.streamRoutes
 import com.fingertipsmcp.server.routes.tokenRoutes
@@ -31,7 +33,12 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.SerializationException
 import org.slf4j.LoggerFactory
 
-/** The HTTP API and MCP for the services given. The app serves it on an abstract socket. */
+/**
+ * The HTTP API and MCP for the services given. FingertipsMCP for Android serves it on an abstract
+ * socket. FingertipsMCP for Chrome serves it on loopback TCP, which any web page can aim a request
+ * at, so it sets [mcpDnsRebindingProtection], and `/mcp` takes only a loopback `Host`, and no
+ * `Origin`.
+ */
 fun Application.fingertipsModule(
     services: ServerServices,
     sessions: McpSessions =
@@ -48,6 +55,7 @@ fun Application.fingertipsModule(
                 tookScreen = { services.foreground.count(Holder.Session(it)) },
             )
             .also { it.start() },
+    mcpDnsRebindingProtection: Boolean = false,
 ) {
     install(ContentNegotiation) { register(ContentType.Application.Json, PhoneJsonConverter) }
     install(WebSockets) { pingPeriod = 15.seconds }
@@ -70,19 +78,26 @@ fun Application.fingertipsModule(
     attributes.put(SessionsKey, sessions)
     services.tabs.sessionsFrom { sessions.isLive(it.id) }
     routing {
+        val phone = services.phone
+        val streams = services.streams
+        val screenshots = services.screenshots
         deviceRoutes(services)
-        openApiRoutes()
+        openApiRoutes(services)
         tokenRoutes(services)
         eventRoutes(services)
-        uiRoutes(services)
-        inputRoutes(services)
-        appRoutes(services)
+        if (phone != null) {
+            powerRoutes(services, phone)
+            uiRoutes(services, phone)
+            inputRoutes(services, phone)
+            appRoutes(services, phone)
+        }
+        if (screenshots != null) screenshotRoutes(services, screenshots)
         browserRoutes(services)
         waitRoutes(services)
-        streamRoutes(services)
+        if (phone != null && streams != null) streamRoutes(services, phone, streams)
         sessionRoutes(services, sessions)
     }
-    installPhoneMcp(services, sessions)
+    installPhoneMcp(services, sessions, mcpDnsRebindingProtection)
 }
 
 private fun Throwable.rootMessage(): String? = generateSequence(this) { it.cause }.last().message

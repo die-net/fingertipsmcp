@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test
 class OpenApiTest {
     @Test
     fun `document covers every endpoint`() {
-        val document = fingertipsOpenApi()
+        val document = openApi(ANDROID, ApiGroup.entries.toSet())
         assertEquals("3.1.0", document["openapi"]!!.jsonPrimitive.content)
         assertEquals(
             "bearer",
@@ -46,7 +46,7 @@ class OpenApiTest {
     /** These routes take an empty POST as the request's defaults, so the body is optional. */
     @Test
     fun `optional bodies`() {
-        val paths = fingertipsOpenApi()["paths"]!!.jsonObject
+        val paths = openApi(ANDROID, ApiGroup.entries.toSet())["paths"]!!.jsonObject
         fun required(path: String) =
             paths[path]!!
                 .jsonObject["post"]!!
@@ -62,4 +62,25 @@ class OpenApiTest {
         val release = paths["/v1/screen/release"]!!.jsonObject["post"]!!.jsonObject
         assertTrue(release.getValue("requestBody").toString().contains("ScreenReleaseRequest"))
     }
+
+    @Test
+    fun `omits absent groups`() {
+        val groups = setOf(ApiGroup.CORE, ApiGroup.BROWSER, ApiGroup.SCREENSHOTS)
+        val document = openApi("FingertipsMCP for Chrome", groups)
+        assertEquals(
+            "FingertipsMCP for Chrome",
+            document["info"]!!.jsonObject["title"]!!.jsonPrimitive.content,
+        )
+        val paths = document["paths"]!!.jsonObject.keys
+        assertTrue("/v1/browser/targets" in paths)
+        assertTrue("/v1/screenshot" in paths)
+        assertTrue("/v1/sessions" in paths)
+        assertTrue("/v1/screen/release" in paths)
+        assertTrue("/v1/input/tap" !in paths)
+        assertTrue("/v1/clipboard/read" !in paths)
+        assertTrue("/viewer" !in paths)
+        assertEquals(apiEndpoints(groups).map { it.path }.toSet(), paths)
+    }
 }
+
+private const val ANDROID = "FingertipsMCP for Android"

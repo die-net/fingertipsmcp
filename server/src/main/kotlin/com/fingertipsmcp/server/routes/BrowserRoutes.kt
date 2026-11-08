@@ -2,6 +2,7 @@ package com.fingertipsmcp.server.routes
 
 import com.fingertipsmcp.browser.requireTouchAccess
 import com.fingertipsmcp.browser.touchAllowed
+import com.fingertipsmcp.lease.Holder
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserCaptureRequest
 import com.fingertipsmcp.model.BrowserFindRequest
@@ -139,27 +140,49 @@ private fun Route.browserReadRoutes(services: ServerServices) {
 }
 
 /**
- * `auto` input as it resolves for the calling session, which holds the screen or not. A token that
- * may not send [kind] as touch resolves as if it did not hold the screen.
+ * Input as the product's policy resolves it for the calling session, which holds the screen or not.
+ * A token that may not send [kind] as touch resolves as if it did not hold the screen.
  */
 private fun ApplicationCall.resolved(
     services: ServerServices,
     input: BrowserInput,
     kind: BrowserInputKind,
 ): BrowserInput =
-    input.resolved(
+    services.product.browserInput.resolve(
+        input,
         kind,
         services.lease.holds(session()) && touchAllowed(kind, token.scopes),
     )
 
-/** Pointer, key, and text input. Touch, and cdp pointer input, take the screen. */
+/**
+ * Runs browser input [block], holding the screen when [input] for [kind] takes it, as the product's
+ * policy says.
+ */
+private suspend fun <T> withInput(
+    call: ApplicationCall,
+    services: ServerServices,
+    input: BrowserInput,
+    kind: BrowserInputKind,
+    block: suspend (Holder.Session) -> T,
+): T =
+    withScreen(
+        call,
+        services,
+        services.product.browserInput.takesScreen(input, kind),
+        launching = true,
+        block = block,
+    )
+
+/**
+ * Pointer, key, and text input. On Android, touch and cdp pointer input take the screen; on a
+ * desktop, all input does.
+ */
 private fun Route.browserInputRoutes(services: ServerServices) {
     post("/v1/browser/targets/{id}/tap") {
         val asked = call.receive<BrowserTapRequest>()
         val request = asked.copy(input = call.resolved(services, asked.input, BrowserInputKind.TAP))
-        val screen = request.input != BrowserInput.CDP_MOUSE
         call.respond(
-            withScreen(call, services, screen, launching = true) {
+            withInput(call, services, request.input, BrowserInputKind.TAP) {
                 call.browser(services, it).tap(call.targetId(), request)
             }
         )
@@ -169,7 +192,7 @@ private fun Route.browserInputRoutes(services: ServerServices) {
         val input = call.resolved(services, asked.input, BrowserInputKind.POINTER)
         val request = asked.copy(input = input)
         call.respond(
-            withScreen(call, services, input != BrowserInput.CDP_MOUSE, launching = true) {
+            withInput(call, services, input, BrowserInputKind.POINTER) {
                 call.browser(services, it).swipe(call.targetId(), request)
             }
         )
@@ -179,7 +202,7 @@ private fun Route.browserInputRoutes(services: ServerServices) {
         val input = call.resolved(services, asked.input, BrowserInputKind.POINTER)
         val request = asked.copy(input = input)
         call.respond(
-            withScreen(call, services, input != BrowserInput.CDP_MOUSE, launching = true) {
+            withInput(call, services, input, BrowserInputKind.POINTER) {
                 call.browser(services, it).gesture(call.targetId(), request)
             }
         )
@@ -190,7 +213,7 @@ private fun Route.browserInputRoutes(services: ServerServices) {
         requireTouchAccess(BrowserInputKind.KEY, input, call.token.scopes)
         val request = asked.copy(input = input)
         call.respond(
-            withScreen(call, services, input == BrowserInput.TOUCH, launching = true) {
+            withInput(call, services, input, BrowserInputKind.KEY) {
                 call.browser(services, it).key(call.targetId(), request)
             }
         )
@@ -200,7 +223,7 @@ private fun Route.browserInputRoutes(services: ServerServices) {
         val input = call.resolved(services, asked.input, BrowserInputKind.TEXT)
         val request = asked.copy(input = input)
         call.respond(
-            withScreen(call, services, input == BrowserInput.TOUCH, launching = true) {
+            withInput(call, services, input, BrowserInputKind.TEXT) {
                 call.browser(services, it).text(call.targetId(), request)
             }
         )

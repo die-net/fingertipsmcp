@@ -2,7 +2,9 @@ package com.fingertipsmcp.server.routes
 
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
+import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.ServerServices
+import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.VIEWER_COOKIE
 import com.fingertipsmcp.server.VIEWER_PATH
 import com.fingertipsmcp.server.scoped
@@ -33,8 +35,12 @@ import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 
 /** WebCodecs viewer, plus the video and audio websockets it plays. */
-fun Route.streamRoutes(services: ServerServices) {
-    val viewer = CachedBytes(services.viewerHtml)
+fun Route.streamRoutes(
+    services: ServerServices,
+    phone: PhoneServices,
+    streams: StreamServices,
+) {
+    val viewer = CachedBytes(streams.viewerHtml)
     scoped(Scope.STREAM) {
         get(VIEWER_PATH) {
             val presented =
@@ -47,23 +53,23 @@ fun Route.streamRoutes(services: ServerServices) {
             call.respondBytes(viewer.bytes(), ContentType.Text.Html)
         }
         webSocket("/v1/stream/video") {
-            services.serveStream(
+            phone.serveStream(
                 this,
                 available = services.device.capabilities().streamVideoMirror,
                 refused = "Video needs the shell helper",
                 failed = "The video encoder could not start",
             ) {
-                services.video.serve(this, videoSpec(call))
+                streams.video.serve(this, videoSpec(call))
             }
         }
         webSocket("/v1/stream/audio") {
-            services.serveStream(
+            phone.serveStream(
                 this,
                 available = services.device.capabilities().streamAudioSubmix,
                 refused = "Audio needs Android 11 or later and the shell helper",
                 failed = "Audio capture could not start",
             ) {
-                services.audio.serve(this)
+                streams.audio.serve(this)
             }
         }
     }
@@ -74,7 +80,7 @@ fun Route.streamRoutes(services: ServerServices) {
  * all, not [available], closes it with CANNOT_ACCEPT and [refused], which the viewer takes as
  * final. A stream that fails to start closes with its error's message, or [failed].
  */
-private suspend fun ServerServices.serveStream(
+private suspend fun PhoneServices.serveStream(
     session: DefaultWebSocketServerSession,
     available: Boolean,
     refused: String,

@@ -100,7 +100,7 @@ class McpCatalogTest {
 
     @Test
     fun `resources need observe`() {
-        assertTrue(mcpResources(setOf(Scope.OBSERVE)).any { it.uri.endsWith("capabilities") })
+        assertTrue(mcpResources(setOf(Scope.OBSERVE)).any { it.path.endsWith("capabilities") })
         assertEquals(0, mcpResources(setOf(Scope.CONTROL)).size)
     }
 

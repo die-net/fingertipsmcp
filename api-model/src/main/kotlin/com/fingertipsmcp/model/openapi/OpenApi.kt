@@ -3,6 +3,7 @@ package com.fingertipsmcp.model.openapi
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.schema.JsonSchemas
 import com.fingertipsmcp.model.schema.SchemaConfig
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -17,14 +18,18 @@ private const val COMPONENTS = "#/components/schemas/"
 // Android's ICU regex treats an unescaped `}` as a quantifier closer.
 private val PATH_PARAM = Regex("""\{([^}]+)\}""")
 
-/** OpenAPI 3.1 document whose component schemas come from the same walker as MCP tool schemas. */
-public fun fingertipsOpenApi(): JsonObject = document
+/**
+ * OpenAPI 3.1 document for a server titled [title] that has [groups], whose component schemas come
+ * from the same walker as MCP tool schemas. Built once per pair.
+ */
+public fun openApi(title: String, groups: Set<ApiGroup>): JsonObject =
+    documents.getOrPut(title to groups) { buildDocument(title, apiEndpoints(groups)) }
 
-private val document: JsonObject by lazy { buildDocument() }
+private val documents = ConcurrentHashMap<Pair<String, Set<ApiGroup>>, JsonObject>()
 
-private fun buildDocument(): JsonObject {
+private fun buildDocument(title: String, endpoints: List<ApiEndpoint>): JsonObject {
     val schemas = JsonSchemas(SchemaConfig(), COMPONENTS)
-    fingertipsEndpoints.forEach { endpoint ->
+    endpoints.forEach { endpoint ->
         endpoint.request?.descriptor?.let(schemas::schema)
         endpoint.response?.descriptor?.let(schemas::schema)
     }
@@ -33,7 +38,7 @@ private fun buildDocument(): JsonObject {
         put(
             "info",
             buildJsonObject {
-                put("title", "FingertipsMCP for Android")
+                put("title", title)
                 put("version", "0.0.0")
             },
         )
@@ -41,7 +46,7 @@ private fun buildDocument(): JsonObject {
             "security",
             buildJsonArray { add(buildJsonObject { put("bearer", JsonArray(emptyList())) }) },
         )
-        put("paths", paths(schemas))
+        put("paths", paths(endpoints, schemas))
         put(
             "components",
             buildJsonObject {
@@ -63,9 +68,9 @@ private fun buildDocument(): JsonObject {
     }
 }
 
-private fun paths(schemas: JsonSchemas): JsonObject {
+private fun paths(endpoints: List<ApiEndpoint>, schemas: JsonSchemas): JsonObject {
     val grouped = LinkedHashMap<String, MutableList<ApiEndpoint>>()
-    fingertipsEndpoints.forEach { endpoint ->
+    endpoints.forEach { endpoint ->
         grouped.getOrPut(endpoint.path) { ArrayList() }.add(endpoint)
     }
     return buildJsonObject {

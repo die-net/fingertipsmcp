@@ -10,6 +10,7 @@ import com.fingertipsmcp.model.BrowserInput
 import com.fingertipsmcp.model.BrowserInputKind
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.WaitCondition
+import com.fingertipsmcp.server.BrowserInputPolicy
 import com.fingertipsmcp.wait.usesScreen
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
@@ -23,14 +24,17 @@ import kotlinx.serialization.json.contentOrNull
 
 /**
  * How a tool uses the screen, as docs/sharing.md lists. Every tool in the catalog declares one, so
- * a new tool cannot be left out. Reading and cdp input on a tab need no screen; touch input brings
- * the tab forward, and Chrome only takes cdp pointer input on the tab it is showing.
+ * a new tool cannot be left out. Reading needs no screen. Browser input takes it when the product's
+ * [BrowserInputPolicy] says its input does: on Android, touch input brings the tab forward, and
+ * Chrome only takes cdp pointer input on the tab it is showing.
  */
 internal class ToolScreen(
     /** Whether every call takes the screen, so its description says so. */
     val always: Boolean = false,
     /** Whether a call with these arguments takes the screen. */
     private val byArguments: (JsonObject?) -> Boolean = { always },
+    /** For browser input, its kind, which the product's policy decides the screen for. */
+    private val input: BrowserInputKind? = null,
     /** Whether a call with these arguments opens a tab, which starts Chrome when it is stopped. */
     val opensTab: (JsonObject?) -> Boolean = { false },
     /** Whether a call needs the screen only while it runs, so it gives back a screen it took. */
@@ -42,7 +46,8 @@ internal class ToolScreen(
      */
     private val pageActs: (JsonObject?) -> Boolean = { false },
 ) {
-    fun takes(args: JsonObject?): Boolean = always || byArguments(args)
+    fun takes(args: JsonObject?, policy: BrowserInputPolicy): Boolean =
+        always || byArguments(args) || input?.let { policy.takesScreen(inputOf(args), it) } == true
 
     fun launches(args: JsonObject?): Boolean = pageActs(args) || opensTab(args)
 
@@ -53,12 +58,8 @@ internal class ToolScreen(
         /** A tool that never takes the screen and acts on no page. */
         val NEVER = ToolScreen()
 
-        /** Pointer input, which takes the screen unless it is a cdp mouse tap. */
-        val POINTER = ToolScreen(byArguments = { input(it) != "cdp-mouse" }, pageActs = { true })
-
-        /** Keys and text, which take the screen only as touch, or as auto before it resolves. */
-        val TYPING =
-            ToolScreen(byArguments = { input(it) in setOf("touch", "auto") }, pageActs = { true })
+        /** Browser input of [kind], which acts on a page. */
+        fun input(kind: BrowserInputKind) = ToolScreen(input = kind, pageActs = { true })
 
         /** Acts on a page without the screen, such as by navigating it. */
         val PAGE = ToolScreen(pageActs = { true })
@@ -104,8 +105,9 @@ internal suspend fun screenUse(
     screen: ToolScreen,
     args: JsonObject?,
     browser: BrowserService,
+    policy: BrowserInputPolicy = BrowserInputPolicy.PHONE,
 ): ScreenUse {
-    val byArguments = screen.takes(args)
+    val byArguments = screen.takes(args, policy)
     val startsChrome = screen.opensTab(args) && browser.chromeStopped()
     return ScreenUse(
         needed = byArguments || startsChrome,
@@ -124,28 +126,41 @@ private val INPUT_KINDS =
     )
 
 /**
- * Replaces `input` `auto`, or no input, with what it means for a caller that [holdsScreen] or not,
- * so [takesScreen] and the tool see the input that will be used. A token whose [scopes] may not
- * send the tool's input as touch resolves as if it did not hold the screen.
+ * Replaces the tool's `input` with what [policy] makes of it for a caller that [holdsScreen] or
+ * not, so [takesScreen] and the tool see the input that will be used. A token whose [scopes] may
+ * not send the tool's input as touch resolves as if it did not hold the screen. An input that does
+ * not parse is left for the tool to refuse.
  */
 internal fun resolveInput(
     tool: String,
     request: CallToolRequest,
     holdsScreen: Boolean,
     scopes: Set<Scope>,
+    policy: BrowserInputPolicy = BrowserInputPolicy.PHONE,
 ): CallToolRequest {
     val kind = INPUT_KINDS[tool] ?: return request
     val args = request.params.arguments ?: JsonObject(emptyMap())
-    val asked = input(args)
-    if (asked != "auto") return request
-    val resolved = BrowserInput.AUTO.resolved(kind, holdsScreen && touchAllowed(kind, scopes))
+    val asked = inputOrNull(args) ?: return request
+    val resolved = policy.resolve(asked, kind, holdsScreen && touchAllowed(kind, scopes))
+    if (resolved == asked && args["input"] != null) return request
     val wire = ApiJson.encodeToJsonElement(BrowserInput.serializer(), resolved)
     val params = request.params.copy(arguments = JsonObject(args + ("input" to wire)))
     return request.copy(params = params)
 }
 
-private fun input(args: JsonObject?): String =
-    (args?.get("input") as? JsonPrimitive)?.contentOrNull?.lowercase() ?: "auto"
+/** The input [args] ask for: `auto` when they leave it out, null when it does not parse. */
+private fun inputOrNull(args: JsonObject?): BrowserInput? {
+    val value = (args?.get("input") as? JsonPrimitive)?.contentOrNull ?: return BrowserInput.AUTO
+    return BrowserInput.entries.firstOrNull { wire(it) == value.lowercase() }
+}
+
+/** The input [args] ask for, with one that does not parse counted as `auto`. */
+private fun inputOf(args: JsonObject?): BrowserInput = inputOrNull(args) ?: BrowserInput.AUTO
+
+private fun wire(input: BrowserInput): String =
+    ApiJson.encodeToJsonElement(BrowserInput.serializer(), input).let {
+        (it as JsonPrimitive).content
+    }
 
 /**
  * Whether any condition in wait_for's [args] uses the screen. One that does not parse counts as

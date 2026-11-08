@@ -6,6 +6,7 @@ import com.fingertipsmcp.model.EventTypes
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.parseEventQuery
+import com.fingertipsmcp.server.requirePhone
 import com.fingertipsmcp.server.scoped
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.isHandled
@@ -29,12 +30,13 @@ import kotlinx.serialization.serializer
  */
 fun Route.eventRoutes(services: ServerServices) {
     scoped(Scope.OBSERVE) {
-        install(RejectBadLogcatQuery)
+        install(rejectBadQuery(services))
         webSocket(EVENTS) {
             val params = call.request.queryParameters
             val query = parseEventQuery(params["types"], params["logcatTag"], params["logcatLevel"])
             val bus = services.events.filter { accepts(it, query.types) }
-            val source = query.logcat?.let { merge(bus, services.logcat.lines(it)) } ?: bus
+            val source =
+                query.logcat?.let { merge(bus, services.requirePhone().logcat.lines(it)) } ?: bus
             source.collect { event ->
                 send(Frame.Text(ApiJson.encodeToString(serializer<Event>(), event)))
             }
@@ -52,12 +54,14 @@ private fun accepts(event: Event, types: List<String>?): Boolean {
 
 private const val EVENTS = "/v1/events"
 
-private val RejectBadLogcatQuery =
+/** Refuses a bad query, and logcat on a server without the phone, before the upgrade. */
+private fun rejectBadQuery(services: ServerServices) =
     createRouteScopedPlugin("RejectBadLogcatQuery") {
         onCall { call ->
             if (call.isHandled) return@onCall
             if (call.request.path() != EVENTS) return@onCall
             val params = call.request.queryParameters
-            parseEventQuery(params["types"], params["logcatTag"], params["logcatLevel"])
+            val query = parseEventQuery(params["types"], params["logcatTag"], params["logcatLevel"])
+            if (query.logcat != null) services.requirePhone()
         }
     }

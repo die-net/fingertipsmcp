@@ -15,10 +15,10 @@ import org.slf4j.spi.MDCAdapter
 import org.slf4j.spi.SLF4JServiceProvider
 
 /**
- * Sends slf4j to logcat, so code shared with deskapi logs the way the app always has. The tag is
- * the logger name after its last dot. FingertipsMCP's own loggers follow `Log.isLoggable`, which
- * allows info and above by default. Libraries such as Ktor and the MCP SDK only reach logcat at
- * warn and above unless their tag is raised with `setprop log.tag.<tag>`.
+ * Sends slf4j to logcat, so code shared with FingertipsMCP for Chrome logs the way the app always
+ * has. The tag is the logger name after its last dot. FingertipsMCP's own loggers follow
+ * `Log.isLoggable`, which allows info and above by default. Libraries such as Ktor and the MCP SDK
+ * only reach logcat at warn and above unless their tag is raised with `setprop log.tag.<tag>`.
  */
 class LogcatServiceProvider : SLF4JServiceProvider {
     private val loggers = LogcatLoggers()

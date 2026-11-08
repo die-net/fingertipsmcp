@@ -17,6 +17,7 @@ import com.fingertipsmcp.model.ViewerHolder
 import com.fingertipsmcp.model.ViewerLease
 import com.fingertipsmcp.model.ViewerMessage
 import com.fingertipsmcp.model.ViewerTake
+import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.SessionsKey
 import io.ktor.server.websocket.DefaultWebSocketServerSession
@@ -48,9 +49,13 @@ private val viewers = AtomicLong()
  * after [VIEWER_IDLE_MS] without input, and when it closes. The server sends `{"op":"lease",...}`
  * when the holder changes.
  */
-internal suspend fun serveViewer(services: ServerServices, session: DefaultWebSocketServerSession) {
+internal suspend fun serveViewer(
+    services: ServerServices,
+    phone: PhoneServices,
+    session: DefaultWebSocketServerSession,
+) {
     val viewer = Holder.Viewer(viewers.incrementAndGet())
-    val socket = ViewerSocket(services, session, viewer)
+    val socket = ViewerSocket(services, phone, session, viewer)
     try {
         socket.run()
     } finally {
@@ -59,7 +64,8 @@ internal suspend fun serveViewer(services: ServerServices, session: DefaultWebSo
 }
 
 private class ViewerSocket(
-    private val services: ServerServices,
+    services: ServerServices,
+    private val phone: PhoneServices,
     private val session: DefaultWebSocketServerSession,
     private val viewer: Holder.Viewer,
 ) {
@@ -81,7 +87,7 @@ private class ViewerSocket(
             }
         }
         // The service cancels any contact still down when the channel closes.
-        services.input.pointer(frames)
+        phone.input.pointer(frames)
         status.cancel()
         idle.cancel()
     }
@@ -117,18 +123,16 @@ private class ViewerSocket(
                 touched()
                 lease.takeOver(viewer)
                 act(op, id) {
-                    services.power.prepareForAction(decode<ViewerTake>(message).autoWake)
+                    phone.power.prepareForAction(decode<ViewerTake>(message).autoWake)
                 }
             }
-            "key" -> act(op, id) { services.input.key(decode<KeyRequest>(message)) }
-            "text" -> act(op, id) { services.input.text(decode<TextRequest>(message)) }
+            "key" -> act(op, id) { phone.input.key(decode<KeyRequest>(message)) }
+            "text" -> act(op, id) { phone.input.text(decode<TextRequest>(message)) }
             "orientation" ->
-                act(op, id) { services.power.orientation(decode<OrientationRequest>(message)) }
+                act(op, id) { phone.power.orientation(decode<OrientationRequest>(message)) }
             "paste" ->
                 act(op, id) {
-                    services.clipboard.write(
-                        decode<ClipboardWriteRequest>(message).copy(paste = true)
-                    )
+                    phone.clipboard.write(decode<ClipboardWriteRequest>(message).copy(paste = true))
                 }
             "copy" -> act(op, id) { copy(id) }
             "release" -> {
@@ -184,10 +188,10 @@ private class ViewerSocket(
 
     /** Copies the phone's selection, or reads its clipboard when nothing is selected. */
     private suspend fun copy(id: JsonElement?) {
-        val clip = services.clipboard.read(ClipboardReadRequest(copy = true))
+        val clip = phone.clipboard.read(ClipboardReadRequest(copy = true))
         val image =
             if (clip.text == null && clip.mimeTypes.any { it.startsWith("image/") }) {
-                services.clipboard.image()
+                phone.clipboard.image()
             } else {
                 null
             }
@@ -198,7 +202,7 @@ private class ViewerSocket(
 
     /** A binary frame is an image to paste. */
     private suspend fun pasteImage(bytes: ByteArray) {
-        act("paste", null) { services.clipboard.writeImage(bytes, paste = true) }
+        act("paste", null) { phone.clipboard.writeImage(bytes, paste = true) }
     }
 
     private suspend fun onLease(state: LeaseState) {

@@ -73,8 +73,10 @@ import com.fingertipsmcp.server.ApiServer
 import com.fingertipsmcp.server.AudioFeed
 import com.fingertipsmcp.server.DeviceFacts
 import com.fingertipsmcp.server.NetworkWatcher
+import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.ServerController
 import com.fingertipsmcp.server.ServerServices
+import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.TokenStore
 import com.fingertipsmcp.server.VideoFeed
 import com.fingertipsmcp.server.fingertipsModule
@@ -301,25 +303,31 @@ class AppGraph(
 
     val services =
         ServerServices(
-            ui = ui,
-            input = input,
-            apps = apps,
             waits = waits,
             browser = browser,
-            power = power,
-            clipboard = clipboard,
             tokens = tokens,
             ioDispatcher = ioDispatcher,
             device = GraphDevice(deviceInfo),
-            screenshots = { scale -> this.screenshots.png(scale) },
-            writePin = { pin -> pins.write(pin) },
             events = bus.events,
-            video = VideoFeed { session, spec -> this.video.serve(session, spec) },
-            audio = AudioFeed { session -> this.audio.serve(session) },
-            viewerHtml = { asset("viewer.html") },
-            shell = { argv -> this.shell.exec(argv) },
-            viewerText = { viewerLink() },
-            logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
+            phone =
+                PhoneServices(
+                    ui = ui,
+                    input = input,
+                    apps = apps,
+                    power = power,
+                    clipboard = clipboard,
+                    writePin = { pin -> pins.write(pin) },
+                    shell = { argv -> this.shell.exec(argv) },
+                    logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
+                ),
+            streams =
+                StreamServices(
+                    video = VideoFeed { session, spec -> this.video.serve(session, spec) },
+                    audio = AudioFeed { session -> this.audio.serve(session) },
+                    viewerHtml = { asset("viewer.html") },
+                    viewerText = { viewerLink() },
+                ),
+            screenshots = { scale -> this.screenshots.png(scale) },
             lease = screenLease,
             tabs = tabs,
             foreground =

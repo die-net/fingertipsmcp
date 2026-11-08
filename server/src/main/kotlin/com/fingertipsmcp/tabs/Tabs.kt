@@ -48,6 +48,8 @@ class Tabs(
     private val total: Int = TOTAL,
     /** Where tabs Chrome opens a moment after an intent are looked for. */
     private val scope: CoroutineScope,
+    /** The DevTools endpoint whose tabs sessions own: Chrome's socket on Android. */
+    private val chrome: String = CHROME_SOCKET,
 ) {
     private data class Owner(val holder: Holder.Session, val opened: Boolean)
 
@@ -666,7 +668,7 @@ class Tabs(
                 owner?.holder == holder -> return
                 owner != null && related(owner.holder) -> throw elsewhere(id)
                 owner != null -> throw missing(id)
-                socket == CHROME_SOCKET -> {
+                socket == chrome -> {
                     owners[id] = Owner(holder, opened = false)
                     true
                 }
@@ -687,7 +689,7 @@ class Tabs(
      * answer as another session's tab, and leaves no owner behind.
      */
     private suspend fun requireExists(id: String, socket: String) {
-        if (socket != CHROME_SOCKET || owners.containsKey(id)) return
+        if (socket != chrome || owners.containsKey(id)) return
         if (base.targets().none { it.id == id }) throw missing(id)
     }
 
@@ -709,7 +711,7 @@ class Tabs(
         adoptPopups(all)
         for (tab in all) {
             val owner = owners[tab.id]
-            val chrome = tab.socket == CHROME_SOCKET
+            val chrome = tab.socket == chrome
             when {
                 tab.id == placeholder -> Unit
                 owner?.holder == holder -> out += tab.copy(owned = true)
