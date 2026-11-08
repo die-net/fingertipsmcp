@@ -2,7 +2,7 @@
 // viewer shows (Extensions.triggerAction), which is what lets tabCapture capture that tab. The
 // worker gets a stream id for it and hands the id to the offscreen document, which captures and
 // encodes when FingertipsMCP tells it to. The worker also tells the document when the active tab
-// changes, so FingertipsMCP can follow it. The extension has no content scripts and no
+// changes, so FingertipsMCP can follow it, and when a window changes size. The extension has no content scripts and no
 // web-accessible resources, so no page can see it.
 "use strict";
 
@@ -35,6 +35,9 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 chrome.tabs.onActivated.addListener(() => tell({ op: "activated" }));
 chrome.windows.onFocusChanged.addListener(() => tell({ op: "activated" }));
+// A capture keeps the frame size it started with, so a window that changes size has to be
+// captured again at its new size, which FingertipsMCP does when the tab's viewport changed.
+chrome.windows.onBoundsChanged.addListener(() => tell({ op: "resized" }));
 
 // The document opens as the worker starts, after its listeners are in place, so FingertipsMCP waits
 // for it before running the action: an action run while a just-loaded worker starts is lost.

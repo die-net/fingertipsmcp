@@ -6,11 +6,6 @@ import com.fingertipsmcp.model.DisplayInfo
 import com.fingertipsmcp.model.VideoHeader
 import kotlin.math.max
 
-internal const val FRAME_CONFIG = 1
-internal const val FRAME_KEY = 2
-internal const val FRAME_DELTA = 3
-
-private const val HEADER_BYTES = 9
 private const val START_CODE_3 = 3
 private const val START_CODE_4 = 4
 private const val NAL_SPS = 7
@@ -51,25 +46,6 @@ internal fun audioCodecDescription(data: ByteArray): ByteArray {
 /** Text frame sent once on the audio socket before binary frames. */
 internal fun audioHeader(codec: String, sampleRate: Int, channels: Int): String =
     ApiJson.encodeToString(AudioHeader.serializer(), AudioHeader(codec, sampleRate, channels))
-
-/**
- * One binary websocket frame: type byte, big-endian presentation timestamp in microseconds, then
- * the payload. Video payloads are Annex-B. Audio payloads are raw Opus or AAC access units.
- *
- * Each socket also sends text frames of [videoHeader] or [audioHeader]. Video sends that JSON again
- * when the encoded size changes; the binary layout above stays the same.
- */
-internal fun packFrame(type: Int, ptsUs: Long, payload: ByteArray): ByteArray {
-    val out = ByteArray(HEADER_BYTES + payload.size)
-    out[0] = type.toByte()
-    var shift = 56
-    for (index in 1 until HEADER_BYTES) {
-        out[index] = ((ptsUs ushr shift) and 0xff).toByte()
-        shift -= 8
-    }
-    payload.copyInto(out, HEADER_BYTES)
-    return out
-}
 
 /** Even encoder size that fits [maxSize] on the long side, keeping the aspect ratio. */
 internal fun scaledSize(width: Int, height: Int, maxSize: Int): Pair<Int, Int> {

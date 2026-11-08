@@ -10,16 +10,6 @@ import org.junit.jupiter.api.Test
 
 class StreamFramesTest {
     @Test
-    fun `packs a timestamp`() {
-        val packed = packFrame(FRAME_KEY, 0x0102030405060708L, byteArrayOf(9, 10))
-        assertEquals(FRAME_KEY.toByte(), packed[0])
-        assertEquals(0x01.toByte(), packed[1])
-        assertEquals(0x08.toByte(), packed[8])
-        assertEquals(9.toByte(), packed[9])
-        assertEquals(10.toByte(), packed[10])
-    }
-
-    @Test
     fun `scales the long side`() {
         assertEquals(576 to 1280, scaledSize(1080, 2400, 1280))
         assertEquals(100 to 200, scaledSize(100, 200, 1280))

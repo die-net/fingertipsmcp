@@ -17,12 +17,9 @@ import com.fingertipsmcp.helperclient.HelperConnection
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.DisplayInfo
 import io.ktor.server.websocket.DefaultWebSocketServerSession
-import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
-import io.ktor.websocket.close
 import java.io.IOException
 import java.nio.ByteBuffer
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +28,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -40,7 +36,7 @@ import kotlinx.coroutines.withContext
  * One H.264 encoder shared by every video viewer. The helper mirrors the display into a
  * [FrameRelay], which draws onto the encoder's input surface and redraws the last frame on demand.
  * A joining client receives the parameter sets and a new keyframe, even on a still screen. A viewer
- * that falls behind drops frames until the next keyframe, and asks for one (see [FrameQueue]).
+ * that falls behind drops frames until the next keyframe, and asks for one (see [VideoViewers]).
  *
  * If the helper dies, the mirror dies with it, so every viewer is closed and can reconnect.
  *
@@ -57,7 +53,7 @@ internal class VideoStream(
 ) {
     private val gate = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + io)
-    private val subscribers = CopyOnWriteArrayList<Viewer>()
+    private val viewers = VideoViewers(::requestSync, SystemClock::uptimeMillis)
     private val displayChanges = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile private var codec: MediaCodec? = null
@@ -80,9 +76,6 @@ internal class VideoStream(
     private var listening = false
     private var displayJob: Job? = null
 
-    /** Only the codec's callback thread uses this, through [emitFrame]. */
-    private val keyRequests = KeyRequests()
-
     private val displayListener =
         object : DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) = Unit
@@ -100,13 +93,13 @@ internal class VideoStream(
     }
 
     suspend fun serve(session: DefaultWebSocketServerSession, spec: VideoSpec) {
-        val viewer = Viewer()
+        val viewer = VideoViewer()
         lease.opened()
         var attached = false
         try {
             val (header, config) =
                 gate.withLock {
-                    subscribers.add(viewer)
+                    viewers.add(viewer)
                     attached = true
                     // A failed encoder is gone while its closing viewers are still detaching.
                     if (codec == null) withContext(io) { startEncoder(spec) }
@@ -115,10 +108,7 @@ internal class VideoStream(
             session.send(Frame.Text(header))
             config?.let { session.send(Frame.Binary(true, it)) }
             requestSync()
-            sendUntilClientLeaves(session) { sendFrames(session, viewer) }
-            viewer.failure?.let {
-                session.close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, it))
-            }
+            viewer.send(session)
         } finally {
             if (attached) withContext(NonCancellable) { detach(viewer) }
             viewer.close()
@@ -126,25 +116,10 @@ internal class VideoStream(
         }
     }
 
-    private suspend fun detach(viewer: Viewer) {
+    private suspend fun detach(viewer: VideoViewer) {
         gate.withLock {
-            subscribers.remove(viewer)
-            if (subscribers.isEmpty()) withContext(io) { stopEncoder() }
-        }
-    }
-
-    private suspend fun sendFrames(session: DefaultWebSocketServerSession, viewer: Viewer) {
-        var open = true
-        while (open) {
-            // select is biased to the first clause, so a size-change header always goes out
-            // before the codec-config frame of the encoder that follows it.
-            val out: Frame? = select {
-                viewer.headers.onReceiveCatching { it.getOrNull()?.let(Frame::Text) }
-                viewer.queue.frames.onReceiveCatching { result ->
-                    result.getOrNull()?.let { Frame.Binary(true, it) }
-                }
-            }
-            if (out == null) open = false else session.send(out)
+            viewers.remove(viewer)
+            if (viewers.isEmpty()) withContext(io) { stopEncoder() }
         }
     }
 
@@ -169,7 +144,7 @@ internal class VideoStream(
     private suspend fun reconfigureIfNeeded() {
         gate.withLock {
             val spec = activeSpec ?: return@withLock
-            if (!running || subscribers.isEmpty()) return@withLock
+            if (!running || viewers.isEmpty()) return@withLock
             withContext(io) { reconfigure(spec) }
         }
     }
@@ -182,7 +157,7 @@ internal class VideoStream(
             DisplayChange.HEADER -> {
                 // The picture keeps its size, so frames already queued still show.
                 nameScreen(videoHeader(activeWidth, activeHeight, spec, screen), screen)
-                for (viewer in subscribers) viewer.headers.trySend(headerJson)
+                viewers.sendHeader(headerJson)
                 return
             }
             DisplayChange.ENCODER -> Unit
@@ -190,7 +165,8 @@ internal class VideoStream(
         val (width, height) = scaledSize(screen.widthPx, screen.heightPx, spec.maxSize)
         releaseEncoder()
         nameScreen(videoHeader(width, height, spec, screen), screen)
-        emitHeader(headerJson)
+        // Queued frames are not shown at the new picture size.
+        viewers.emitHeader(headerJson)
         try {
             beginEncoder(spec, width, height, screen)
         } catch (e: CancellationException) {
@@ -370,7 +346,7 @@ internal class VideoStream(
         val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         val payload = if (key) withParameterSets(annex) else annex
         val type = if (key) FRAME_KEY else FRAME_DELTA
-        emitFrame(packFrame(type, info.presentationTimeUs, payload))
+        viewers.emitFrame(packFrame(type, info.presentationTimeUs, payload))
     }
 
     private fun readOutput(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo): ByteArray? {
@@ -404,7 +380,7 @@ internal class VideoStream(
         spsPps = annex
         val packed = packFrame(FRAME_CONFIG, 0, annex)
         configFrame = packed
-        emitFrame(packed)
+        viewers.emitFrame(packed)
     }
 
     private fun withParameterSets(annex: ByteArray): ByteArray {
@@ -427,28 +403,8 @@ internal class VideoStream(
         relay?.redraw()
     }
 
-    private fun emitFrame(frame: ByteArray) {
-        for (viewer in subscribers) viewer.queue.offer(frame)
-        if (subscribers.none { it.queue.waitsForKey }) {
-            keyRequests.satisfied()
-        } else if (keyRequests.due(SystemClock.uptimeMillis())) {
-            requestSync()
-        }
-    }
-
-    private fun emitHeader(json: String) {
-        for (viewer in subscribers) {
-            // Queued frames are not shown at the new picture size.
-            viewer.queue.drain()
-            viewer.headers.trySend(json)
-        }
-    }
-
     private fun closeViewers(reason: String) {
-        for (viewer in subscribers) {
-            viewer.failure = reason
-            viewer.close()
-        }
+        viewers.close(reason)
     }
 
     private fun ensureListening() {
@@ -545,26 +501,8 @@ internal class VideoStream(
             cause = error,
         )
 
-    /**
-     * Frames and a size-change header travel on separate channels so a full frame queue cannot drop
-     * the header.
-     */
-    private class Viewer {
-        val queue = FrameQueue(CHANNEL_CAP)
-        val headers = Channel<String>(Channel.CONFLATED)
-
-        /** Why the stream closed this viewer, sent as the close reason. */
-        @Volatile var failure: String? = null
-
-        fun close() {
-            queue.frames.close()
-            headers.close()
-        }
-    }
-
     private companion object {
         const val TAG = "FingertipsStream"
-        const val CHANNEL_CAP = 4
 
         /**
          * Key frames on a timer are only a backstop. Joining viewers and viewers that dropped a

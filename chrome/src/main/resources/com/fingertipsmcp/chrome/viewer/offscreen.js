@@ -5,7 +5,12 @@
 // Each frame goes out as the viewer's sockets carry it: a type byte (1 codec config, 2 key, 3
 // delta), the timestamp in microseconds as 8 big-endian bytes, then H.264 in Annex B or an Opus
 // packet. A message is a letter, V for video, A for audio, or S for news as JSON, then the frame in
-// base64 or the JSON.
+// base64 or the JSON. News about a capture carries the id FingertipsMCP gave it, so news from one
+// that has stopped is told apart from news of the one that replaced it.
+//
+// A binding is the only way a page can push to DevTools, and it carries text, so each frame costs
+// its base64 and the JSON around it, and its decoding in FingertipsMCP. docs/device-notes.md has
+// what that costs.
 "use strict";
 
 const CONFIG = 1;
@@ -14,10 +19,13 @@ const DELTA = 3;
 // Samples within 8 of zero at 16 bits count as silence, as on Android, so a quiet tab sends no
 // audio at all.
 const SILENT = 8 / 32768;
-// A tab that does not change sends no frames, so the last one goes again after this long, as the
-// phone's stream sends one at least every 4 s.
-const STILL_MS = 3000;
-const STILL_CHECK_MS = 1000;
+// When the last frame goes again. A tab that stops changing gets the frame again at these times
+// after its last one, so the encoder can sharpen what it blurred while it moved, and then every
+// IDLE_MS, so a viewer can tell a still tab from a dead stream. This is a port of the phone's
+// RedrawPlan (app/.../stream/RedrawPlan.kt), which Kotlin can't share with the extension; keep the
+// two the same.
+const SETTLE_MS = [100, 300, 700];
+const IDLE_MS = 4000;
 // How long capture waits for the stream id that the action on the tab produces.
 const STREAM_WAIT_MS = 5000;
 // More frames than this waiting in the encoder means it is behind, so new ones are dropped.
@@ -28,7 +36,7 @@ const CHUNK = 0x8000;
 
 // What FingertipsMCP asked for: the size to capture at, frame rate, bit rate, and whether anyone
 // listens to the audio.
-const settings = { width: 0, height: 0, fps: 30, bitRate: 4000000, audio: false };
+const settings = { id: 0, width: 0, height: 0, fps: 30, bitRate: 4000000, audio: false };
 
 let pending = null;
 const waiting = [];
@@ -98,24 +106,61 @@ chrome.runtime.onMessage.addListener((message) => {
     if (next) next();
   } else if (message.op === "activated") {
     news({ kind: "activated" });
+  } else if (message.op === "resized") {
+    news({ kind: "resized" });
   }
 });
 
+// When the last frame is encoded again, in milliseconds on one clock, as RedrawPlan.kt does it.
+class RedrawPlan {
+  constructor() {
+    this.hasFrame = false;
+    this.lastFrameAt = 0;
+    this.lastDrawAt = 0;
+    this.settled = 0;
+  }
+
+  // A new frame came from the tab at now, and is encoded at once.
+  captured(now) {
+    this.hasFrame = true;
+    this.lastFrameAt = now;
+    this.settled = 0;
+  }
+
+  // A frame was encoded at now, the tab's or a redraw.
+  drew(now) {
+    this.lastDrawAt = now;
+    while (this.settled < SETTLE_MS.length && now >= this.lastFrameAt + SETTLE_MS[this.settled]) {
+      this.settled++;
+    }
+  }
+
+  // Milliseconds from now until the next redraw, or null before the first frame.
+  delay(now) {
+    if (!this.hasFrame) return null;
+    const idleAt = this.lastDrawAt + IDLE_MS;
+    const next =
+      this.settled >= SETTLE_MS.length ? idleAt : Math.min(this.lastFrameAt + SETTLE_MS[this.settled], idleAt);
+    return Math.max(1, next - now);
+  }
+}
+
 // One tab's capture: its tracks, encoders, and the last frame, kept to send again while still.
 class Capture {
-  constructor(stream) {
+  constructor(stream, id) {
     this.stream = stream;
+    this.id = id;
     this.open = true;
     this.encoder = null;
     this.size = null;
     this.keyNext = true;
     this.frames = 0;
     this.last = null;
-    this.lastAt = 0;
+    this.plan = new RedrawPlan();
+    this.timer = 0;
     this.audio = null;
     this.audioHead = false;
     this.playback = null;
-    this.timer = setInterval(() => this.still(), STILL_CHECK_MS);
     const [video] = stream.getVideoTracks();
     const [sound] = stream.getAudioTracks();
     if (video) {
@@ -147,7 +192,14 @@ class Capture {
   ended() {
     if (!this.open) return;
     this.stop();
-    news({ kind: "ended" });
+    news({ kind: "ended", capture: this.id });
+  }
+
+  // The video encoder failed and closed, so nothing more can come from this capture.
+  failed(detail) {
+    if (!this.open) return;
+    this.stop();
+    news({ kind: "failed", capture: this.id, detail: detail });
   }
 
   configureVideo(width, height) {
@@ -158,7 +210,7 @@ class Capture {
         const bytes = frame(type, chunk.timestamp, chunk.byteLength, (b) => chunk.copyTo(b));
         send("V", base64(bytes));
       },
-      error: (e) => news({ kind: "error", detail: "Video encoder: " + String(e.message || e) }),
+      error: (e) => this.failed("Video encoder: " + String(e.message || e)),
     });
     this.encoder.configure({
       codec: "avc1.640033",
@@ -172,7 +224,7 @@ class Capture {
     });
     this.size = { width: width, height: height };
     this.keyNext = true;
-    news({ kind: "video", width: width, height: height });
+    news({ kind: "video", capture: this.id, width: width, height: height });
   }
 
   video(f) {
@@ -181,29 +233,42 @@ class Capture {
     if (!this.size || this.size.width !== width || this.size.height !== height) {
       this.configureVideo(width, height);
     }
-    this.encode(f);
+    const now = performance.now();
+    this.plan.captured(now);
+    this.encode(f, now);
     if (this.last) this.last.close();
     this.last = f;
+    this.schedule(now);
   }
 
-  encode(f) {
+  encode(f, now) {
     // A frame dropped here was never encoded, so the next one still follows the last encoded.
     if (this.encoder.state !== "configured" || this.encoder.encodeQueueSize > ENCODE_QUEUE) return;
     const key = this.keyNext || this.frames % (settings.fps * KEY_EVERY_S) === 0;
     this.keyNext = false;
     this.frames += 1;
     this.encoder.encode(f, { keyFrame: key });
-    this.lastAt = performance.now();
+    this.plan.drew(now);
   }
 
-  // Sends the last frame again when the tab has been still, so the viewer knows it is live.
-  still() {
+  // Sets the timer for the next redraw the plan has due.
+  schedule(now) {
+    clearTimeout(this.timer);
+    const wait = this.plan.delay(now);
+    if (wait !== null) this.timer = setTimeout(() => this.redraw(), wait);
+  }
+
+  // Encodes the last frame again, while the tab is still.
+  redraw() {
     if (!this.open || !this.last || !this.encoder) return;
-    const idle = performance.now() - this.lastAt;
-    if (idle < STILL_MS) return;
-    const again = new VideoFrame(this.last, { timestamp: this.last.timestamp + idle * 1000 });
-    this.encode(again);
+    const now = performance.now();
+    const again = new VideoFrame(this.last, { timestamp: this.last.timestamp + (now - this.plan.lastFrameAt) * 1000 });
+    this.encode(again, now);
     again.close();
+    // A redraw the encoder had no room for counts as drawn too, so the plan moves on and the
+    // timer does not spin.
+    this.plan.drew(now);
+    this.schedule(now);
   }
 
   silent(data) {
@@ -247,9 +312,11 @@ class Capture {
     this.audio = null;
   }
 
+  // Ends the capture. A capture that ended or failed has stopped already, so this does nothing then.
   stop() {
+    if (!this.open) return;
     this.open = false;
-    clearInterval(this.timer);
+    clearTimeout(this.timer);
     for (const track of this.stream.getTracks()) track.stop();
     if (this.encoder && this.encoder.state !== "closed") this.encoder.close();
     this.stopAudio();
@@ -260,8 +327,9 @@ class Capture {
 }
 
 globalThis.fingertipsViewer = {
-  // Captures the tab whose action ran last, at the size, frame rate, and bit rate given. Resolves
-  // to {ok: true} or {error}.
+  // Captures the tab whose action ran last, at the size, frame rate, and bit rate given, as the
+  // capture options.id. Resolves to {ok: true} or {error}. Whatever was captured before stops
+  // either way.
   async capture(options) {
     Object.assign(settings, options);
     // The tab captured until now is no longer shown, and a captured tab reads as visible to its
@@ -281,7 +349,7 @@ globalThis.fingertipsViewer = {
         video: { mandatory: video },
         audio: { mandatory: source },
       });
-      current = new Capture(stream);
+      current = new Capture(stream, settings.id);
       return { ok: true };
     } catch (e) {
       return { error: String((e && e.message) || e) };

@@ -1,5 +1,7 @@
 package com.fingertipsmcp.stream
 
+import io.ktor.server.websocket.DefaultWebSocketServerSession
+import io.ktor.websocket.Frame
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.selects.select
@@ -9,7 +11,7 @@ import kotlinx.coroutines.selects.select
  * which costs a moment of sound. The codec config never goes that way: a decoder can play nothing
  * without it, so it waits apart and is sent before any packet.
  */
-internal class AudioQueue(capacity: Int) {
+class AudioQueue(capacity: Int) {
     private val config = Channel<ByteArray>(Channel.CONFLATED)
     private val packets = Channel<ByteArray>(capacity, BufferOverflow.DROP_OLDEST)
 
@@ -23,6 +25,19 @@ internal class AudioQueue(capacity: Int) {
         // select is biased to the first clause, so a waiting config goes before any packet.
         config.onReceiveCatching { it.getOrNull() }
         packets.onReceiveCatching { it.getOrNull() }
+    }
+
+    /**
+     * Sends [header], then this queue's frames on [session], until it closes or the client leaves.
+     */
+    suspend fun send(session: DefaultWebSocketServerSession, header: String) {
+        session.send(Frame.Text(header))
+        sendUntilClientLeaves(session) {
+            while (true) {
+                val frame = next() ?: break
+                session.send(Frame.Binary(true, frame))
+            }
+        }
     }
 
     fun close() {

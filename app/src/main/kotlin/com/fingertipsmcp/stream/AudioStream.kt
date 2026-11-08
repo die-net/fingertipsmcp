@@ -9,7 +9,6 @@ import android.util.Log
 import com.fingertipsmcp.helperclient.HelperConnection
 import com.fingertipsmcp.model.ApiException
 import io.ktor.server.websocket.DefaultWebSocketServerSession
-import io.ktor.websocket.Frame
 import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.CopyOnWriteArrayList
@@ -85,13 +84,7 @@ internal class AudioStream(
                 configFrame?.let(queue::offer)
                 headerJson
             }
-            session.send(Frame.Text(header))
-            sendUntilClientLeaves(session) {
-                while (true) {
-                    val frame = queue.next() ?: break
-                    session.send(Frame.Binary(true, frame))
-                }
-            }
+            queue.send(session, header)
         } finally {
             if (attached) withContext(NonCancellable) { detach(queue) }
             queue.close()
