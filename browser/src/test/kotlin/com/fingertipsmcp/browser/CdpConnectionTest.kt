@@ -10,6 +10,7 @@ import java.io.PipedOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
@@ -17,6 +18,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
@@ -195,6 +197,22 @@ class CdpConnectionTest {
     }
 
     @Test
+    fun `inline resumes free the gate`() = runTest {
+        val router = CdpRouter {}
+        var blocked: Boolean? = null
+        launch(UnconfinedTestDispatcher(testScheduler)) {
+            router.callCounted("Browser.getVersion", null, null)
+            // The reply resumes this caller, unconfined, inside the delivery. Another thread
+            // asking the router anything must not wait for that delivery to finish.
+            val other = thread { router.closed }
+            other.join(TimeUnit.SECONDS.toMillis(STALL_LIMIT_S))
+            blocked = other.isAlive
+        }
+        router.dispatch("""{"id":1,"result":{}}""")
+        assertEquals(false, blocked)
+    }
+
+    @Test
     @Suppress("MissingUseCall") // The finally closes the output, and the connection the pipe.
     fun `a stalled pipe still times out`() = runTest {
         val threads = Executors.newFixedThreadPool(2).asCoroutineDispatcher()
@@ -209,6 +227,23 @@ class CdpConnectionTest {
                         assertThrows<ApiException> { connection.root.call("Browser.getVersion") }
                     assertEquals("cdp_timeout", error.error)
                 }
+            }
+        } finally {
+            stalled.close()
+            threads.close()
+        }
+    }
+
+    @Test
+    @Suppress("MissingUseCall") // The finally closes the output, and the pipe closes it too.
+    fun `a stalled pipe refuses more`() = runTest {
+        val threads = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        val stalled = StalledOutput()
+        try {
+            PipeTransport(PipedInputStream(PipedOutputStream()), stalled, threads).use { pipe ->
+                // The writer may hold one message in its stalled write, and the queue the rest.
+                val full = assertThrows<IOException> { repeat(PIPE_QUEUE + 2) { pipe.send("{}") } }
+                assertTrue(full.message.orEmpty().contains("stopped reading"))
             }
         } finally {
             stalled.close()

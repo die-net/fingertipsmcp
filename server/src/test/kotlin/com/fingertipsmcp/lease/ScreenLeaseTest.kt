@@ -43,7 +43,7 @@ class ScreenLeaseTest {
                 if (lock) locked = true
                 failures
             },
-            lockedNow = { locked },
+            phone = PhoneLock { locked },
             now = { testScheduler.currentTime },
             ready = {
                 events += "ready"
@@ -68,39 +68,12 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `cleanup can go unmentioned`() = runTest {
-        // A desktop browser's cleanup hides the last holder's tab, which surprises nobody.
-        val lease =
-            ScreenLease(
-                scope = backgroundScope,
-                cleanup = {
-                    cleanups++
-                    emptyList()
-                },
-                lockedNow = { false },
-                now = { testScheduler.currentTime },
-                cleanedNote = { null },
-            )
-        lease.withScreen(a) {}
-        val waiting = async { lease.withScreen(b) { "b ran" } }
-        runCurrent()
-        lease.release(a)
-        val got = waiting.await()
-        assertEquals("b ran", got.value)
-        assertEquals(1, cleanups)
-        assertTrue(got.notes.isEmpty(), got.notes.toString())
-        assertTrue(lease.holds(b))
-    }
-
-    @Test
     fun `failed cleanup is reported`() = runTest {
         val lease =
             ScreenLease(
                 scope = backgroundScope,
                 cleanup = { listOf("no blank tab") },
-                lockedNow = { false },
                 now = { testScheduler.currentTime },
-                cleanedNote = { null },
             )
         lease.withScreen(a) {}
         lease.release(a)
@@ -221,7 +194,7 @@ class ScreenLeaseTest {
                     if (lock) locked = true
                     emptyList()
                 },
-                lockedNow = { locked },
+                phone = PhoneLock { locked },
                 now = { testScheduler.currentTime },
             )
         lease.withScreen(a) { locked = false }
@@ -479,7 +452,7 @@ class ScreenLeaseTest {
             ScreenLease(
                 scope = backgroundScope,
                 cleanup = { emptyList() },
-                lockedNow = { true },
+                phone = PhoneLock { true },
                 now = { testScheduler.currentTime },
                 ready = {
                     gate.await()
@@ -566,7 +539,7 @@ class ScreenLeaseTest {
                     if (lock) locked = true
                     emptyList()
                 },
-                lockedNow = { locked },
+                phone = PhoneLock { locked },
                 now = { testScheduler.currentTime },
             )
         lease.withScreen(a) { locked = false }
@@ -593,7 +566,7 @@ class ScreenLeaseTest {
                     gate.await()
                     emptyList()
                 },
-                lockedNow = { true },
+                phone = PhoneLock { true },
                 now = { testScheduler.currentTime },
             )
         lease.withScreen(a) {}

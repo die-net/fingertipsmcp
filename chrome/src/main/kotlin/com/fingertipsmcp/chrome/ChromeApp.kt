@@ -88,8 +88,6 @@ class ChromeApp(
                 tabs.showPlaceholder()
                 emptyList()
             },
-            lockedNow = { false },
-            cleanedNote = { null },
         )
     private val tabs: Tabs =
         Tabs(

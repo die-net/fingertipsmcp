@@ -1,6 +1,7 @@
 package com.fingertipsmcp.mcp
 
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.server.BrowserInputPolicy
@@ -29,7 +30,7 @@ class McpScreenTest {
             ScreenLease(
                 CoroutineScope(Dispatchers.Unconfined),
                 cleanup = { emptyList() },
-                lockedNow = { true },
+                phone = PhoneLock { true },
             )
         val holder = Holder.Session("a")
         lease.addNote(holder, "the screen went elsewhere")

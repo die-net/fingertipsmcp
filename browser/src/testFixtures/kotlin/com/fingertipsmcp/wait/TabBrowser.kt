@@ -23,8 +23,9 @@ import com.fingertipsmcp.model.EvalResult
 
 /**
  * A browser with one Chrome tab, for a wait to look up, whose server has answered. A wait uses
- * nothing else, so every other call fails the test that made it. A test overrides what it needs. It
- * is a test fixture, so the `chrome` module's tests can use it too.
+ * nothing else, so every other call fails the test that made it. A test overrides what it needs, as
+ * the desktop viewer's tests do. It is a test fixture, so the `chrome` module's tests can use it
+ * too.
  */
 open class TabBrowser : BrowserService {
     override suspend fun targets(): List<BrowserTarget> =
@@ -81,5 +82,5 @@ open class TabBrowser : BrowserService {
 
     override suspend fun capture(id: String, on: Boolean): BrowserCaptureResult = unused()
 
-    private fun unused(): Nothing = error("A wait does not use this")
+    private fun unused(): Nothing = error("This test's TabBrowser does not answer this call")
 }

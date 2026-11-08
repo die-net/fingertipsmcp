@@ -39,7 +39,10 @@ interface CdpTransport : Closeable {
  * `--remote-debugging-pipe`: Chrome reads NUL-terminated JSON on its fd 3 ([output] here) and
  * writes it on fd 4 ([input]). Blocking reads and writes run on [io]. A writer coroutine drains the
  * queue [send] fills, as Ktor's does for a WebSocket. A write that fails ends the queue, so later
- * sends fail at once; the reader ends when Chrome closes its end.
+ * sends fail at once; the reader ends when Chrome closes its end. A Chrome that stops reading
+ * without closing the pipe ends neither, so the queue holds at most [PIPE_QUEUE] messages and a
+ * send past that fails, rather than every command sent during the stall staying queued after its
+ * caller has timed out.
  */
 class PipeTransport(
     private val input: InputStream,
@@ -47,7 +50,7 @@ class PipeTransport(
     private val io: CoroutineContext,
     private val maxMessage: Int = MAX_MESSAGE,
 ) : CdpTransport {
-    private val queue = Channel<String>(Channel.UNLIMITED)
+    private val queue = Channel<String>(PIPE_QUEUE)
     private val writer =
         CoroutineScope(
                 io + SupervisorJob() + CoroutineName("devtools-pipe-writer") + devtoolsFailed
@@ -57,6 +60,7 @@ class PipeTransport(
     override fun send(text: String) {
         val queued = queue.trySend(text)
         if (queued.isSuccess) return
+        if (!queued.isClosed) throw IOException("DevTools has stopped reading commands")
         val cause = queued.exceptionOrNull()?.takeIf { it is IOException }
         throw IOException(cause?.message ?: DEVTOOLS_CLOSED, cause)
     }
@@ -116,6 +120,13 @@ class PipeTransport(
 }
 
 /**
+ * How many messages a [PipeTransport] holds for a Chrome that is not reading them. Callers wait for
+ * one reply at a time, and the writer drains the queue as fast as Chrome reads, so only a stall
+ * fills it.
+ */
+internal const val PIPE_QUEUE = 1024
+
+/**
  * A browser-level DevTools WebSocket, for a browser started with a debugging port. [onClose] closes
  * what the socket runs on.
  */
@@ -165,9 +176,8 @@ class CdpBrowserConnection(private val transport: CdpTransport, context: Corouti
     /** Starts reading. Sessions detached by the browser, as when their tab closes, stop then. */
     @Suppress("TooGenericExceptionCaught") // A reader bug is reported to callers, then rethrown.
     fun start() {
-        // Listening before the reader starts, so no detach is missed. It lasts as long as the
-        // connection, so it is never closed.
-        @Suppress("MissingUseCall")
+        // Listening before the reader starts, so no detach is missed.
+        @Suppress("MissingUseCall") // It lasts as long as the connection, so it is never closed.
         root.listen { event ->
             if (event.method != "Target.detachedFromTarget") return@listen
             val gone = event.params.decodeCdp<Detached>()?.sessionId ?: return@listen

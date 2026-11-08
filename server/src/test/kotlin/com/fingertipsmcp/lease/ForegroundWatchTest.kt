@@ -30,7 +30,7 @@ class ForegroundWatchTest {
                     cleanup()
                     emptyList()
                 },
-                lockedNow = { false },
+                phone = PhoneLock { false },
                 now = { testScheduler.currentTime },
             )
         val watch =
