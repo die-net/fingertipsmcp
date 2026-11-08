@@ -54,14 +54,23 @@ object KeyMatcher {
     private val SPOKEN_NAMES: Set<String> = SPOKEN.values.flatten().toSet()
 
     /**
-     * The key that types [c]. Gboard lists its suggestions with its keys, and a suggestion can be a
-     * single letter. Tapping one enters a word and a space, so a real key comes first.
+     * The keys in [nodes], the IME's clickable nodes, leaving out its word suggestions. Gboard
+     * lists its suggestions with its keys, ahead of them, and a suggestion can read like a key: `w`
+     * after a `w`, or `at`, a spoken name for `@`. Tapping one enters the word and a space. Gboard
+     * gives every key a view id and no suggestion one, though the ids differ by version
+     * (`key_pos_0_1` in 15.1, `D02` in 17.2 and 18.6). So once enough keys that type a character
+     * have an id to make a keyboard, a node without one is not a key. A keyboard that gives its
+     * keys no ids keeps every node, since nothing tells its suggestions apart.
      */
+    fun withoutSuggestions(nodes: List<ImeKey>): List<ImeKey> {
+        val named = nodes.filter { it.id != null }
+        return if (looksLikeKeyboard(named)) named else nodes
+    }
+
+    /** The key that types [c]. */
     fun forChar(keys: List<ImeKey>, c: Char): ImeKey? {
         val literal = c.toString()
-        val matches = keys.filter { it.label == literal }
-        return matches.firstOrNull { it.id?.contains("key_pos_") == true }
-            ?: matches.firstOrNull()
+        return keys.firstOrNull { it.label == literal }
             ?: SPOKEN[c]?.let { names -> keys.firstOrNull { it.label.lowercase() in names } }
     }
 

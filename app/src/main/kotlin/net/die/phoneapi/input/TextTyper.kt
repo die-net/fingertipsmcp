@@ -159,7 +159,8 @@ internal class TextTyper(
         points += outcome.points
     }
 
-    private fun keys(): List<ImeKey> = tree.keyboard().map { it.asKey() }
+    private fun keys(): List<ImeKey> =
+        KeyMatcher.withoutSuggestions(tree.keyboard().map { it.asKey() })
 
     private suspend fun typeKeyEvents(request: TextRequest): ActionResult {
         if (!keyInjector.isAvailable) throw ApiException.helperUnavailable()

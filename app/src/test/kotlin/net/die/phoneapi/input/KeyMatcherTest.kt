@@ -100,13 +100,18 @@ class KeyMatcherTest {
 
     @Test
     fun `a suggestion is not a key`() {
-        val real = key("q", gboardId + "0_0")
-        assertEquals(real, KeyMatcher.forChar(listOf(key("q"), real), 'q'))
+        // Gboard 15.1's ids. Gboard 17.2's are in GboardSuggestionsTest.
+        val keys = "qwertyuiop".mapIndexed { i, c -> key(c.toString(), gboardId + "0_$i") }
+        val read = KeyMatcher.withoutSuggestions(listOf(key("q")) + keys)
+        assertEquals(keys, read)
+        assertEquals(keys[0], KeyMatcher.forChar(read, 'q'))
     }
 
     @Test
     fun `a keyboard without ids works`() {
-        assertEquals("q", KeyMatcher.forChar(listOf(key("w"), key("q")), 'q')?.label)
+        val read = KeyMatcher.withoutSuggestions(letters)
+        assertEquals(letters, read)
+        assertEquals("q", KeyMatcher.forChar(read, 'q')?.label)
     }
 
     @Test
