@@ -1081,13 +1081,29 @@ Checked again on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on scr
 - A capture keeps its frame size. Captured at 1300 by 813 CSS pixels, 650 by 406 frames, the window set to 800 by 600 with `Browser.setWindowBounds` left the track's settings and frames at 650 by 406. `applyConstraints` on the track changed its settings, but a still page sent no frame at the new size. Capturing the tab again failed with "Cannot capture a tab with an active stream." from `tabCapture.getMediaStreamId`, until its capture had stopped. Stopping it first worked: 900 by 613 CSS pixels gave a header of 450 by 306 naming 900 by 613, and 1300 by 813 gave 650 by 406. Moving the window changed nothing. The pipe has room for one DevTools client, and a person's own Chrome was running, so no window was scripted by app name; these resizes ran with `--attach` to a Chrome started with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, and a second DevTools client on that port.
 - Chrome quit under a viewer (SIGTERM, as a person quitting does): the video socket closed with 1011 "Chrome stopped" within a second, the audio socket with 1000, and no Chrome started again until the next call. The build before this change left both sockets open with no frames, and a tab switch the extension reported as Chrome quit made it start a new Chrome.
 - The audio socket sent its header, the Opus config, and 101 packets for a 2 s tone.
-- Chrome exited, with a line from Crashpad in its log, about 2 s after capture moved to a tab in a popup window that a page opened with `window.open(url, name, "popup,width=700,height=500")`. It did so three times, on the build before this change too. The popup alone, with no viewer, did not.
+- Chrome exited, with a line from Crashpad in its log, about 2 s after capture moved to a tab in a popup window that a page opened with `window.open(url, name, "popup,width=700,height=500")`. It did so three times, on the build before this change too. The popup alone, with no viewer, did not. [The popup crash](#the-popup-crash) has the cause.
 - Each frame crosses the pipe as base64 in JSON. With a canvas of noise at 4.1 Mbps and 30 fps, 600 by 998 frames, and one viewer, the JVM used 0.51 s of CPU in 40 s on an M2 Pro, about 1.3% of one core, against 0.01 s in 20 s with no viewer. Making one 17.5 KB frame's base64 and JSON in Node 26 took 0.08 ms, 0.25% of a core at 30 fps.
+
+### The popup crash
+
+Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on scratch profiles. Each step ran on its own over raw DevTools, on a Chrome started with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, with the viewer's extension loaded and no capture running:
+
+- `Extensions.triggerAction` on the tab target of a popup that a page opened with `window.open(url, name, "popup,width=700,height=500")` killed Chrome about 0.35 s later, before it answered, 2 of 2 times. No `getMediaStreamId` or `getUserMedia` had run. macOS's crash report had a SIGSEGV at address 0 on the browser's main thread. The same call on a tab that `window.open(url, "_blank")` opened in the normal window worked 3 of 3 times, and a capture after it did too.
+- It killed Chrome the same way on a tab in a window of another browser context, made with `Target.createBrowserContext` and `Target.createTarget` with `newWindow`.
+- Chromium's `ExtensionsHandler::TriggerAction` at the 156.0.8078.80 tag, in `chrome/browser/devtools/protocol/extensions_handler.cc`, takes the window's `ExtensionsContainer` and the extension's action in it without checking either for null. A popup window has no toolbar, and so no container. A window of another profile has no action for this extension. On the main branch, read the same day, the function checks both and answers "Browser window does not support extension actions." and "No action found for the provided extension id." instead. The history that would say which release has the checks needs a sign-in.
+- `Browser.getWindowForTarget` gives the same window id as `chrome.windows`. The extension read the popup's window as type `popup` and the other's as `normal`, and `chrome.windows.get` for the other context's window failed with "No window with id".
+
+So FingertipsMCP runs the action only on a tab in a window the extension reads as `normal`. With that, on the same Chrome, through the jar and a WebSocket viewer:
+
+- A popup opened from the captured tab left capture on that tab, with no crash, 4 of 4 times. Frames kept coming at the still-page rate, and the log said the popup was passed over.
+- A tab opened with `_blank` was followed, with a new header and key frame within 0.1 s.
+- Closing the captured tab with the popup still open moved capture to the placeholder. 1 of 3 times it sent a header within 0.1 s. 2 of 3 times it sent no frame at all in the 5 s that followed, so the viewer page would show no picture and reconnect after 12 s. Closing the captured tab with no popup gave a header within 0.1 s, 1 of 1. Before this change the same sequence crashed Chrome, so this was not seen before.
 
 ### Still to check for the viewer
 
 - Linux, headless Chrome, and the Docker image with the viewer.
-- Which step crashes Chrome when capture moves to a popup window's tab: the action, `getMediaStreamId`, or `getUserMedia`.
+- A capture of the placeholder, or of any still tab, that never sends its first frame, as below.
+- Whether a tab in an installed web app's window (`chrome.windows` type `app`) has the action, which FingertipsMCP passes over as it does a popup's.
 - A viewport that changes while the window does not, as with page zoom, the bookmarks bar, or docked DevTools: no window event comes, so the capture keeps the old viewport.
 - The resize with the pipe rather than `--attach`, on a Chrome a script may resize.
 - Chrome 125, the oldest the viewer is meant for: tab targets, a tab session's `setAutoAttach`, and the offscreen document's target events.

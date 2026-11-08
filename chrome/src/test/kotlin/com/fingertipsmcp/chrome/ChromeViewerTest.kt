@@ -30,7 +30,7 @@ import org.junit.jupiter.api.io.TempDir
 class ChromeViewerTest {
     @TempDir lateinit var home: File
 
-    private val browser = ShowingBrowser(listOf("PAGE"), "PAGE")
+    private val browser = ShowingBrowser(listOf("PAGE"), setOf("PAGE"))
 
     @Test fun `failed video start stops`() = assertStops { viewer -> viewer.watchVideo(SPEC) {} }
 
@@ -54,7 +54,7 @@ class ChromeViewerTest {
                             }
                             connection
                         },
-                        browser = ShowingBrowser(listOf("PAGE"), "PAGE"),
+                        browser = ShowingBrowser(listOf("PAGE"), setOf("PAGE")),
                         extensionHome = home,
                         scope = backgroundScope,
                         pointer = DesktopPointer(),
@@ -127,7 +127,7 @@ class ChromeViewerTest {
         withViewer(this, { tabs["TAB2"] = "PAGE2" }) { chrome, viewer ->
             val watching = watch(viewer)
             browser.pages = listOf("PAGE", "PAGE2")
-            browser.shown = "PAGE2"
+            browser.shown = setOf("PAGE2")
             chrome.captureError = "Permission denied"
             chrome.activated()
             runCurrent()
@@ -138,6 +138,77 @@ class ChromeViewerTest {
             val captures = chrome.capture
             watch(viewer)
             assertEquals(captures + 1, chrome.capture)
+        }
+    }
+
+    /**
+     * A page opens a popup, which shows beside the captured tab, and later a tab in another normal
+     * window shows too. The extension's action on the popup's tab would crash Chrome, so capture
+     * stays on its tab, then moves to the other normal window's tab, past the popup listed before
+     * it.
+     */
+    @Test
+    fun `popup is passed over`() = runTest {
+        val setUp: FakeChrome.() -> Unit = {
+            tabs["POPUP_TAB"] = "POPUP"
+            windowOf["POPUP"] = POPUP_WINDOW
+            windows[POPUP_WINDOW] = "popup"
+            tabs["TAB2"] = "PAGE2"
+            windowOf["PAGE2"] = OTHER_WINDOW
+            windows[OTHER_WINDOW] = "normal"
+        }
+        withViewer(this, setUp) { chrome, viewer ->
+            val watching = watch(viewer)
+            val first = chrome.capture
+            browser.pages = listOf("PAGE", "POPUP")
+            browser.shown = setOf("PAGE", "POPUP")
+            chrome.activated()
+            runCurrent()
+            assertFalse(chrome.crashed)
+            assertEquals(first, chrome.capture)
+            browser.pages = listOf("PAGE", "POPUP", "PAGE2")
+            browser.shown = setOf("PAGE", "POPUP", "PAGE2")
+            chrome.activated()
+            runCurrent()
+            assertFalse(chrome.crashed)
+            assertEquals(first + 1, chrome.capture)
+            assertNull(watching.failure)
+        }
+    }
+
+    /**
+     * The captured tab closes, and only a popup shows. Viewers are closed with the reason, rather
+     * than Chrome crashed by the action on the popup's tab.
+     */
+    @Test
+    fun `popup alone closes viewers`() = runTest {
+        val setUp: FakeChrome.() -> Unit = {
+            tabs["POPUP_TAB"] = "POPUP"
+            windowOf["POPUP"] = POPUP_WINDOW
+            windows[POPUP_WINDOW] = "popup"
+        }
+        withViewer(this, setUp) { chrome, viewer ->
+            val watching = watch(viewer)
+            browser.pages = listOf("POPUP")
+            browser.shown = setOf("POPUP")
+            chrome.ended()
+            runCurrent()
+            assertFalse(chrome.crashed)
+            val failure = watching.failure.orEmpty()
+            assertTrue(failure.contains("popup"), failure)
+        }
+    }
+
+    /**
+     * The only tab showing is in a window of another profile, which has no action for the
+     * extension, so a viewer is refused instead of Chrome crashed.
+     */
+    @Test
+    fun `other profile's tab is refused`() = runTest {
+        withViewer(this, { windowOf["PAGE"] = OTHER_WINDOW }) { chrome, viewer ->
+            assertThrows<ApiException> { viewer.watchVideo(SPEC) {} }
+            assertFalse(chrome.crashed)
+            assertEquals(0, chrome.capture)
         }
     }
 
@@ -328,6 +399,8 @@ class ChromeViewerTest {
         const val KEY = FakeChrome.KEY
         const val DELTA = FakeChrome.DELTA
         const val FRAMES = 300
+        const val POPUP_WINDOW = 2
+        const val OTHER_WINDOW = 3
         const val FRAME_MS = 33L
     }
 }

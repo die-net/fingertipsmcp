@@ -2,8 +2,9 @@
 // viewer shows (Extensions.triggerAction), which is what lets tabCapture capture that tab. The
 // worker gets a stream id for it and hands the id to the offscreen document, which captures and
 // encodes when FingertipsMCP tells it to. The worker also tells the document when the active tab
-// changes, so FingertipsMCP can follow it, and when a window changes size. The extension has no content scripts and no
-// web-accessible resources, so no page can see it.
+// changes, so FingertipsMCP can follow it, and when a window changes size, and answers what type a
+// window is. The extension has no content scripts and no web-accessible resources, so no page can
+// see it.
 "use strict";
 
 const OFFSCREEN = "offscreen.html";
@@ -31,6 +32,19 @@ chrome.action.onClicked.addListener(async (tab) => {
   } catch (e) {
     tell({ op: "stream", error: String((e && e.message) || e) });
   }
+});
+
+// Answers the offscreen document with the type of the window it names, as chrome.windows gives it,
+// or null when the extension can't see that window, as with one of another profile. Only a normal
+// window has this extension's action, and FingertipsMCP runs the action only on a tab in one; the
+// Viewer section of docs/chrome.md says why. The document can't ask chrome.windows itself.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.op !== "window") return false;
+  chrome.windows.get(message.id).then(
+    (window) => reply({ type: window.type }),
+    () => reply({ type: null }),
+  );
+  return true;
 });
 
 chrome.tabs.onActivated.addListener(() => tell({ op: "activated" }));
