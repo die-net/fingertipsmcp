@@ -1011,3 +1011,20 @@ Chromium has a check, behind the `CDPScreenshotNewSurface` feature, that crashes
 - `chrome-input-check` on a phone, since it now tests a page from a server. It passed on the Android 13, 16, and 17 emulators on 2026-11-07, with Chrome on screen too. On Chrome 91 six checks differ, since that Chrome has no hold.
 - That `Page.captureScreenshot` ends the hold on Chrome 156 on the Android 11 test phone. It was not tried there. If it does not, a tap on a page Chrome has not drawn fails with `not_visible`.
 - Whether Chrome ever turns on `CDPScreenshotNewSurface`. FingertipsMCP sends a screenshot request to a `hidden` page that dropped a press, which that check would crash on.
+
+## Desktop Chrome (FingertipsMCP for Chrome)
+
+Checked with Chrome 155 on macOS while the desktop build was first written, and again on 2026-11-04 with Chrome 156.0.8078.80 on macOS, headful, with a scratch profile:
+
+- Any remote-debugging switch, `--remote-debugging-pipe` included, makes `navigator.webdriver` true even without `--enable-automation`. `--disable-blink-features=AutomationControlled` puts it back to false. On Chrome 155 the property's descriptor, getter source, name, length, and place in `Navigator.prototype` then matched an uncontrolled Chrome's, and on 156 it read false.
+- That flag puts a warning bar on the tab Chrome opens at launch, 56 CSS pixels tall at a 1200x900 window on Chrome 155. With `--no-startup-window` and the first window opened through `Target.createTarget` with `newWindow`, no tab showed it: the first window, later tabs, and later windows had the same content height as an uncontrolled Chrome's.
+- `--no-startup-window` skips session restore: a profile saved with two tabs, and one after `kill -9`, both came back with one blank tab.
+- On macOS, Chrome with no window keeps running, and `Target.createTarget` without `newWindow` opens a window.
+- Mouse clicks, wheel scrolls, and keys over `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent` reach the page with `isTrusted` true, and a click on an element 3000 px down the page landed after wheel scrolling (2026-11-04).
+
+- Chrome shows a PDF at the file's own URL, not at a viewer address as on Android. On 2026-11-06, with Chrome 156, `document.contentType` and the main frame's `mimeType` in `Page.getFrameTree` were `application/pdf`, and the document held only an empty body, so page-read.js found 0 characters. Taking the tab over as on Android worked: `read`, a second `read`, `find`, and `url` reads of a local PDF, and the 38,965 characters of the arXiv PDF of "Attention Is All You Need" over https. The window then shows FingertipsMCP's empty page rather than Chrome's viewer.
+- A PDF sent with `Content-Disposition: attachment` saved to the download folder and closed the new tab, as on Android. Two `url` reads of it returned its text and left one file (2026-11-06).
+
+### Still to check
+
+- Chrome on Linux with no window left, under Xvfb, and in the Docker image, which has never been built or run, on amd64 or arm64; and what desktop Chrome answers when attaching to a tab that has just closed, so `not_found` covers that race as it does on Android.
