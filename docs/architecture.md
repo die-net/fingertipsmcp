@@ -24,6 +24,7 @@ flowchart LR
 | **`app/`** | Android: settings UI, `ListenerService`, the abstract-socket engine, helper client, adb DevTools sockets, touch and key injection, encoders, viewer assets. `AppGraph` wires the shared modules |
 | **`browser/`** | JVM: DevTools sessions, `BrowserServiceImpl`, page reading (`page-read.js` and the other page scripts, Readability, pdf.js), the humanizer, browser waits |
 | **`server/`** | JVM: Ktor REST/WebSocket routes, bearer auth, token store, MCP and sessions, the screen lease, tab ownership |
+| **`chrome/`** | JVM app: desktop Chrome over `--remote-debugging-pipe`, its CLI, and the Docker image. See [FingertipsMCP for Chrome](#fingertipsmcp-for-chrome) |
 | **`helper/`** | Separate `app_process` as shell UID: UiAutomation snapshots, motion/key injection, screencap, display mirror, DevTools socket relay, logcat |
 | **`api-model/`** | Shared `@Serializable` DTOs; same types drive MCP tool schemas and `GET /v1/openapi.json` |
 | **`scripts/fingertips`** | Production client (pair, server, helper, papi, session) |
@@ -100,6 +101,21 @@ An open listens on a browser session from before the tab exists, with `Target.se
 | The server has not answered | 12 s passing | The open returns `loading` true, and a new browser session keeps listening for up to 2 minutes, so a save that starts later is cancelled too. A `browser.*` wait on the tab connects only once that session has heard the tab commit or close, and until then a call that uses the page fails `content_unavailable` at once. Once that session has ended, for any reason, calls go ahead as for any tab |
 
 A tab opened on its URL gets no connection of its own, since Chrome can hold a new connection's `Page.enable` until the commit, and that connection would race Chrome closing the tab. For the same reason a wait stays off a tab still waiting for its server: its connection would be held past a call's limit, or be shown the first page and take that for loaded. The commit of a tab that navigated, heard after the open returned, is a title other than the one discover replayed, since a connection coming or going repeats the first page's title with the new URL. Only a tab that has to navigate gets one: `capture`, which opens blank so recording starts first, and incognito, which opens on Chrome's new tab page. An error from `Page.navigate` waits 2 s for a save or a close to say what it was, and a load that really failed is then a 400. Chrome saying nothing by a deadline is not read as an answer.
+
+## FingertipsMCP for Chrome
+
+FingertipsMCP for Chrome is the same server and browser service on a computer, with no phone and no helper.
+
+```mermaid
+flowchart LR
+  Client["MCP client / HTTP client"] -->|"loopback TCP or Unix socket + Bearer, or stdio"| Jar["fingertipsmcp-chrome.jar: Ktor + MCP"]
+  Jar -->|"--remote-debugging-pipe (fd 3/4)"| Chrome["Google Chrome"]
+```
+
+- **Launch.** `ChromeLocator` finds Google Chrome stable, or Chromium with a warning. `ChromeLauncher` starts it through `/bin/sh`, which turns the child's stdin and stdout into Chrome's fds 3 and 4, since Java gives a child only three descriptors. Messages are NUL-terminated JSON (`PipeTransport`). `BrowserSupervisor` starts Chrome again when it has exited. `--attach` uses a WebSocket to a Chrome with a debugging port instead, for development.
+- **Input.** `DesktopPageInput` plans each action with `Humanizer`'s mouse and typing models and plays it through `DesktopEvents`. `CdpDesktopEvents` is `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`; an OS backend (XTEST or uinput, CGEvent) could implement the same interface, mapping viewport points to the screen. The pointer position persists across actions, a hidden tab is brought to the front first, targets are scrolled into view with the wheel, and one action runs at a time. Every input takes the screen lease, since there is one pointer and one keyboard focus.
+- **Server.** `ChromeApp` builds `ServerServices` with the browser, `TabScreenshots`, `BrowserWaits` (browser conditions on the wait loop Android uses), `HostDevice`, a screen lease with nothing to clean up, and tab ownership on the `chrome` endpoint. MCP refuses a non-loopback `Host` and any `Origin`, since a loopback port is reachable from web pages by name. `--stdio` serves one local client as one session, with no token. Tokens come from `fingertipsmcp-chrome.jar token create`, which also writes `pairing.json`.
+- **Detection.** Any remote-debugging switch makes Chrome report `navigator.webdriver` true, so FingertipsMCP for Chrome passes `--disable-blink-features=AutomationControlled` (`--show-automation` opts out). Chrome puts a warning bar for that flag on the tab it opens at launch, so a windowed Chrome starts with `--no-startup-window` and `ChromeLauncher` opens the first window itself; that also skips session restore. `LastTab` opens a blank tab before the API closes the last one, so Chrome on Linux does not exit. The environment matters most: a real desktop session, then Xorg with a GPU, then Xvfb, then headless.
 
 ## Host client
 

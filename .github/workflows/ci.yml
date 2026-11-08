@@ -29,7 +29,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Check, lint, test, build
-        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleDebug buildHealth --continue
+        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test :chrome:test assembleDebug :chrome:fatJar buildHealth --continue
 
       # Code scanning on a private repository needs GitHub Code Security.
       - name: Upload detekt SARIF
@@ -60,3 +60,9 @@ jobs:
         with:
           name: fingertipsmcp-android-debug
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Upload fingertips-chrome jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: fingertips-chrome
+          path: chrome/build/dist/fingertipsmcp-chrome.jar

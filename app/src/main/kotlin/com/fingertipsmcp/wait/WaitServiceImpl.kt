@@ -17,14 +17,12 @@ import com.fingertipsmcp.tree.TreeSession
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The single condition engine behind `POST /v1/wait`. Conditions are re-evaluated when something
@@ -89,26 +87,17 @@ internal class WaitServiceImpl(
                 try {
                     val outcome =
                         awaitConditions(all, any, deadline, changes, SystemClock::uptimeMillis)
-                    if (outcome.matched) settle(request.settleMs, deadline, changes)
+                    if (outcome.matched) {
+                        settle(request.settleMs, deadline, changes, SystemClock::uptimeMillis) {
+                            tree.lastChangeMs
+                        }
+                    }
                     result(request, outcome, SystemClock.uptimeMillis() - started, scopes)
                 } finally {
                     pump.cancel()
                 }
             } finally {
                 browserWatch?.close()
-            }
-        }
-    }
-
-    /** Holds the result back until the UI has been quiet for [settleMs], or time runs out. */
-    private suspend fun settle(settleMs: Long, deadline: Long, changes: ReceiveChannel<Unit>) {
-        if (settleMs <= 0) return
-        while (true) {
-            val now = SystemClock.uptimeMillis()
-            val quietAt = tree.lastChangeMs + settleMs
-            if (now >= quietAt || now >= deadline) return
-            withTimeoutOrNull((minOf(quietAt, deadline) - now).coerceAtLeast(1)) {
-                changes.receive()
             }
         }
     }
@@ -150,26 +139,10 @@ internal class WaitServiceImpl(
         )
 
     private fun validate(request: WaitRequest) {
-        val count = request.all.size + request.any.size
-        if (count == 0) throw ApiException.badRequest("Pass at least one condition in all or any")
-        if (count > MAX_CONDITIONS) {
-            throw ApiException.badRequest("At most $MAX_CONDITIONS conditions per wait")
-        }
-        if (request.timeoutMs !in 0..MAX_TIMEOUT_MS) {
-            throw ApiException.badRequest("timeoutMs must be 0..$MAX_TIMEOUT_MS")
-        }
-        if (request.settleMs !in 0..MAX_SETTLE_MS) {
-            throw ApiException.badRequest("settleMs must be 0..$MAX_SETTLE_MS")
-        }
+        validateWait(request)
         val options = request.snapshotOptions ?: return
         if ((options.maxNodes ?: 1) < 1 || (options.maxChars ?: 1) < 1) {
             throw ApiException.badRequest("maxNodes and maxChars must be at least 1")
         }
-    }
-
-    private companion object {
-        const val MAX_CONDITIONS = 16
-        const val MAX_TIMEOUT_MS = 300_000L
-        const val MAX_SETTLE_MS = 30_000L
     }
 }

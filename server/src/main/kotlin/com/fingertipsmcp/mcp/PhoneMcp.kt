@@ -195,6 +195,30 @@ private suspend fun serve(session: McpSession, call: ApplicationCall) = coroutin
 private fun noSession() =
     ApiError("session_not_found", "No such MCP session. Start a new one with initialize.")
 
+/** An MCP server for one local client, and the session it acts as. */
+class LocalMcp internal constructor(val server: Server, private val stop: suspend () -> Unit) {
+    /** Ends the session: lets go of the screen and closes its tabs. */
+    suspend fun end() {
+        stop()
+    }
+}
+
+/**
+ * MCP for one local client that has no token, such as one that started this process and speaks on
+ * stdio. It has [scopes]' tools and one session, named [name], which lasts until [LocalMcp.end].
+ */
+fun localMcp(
+    services: ServerServices,
+    sessions: McpSessions,
+    name: String,
+    scopes: Set<Scope>,
+): LocalMcp {
+    val id = sessions.startLocal(name, scopes)
+    val control = sessions.control(id, McpSessions.LOCAL_TOKEN, name)
+    val server = phoneServer(services, scopes, Holder.Session(id), control)
+    return LocalMcp(server) { sessions.end(id, "the local client went away") }
+}
+
 /** The MCP server for one session, with the tools and resources [scopes] allow. */
 private fun phoneServer(
     shared: ServerServices,

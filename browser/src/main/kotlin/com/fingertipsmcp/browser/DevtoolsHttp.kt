@@ -10,7 +10,7 @@ import java.security.SecureRandom
 import java.util.Base64
 
 /** One DevTools HTTP GET, used for `/json/list` and `/json/version`. */
-internal fun httpGet(input: InputStream, output: OutputStream, path: String, maxBody: Int): String {
+fun httpGet(input: InputStream, output: OutputStream, path: String, maxBody: Int): String {
     output.write(httpRequest(path))
     output.flush()
     val (status, headers) = input.readHttpHeaders()

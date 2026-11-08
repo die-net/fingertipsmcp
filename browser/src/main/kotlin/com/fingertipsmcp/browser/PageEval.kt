@@ -13,7 +13,7 @@ import kotlinx.serialization.json.put
  * Evaluates [expression] in an isolated world on the page's main frame, so the page's own
  * JavaScript neither sees nor changes it. A script exception comes back as [EvalResult.exception].
  */
-internal suspend fun evaluateIn(
+suspend fun evaluateIn(
     cdp: CdpSession,
     expression: String,
     awaitPromise: Boolean,
