@@ -7,6 +7,7 @@ import com.fingertipsmcp.model.ViewerError
 import com.fingertipsmcp.model.ViewerHolder
 import com.fingertipsmcp.model.ViewerLease
 import com.fingertipsmcp.model.ViewerMessage
+import com.fingertipsmcp.model.ViewerNotice
 import com.fingertipsmcp.stream.VideoSpec
 import com.fingertipsmcp.stream.audioHeader
 import com.fingertipsmcp.stream.videoHeader
@@ -47,6 +48,15 @@ class ViewerWireTest {
             """{"op":"error","id":"a","message":"Bad key: x"}""",
             json(ViewerError(JsonPrimitive("a"), "Bad key: x")),
         )
+    }
+
+    @Test
+    fun `notice messages`() {
+        assertEquals(
+            """{"op":"notice","message":"A popup"}""",
+            json(ViewerNotice("A popup")),
+        )
+        assertEquals("""{"op":"notice"}""", json(ViewerNotice()))
     }
 
     @Test

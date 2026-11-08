@@ -22,6 +22,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -361,9 +362,50 @@ class ViewerSocketTest {
         }
     }
 
+    /**
+     * A notice the controls hold when the socket opens reaches the page first thing, and each
+     * change after that, a clear included, reaches it as it happens.
+     */
+    @Test
+    fun `notices reach the page`() = testApplication {
+        val mouse = DesktopControls()
+        mouse.notice.value = "A popup"
+        val streams = checkNotNull(api.services.streams).copy(controls = mouse)
+        application { fingertipsModule(api.services.copy(streams = streams)) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    assertEquals("A popup", next(this, "notice").message())
+                    mouse.notice.value = null
+                    val cleared = next(this, "notice")
+                    assertEquals(setOf("op"), cleared.keys)
+                    mouse.notice.value = "Another"
+                    assertEquals("Another", next(this, "notice").message())
+                }
+            }
+        }
+    }
+
+    /** A phone has no notice, so its page is sent none. */
+    @Test
+    fun `a phone sends no notice`() = testApplication {
+        application { fingertipsModule(api.services) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    val ops = messagesUntilHandled(this).map { it["op"]?.jsonPrimitive?.content }
+                    assertTrue("notice" !in ops, ops.toString())
+                }
+            }
+        }
+    }
+
+    private fun JsonObject.message(): String? = this["message"]?.jsonPrimitive?.content
+
     /** A desktop browser's viewer controls, which record the mouse's hovers and wheel turns. */
     private class DesktopControls : MouseControls {
         val calls = Channel<String>(Channel.UNLIMITED)
+        override val notice = MutableStateFlow<String?>(null)
 
         override suspend fun contacts(frames: ReceiveChannel<PointerFrame>) {
             for (frame in frames) calls.send("contact ${frame.op}")
@@ -400,15 +442,24 @@ class ViewerSocketTest {
     /** The error messages the server sends for the frames sent before this call. */
     private suspend fun errorsUntilHandled(
         socket: DefaultClientWebSocketSession
+    ): List<JsonObject> =
+        messagesUntilHandled(socket).filter { it["op"]?.jsonPrimitive?.content == "error" }
+
+    /**
+     * The text messages the server sends before it has handled every frame sent before this call,
+     * as [handled] tells.
+     */
+    private suspend fun messagesUntilHandled(
+        socket: DefaultClientWebSocketSession
     ): List<JsonObject> {
         socket.send(Frame.Text("""{"op":"copy","id":"handled"}"""))
-        val errors = mutableListOf<JsonObject>()
+        val messages = mutableListOf<JsonObject>()
         while (true) {
             val frame = socket.incoming.receive()
             if (frame !is Frame.Text) continue
             val message = Json.parseToJsonElement(frame.readText()).jsonObject
-            if (message["id"]?.jsonPrimitive?.content == "handled") return errors
-            if (message["op"]?.jsonPrimitive?.content == "error") errors += message
+            if (message["id"]?.jsonPrimitive?.content == "handled") return messages
+            messages += message
         }
     }
 

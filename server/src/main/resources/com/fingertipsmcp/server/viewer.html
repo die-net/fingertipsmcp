@@ -20,6 +20,7 @@
     #lease { display: grid; margin: 0.4rem 0.5rem 0; width: min(40rem, calc(100% - 1rem)); color: #f0c674; text-align: center; }
     #lease > div { grid-area: 1 / 1; display: flex; align-items: center; justify-content: center; gap: 0.5rem; visibility: hidden; }
     #lease > div.shown { visibility: visible; }
+    #notice { color: #f0c674; }
     #lease button { flex: none; padding: 0.3rem 0.8rem; background: #3a2f12; color: #f0c674; border: 1px solid #806a2a; border-radius: 4px; font: inherit; }
   </style>
 </head>
@@ -43,9 +44,11 @@
   <div id="lease-took"><span></span><button type="button" class="done">Done</button></div>
   <div id="lease-mine"><span></span><button type="button" class="done">Done</button></div>
 </div>
+<p id="notice" hidden></p>
 <p id="status">Connecting</p>
 <script>
 const status = document.getElementById("status");
+const notice = document.getElementById("notice");
 const canvas = document.getElementById("screen");
 const ctx = canvas.getContext("2d");
 function socket(path) {
@@ -506,7 +509,16 @@ function onSocketMessage(data) {
     showLease();
   } else if (message.op === "error" && message.message) {
     status.textContent = message.message;
+  } else if (message.op === "notice") {
+    showNotice(message.message);
   }
+}
+
+// Says why the picture differs from the screen, as when Chrome shows a popup it can't capture.
+// No text hides it.
+function showNotice(text) {
+  notice.textContent = text || "";
+  notice.hidden = !text;
 }
 
 function showLease() {
@@ -573,6 +585,8 @@ function connectPointer() {
     usedSlots.clear();
     gestureT0 = 0;
     failCopies();
+    // The socket that replaces this one sends the notice again if it still holds.
+    showNotice(null);
     status.textContent = "Lost the connection for input. Reconnecting.";
     pointerRetry = setTimeout(connectPointer, pointerRetryMs);
     pointerRetryMs = Math.min(pointerRetryMs * 2, POINTER_RETRY_MAX_MS);

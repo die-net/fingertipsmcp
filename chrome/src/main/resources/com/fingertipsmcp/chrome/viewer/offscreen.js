@@ -355,8 +355,9 @@ globalThis.fingertipsViewer = {
       return { error: String((e && e.message) || e) };
     }
   },
-  // The type of the window with DevTools' id id, which chrome.windows uses too: {type}, with type
-  // null when the extension can't see the window, or {error} when the worker did not answer.
+  // The type of the window with DevTools' id id, which chrome.windows uses too, or of the window
+  // Chrome focused last when id is undefined: {type}, with type null when the extension can't see
+  // the window, or {error} when the worker did not answer.
   async window(id) {
     try {
       const answer = await chrome.runtime.sendMessage({ op: "window", id: id });

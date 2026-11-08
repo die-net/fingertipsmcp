@@ -177,6 +177,59 @@ class ChromeViewerTest {
     }
 
     /**
+     * A popup opens in front of the captured tab and takes focus, so the viewer's controls carry a
+     * notice that says why the picture is another tab. It clears when the person focuses the
+     * captured tab's window with the popup still open, and when the popup closes. A viewer that
+     * starts capture while the popup is in front gets the notice too.
+     */
+    @Test
+    fun `popup in front gives a notice`() = runTest {
+        val setUp: FakeChrome.() -> Unit = {
+            tabs["POPUP_TAB"] = "POPUP"
+            windowOf["POPUP"] = POPUP_WINDOW
+            windows[POPUP_WINDOW] = "popup"
+        }
+        withViewer(this, setUp) { chrome, viewer ->
+            val notice = viewer.controls.notice
+            val watching = backgroundScope.launch {
+                viewer.watchVideo(SPEC) { awaitCancellation() }
+            }
+            runCurrent()
+            assertNull(notice.value)
+            browser.pages = listOf("PAGE", "POPUP")
+            browser.shown = setOf("PAGE", "POPUP")
+            chrome.focused = POPUP_WINDOW
+            chrome.activated()
+            runCurrent()
+            assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
+            chrome.focused = FakeChrome.NORMAL
+            chrome.activated()
+            runCurrent()
+            assertNull(notice.value)
+            chrome.focused = POPUP_WINDOW
+            chrome.activated()
+            runCurrent()
+            assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
+            browser.pages = listOf("PAGE")
+            browser.shown = setOf("PAGE")
+            chrome.focused = FakeChrome.NORMAL
+            chrome.activated()
+            runCurrent()
+            assertNull(notice.value)
+
+            // The last viewer leaves, and one comes back while the popup is in front.
+            watching.cancel()
+            runCurrent()
+            browser.pages = listOf("PAGE", "POPUP")
+            browser.shown = setOf("PAGE", "POPUP")
+            chrome.focused = POPUP_WINDOW
+            watch(viewer)
+            assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
+            assertFalse(chrome.crashed)
+        }
+    }
+
+    /**
      * The captured tab closes, and only a popup shows. Viewers are closed with the reason, rather
      * than Chrome crashed by the action on the popup's tab.
      */

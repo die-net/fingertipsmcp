@@ -11,6 +11,8 @@ import com.fingertipsmcp.model.TextRequest
 import com.fingertipsmcp.model.ViewerHover
 import com.fingertipsmcp.model.ViewerWheel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * What the viewer's input socket and media sockets do on this product. Every product plays
@@ -32,7 +34,16 @@ interface ViewerControls {
 
     /** Copies the selection, or reads the clipboard when nothing is selected. */
     suspend fun copy(): ViewerCopy
+
+    /**
+     * Why the picture differs from what the screen shows, or null when it doesn't. The input socket
+     * sends each change to its page as a `notice`. Only a desktop browser has one.
+     */
+    val notice: StateFlow<String?>
+        get() = NO_NOTICE
 }
+
+private val NO_NOTICE: StateFlow<String?> = MutableStateFlow(null)
 
 /** A mouse's controls: the pointer moving with no button down, and the wheel. */
 interface MouseControls : ViewerControls {

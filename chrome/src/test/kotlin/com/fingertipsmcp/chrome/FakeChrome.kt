@@ -41,6 +41,8 @@ internal class FakeChrome : CdpTransport {
      * profile, which the extension can't see.
      */
     val windows = mutableMapOf(NORMAL to "normal")
+    /** The window Chrome focused last, which `fingertipsViewer.window()` with no id names. */
+    var focused = NORMAL
     /** Whether Chrome crashed, which closed DevTools. */
     var crashed = false
     var captureError: String? = null
@@ -149,7 +151,7 @@ internal class FakeChrome : CdpTransport {
     private fun evaluate(expression: String): JsonElement {
         evaluated += expression
         if (expression.startsWith("fingertipsViewer.window(")) {
-            val id = expression.substringAfter("(").substringBefore(")").toInt()
+            val id = expression.substringAfter("(").substringBefore(")").toIntOrNull() ?: focused
             return buildJsonObject {
                 putJsonObject("result") { putJsonObject("value") { put("type", windows[id]) } }
             }
