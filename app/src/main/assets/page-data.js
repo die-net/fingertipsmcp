@@ -1,6 +1,6 @@
 // Finds the JSON a page embeds for its scripts, for browser_read and browser_find with scope
 // data. Runs in an isolated world. Each blob comes back as JSON text: a JSON script tag as the
-// page wrote it, and an object or array literal in code turned into JSON here, so PhoneAPI never
+// page wrote it, and an object or array literal in code turned into JSON here, so FingertipsMCP never
 // parses JavaScript and never runs any. pageData(want, budget) lists the first DATA_MAX_BLOBS
 // blobs, with the text of those want names, in page order, while their text fits in budget
 // characters, and counts the blobs past them as more; want null lists names and sizes only, and

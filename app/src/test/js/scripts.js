@@ -1,4 +1,4 @@
-// Runs PhoneAPI's page scripts under node, on a fakedom page, as Chrome runs them in an isolated
+// Runs FingertipsMCP's page scripts under node, on a fakedom page, as Chrome runs them in an isolated
 // world: page-read.js as the body of a function given its options, after page-pending.js and
 // page-data.js, with Readability replaced by a stub that returns the article a test gives.
 "use strict";

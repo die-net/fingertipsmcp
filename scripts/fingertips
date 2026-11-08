@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+# fingertips is the client for interacting with the FingertipsMCP android app.
+# Relocatable: copy to ~/bin or /usr/local/bin. Defaults to the release package and
+# stores pairing state under ${XDG_CONFIG_HOME:-$HOME/.config}/fingertips.
+
+set -Eeuo pipefail
+
+USAGE="\
+Usage: $(basename "$0") <command> [<options>]
+    pair      - Mint a token and save the pairing file (pair [--name name] [--scopes a,b])
+    server    - Expose the on-device FingertipsMCP server on localhost
+    papi      - Call the HTTP/WebSocket API
+    session   - Show or end the session papi keeps (session id|end)
+    helper    - Start the listener and shell helper over ADB, and wait until it runs
+    help      - Display this text
+"
+
+FINGERTIPS_PKG="${FINGERTIPS_PKG:-com.fingertipsmcp}"
+FINGERTIPS_STATE="${FINGERTIPS_STATE:-${XDG_CONFIG_HOME:-$HOME/.config}/fingertips}"
+PAPI_PAIRING="${PAPI_PAIRING:-$FINGERTIPS_STATE/pairing.json}"
+
+# Make sure we can have more than a few open files.  The Mac's default is 256.
+ulimit -Sn 4096
+
+main() {
+    local command
+
+    [[ $# -ge 1 ]] \
+        || usage "Missing sub-command"
+
+    [[ $1 =~ ^[-_[:alnum:]]+$ ]] \
+        || usage "'$1' is improper sub-command format"
+
+    command=$1
+    shift
+
+    type "command:$command" &>/dev/null \
+        || usage "'$command' is an invalid sub-command"
+
+    (
+        set +u
+        "command:$command" "$@"
+    )
+}
+
+# shellcheck disable=SC2317
+command:pair() {
+    needs adb
+    needs jq
+
+    local PKG="$FINGERTIPS_PKG"
+    local RECEIVER="$PKG/com.fingertipsmcp.ShellCommandReceiver"
+    local name scopes="" out json port error
+    local -a extras
+    name="$(hostname -s 2>/dev/null || hostname)"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="${2:?--name needs a value}"
+                shift 2
+                ;;
+            --scopes)
+                scopes="${2:?--scopes needs a value}"
+                shift 2
+                ;;
+            *) die "unknown arg $1" ;;
+        esac
+    done
+    # adb shell joins arguments into one remote command line, so keep the name shell-safe.
+    name="${name//[^A-Za-z0-9._-]/-}"
+    extras=(--es name "$name")
+    if [[ -n $scopes ]]; then
+        [[ $scopes =~ ^[A-Za-z,]+$ ]] \
+            || die "--scopes takes names separated by commas, such as observe,control"
+        extras+=(--es scopes "$scopes")
+    fi
+
+    out="$(adb shell am broadcast -n "$RECEIVER" -a com.fingertipsmcp.CREATE_TOKEN "${extras[@]}" | tr -d '\r')" \
+        || die "CREATE_TOKEN failed: adb could not reach the phone."
+    # am prints the receiver's result as text, with its data in quotes: the pairing JSON on result
+    # 0 and a message on result 1. Only that line is read as text; the JSON goes to jq.
+    json="$(sed -n 's/.*result=0, data="\(.*\)"$/\1/p' <<<"$out")"
+    if [[ -z $json ]]; then
+        error="$(sed -n 's/.*result=1, data="\(.*\)"$/\1/p' <<<"$out")"
+        [[ -z $error ]] || die "CREATE_TOKEN failed: $error"
+        die "CREATE_TOKEN failed. Is FingertipsMCP installed as $PKG?"
+    fi
+    json="$(jq -c '.host = "127.0.0.1" | .scheme = "http"' <<<"$json" 2>/dev/null)" \
+        || die "CREATE_TOKEN returned something other than JSON."
+    port="$(jq -r '.port // empty' <<<"$json")"
+    [[ $port =~ ^[0-9]+$ ]] || die "CREATE_TOKEN returned no port."
+
+    mkdir -p "$(dirname "$PAPI_PAIRING")"
+    # The file holds a bearer token, so only its owner may read it.
+    (umask 077 && printf '%s\n' "$json" >"$PAPI_PAIRING")
+    echo "Paired as $name (port $port). Saved to $PAPI_PAIRING. Run '$(basename "$0") server' to expose it." >&2
+}
+
+# shellcheck disable=SC2317
+command:server() {
+    needs adb
+    needs jq
+
+    local PKG="$FINGERTIPS_PKG"
+    load_pairing
+    forward_api "$PAIRING_PORT" "$PKG"
+    echo "FingertipsMCP at http://127.0.0.1:$PAIRING_PORT (package $PKG)." >&2
+}
+
+# shellcheck disable=SC2317
+command:papi() {
+    needs jq
+    needs curl
+
+    local method path body host port token scheme base ws_scheme
+
+    [[ $# -ge 2 ]] || usage "papi needs METHOD and PATH"
+
+    method="$1"
+    path="$2"
+    body="${3:-}"
+
+    load_pairing
+    host="$PAIRING_HOST"
+    port="$PAIRING_PORT"
+    token="$PAIRING_TOKEN"
+    scheme="$PAIRING_SCHEME"
+    base="$host:$port"
+
+    if [[ $method == WS ]]; then
+        needs uv
+        # Prints each text frame on its own line; stops after $PAPI_WS_SECONDS (default 10).
+        ws_scheme="ws"
+        if [[ $scheme == https ]]; then ws_scheme="wss"; fi
+        exec uv run -q --with websockets python3 - "$ws_scheme://$base$path" "$token" "${PAPI_WS_SECONDS:-10}" <<'PY'
+import asyncio, sys, websockets
+url, token, secs = sys.argv[1], sys.argv[2], float(sys.argv[3])
+async def main():
+    async with websockets.connect(
+        url, additional_headers={"Authorization": f"Bearer {token}"}
+    ) as ws:
+        try:
+            async with asyncio.timeout(secs):
+                async for msg in ws:
+                    print(msg, flush=True)
+        except TimeoutError:
+            pass
+asyncio.run(main())
+PY
+    fi
+    # REST calls that act on the phone or its tabs need a session. papi keeps one, so a sequence
+    # of calls is one holder of the screen and its tabs, and makes it when the server first asks.
+    local session out status
+    session="$(papi_session)"
+    out="$(papi_curl "$method" "$path" "$body" "$session")"
+    status="${out##*$'\n'}"
+    if [[ -z ${PAPI_SESSION:-} ]]; then
+        if [[ $status == 404 && -n $session && $(papi_error "$out") == session_not_found ]]; then
+            echo "papi: the session ended; starting a new one, without the screen or the old tabs" >&2
+            status=428
+        fi
+        if [[ $status == 428 ]]; then
+            session="$(papi_new_session)"
+            out="$(papi_curl "$method" "$path" "$body" "$session")"
+        fi
+    fi
+    printf '%s\n' "$out"
+}
+
+# shellcheck disable=SC2317
+command:session() {
+    needs jq
+    needs curl
+
+    local session
+    load_pairing
+    session="$(papi_session)"
+    case "${1:-}" in
+        id)
+            [[ -n $session ]] || die "No session yet; papi starts one when a call needs it."
+            echo "$session"
+            ;;
+        end)
+            [[ -n $session ]] || die "No session to end."
+            papi_curl DELETE /v1/sessions/current "" "$session" >/dev/null
+            if [[ -z ${PAPI_SESSION:-} ]]; then rm -f "$(session_file)"; fi
+            echo "Ended the session." >&2
+            ;;
+        *) usage "session needs id or end" ;;
+    esac
+}
+
+# Where papi keeps its session id: next to the pairing file.
+session_file() {
+    echo "$(dirname "$PAIRING_FILE")/session"
+}
+
+# The session papi uses: PAPI_SESSION, or the one it keeps, or none yet.
+papi_session() {
+    if [[ -n ${PAPI_SESSION:-} ]]; then
+        echo "$PAPI_SESSION"
+    elif [[ -s $(session_file) ]]; then
+        cat "$(session_file)"
+    fi
+}
+
+# Starts a session, keeps its id, and prints it.
+papi_new_session() {
+    local out id
+    out="$(papi_curl POST /v1/sessions "" "")"
+    id="$(head -n 1 <<<"$out" | jq -r '.id // empty' 2>/dev/null)"
+    [[ -n $id ]] || die "papi: could not start a session: $out"
+    (umask 077 && echo "$id" >"$(session_file)")
+    echo "$id"
+}
+
+# The `error` code in papi_curl's output, or nothing for a body that has none.
+papi_error() {
+    jq -r '.error? // empty' 2>/dev/null <<<"${1%$'\n'*}" || true
+}
+
+# One request: prints the body, then the HTTP status on its own line.
+papi_curl() {
+    local method=$1 path=$2 body=$3 session=$4
+    local -a args=(-sS -X "$method" -H "Authorization: Bearer $PAIRING_TOKEN" -w '\n%{http_code}\n')
+    if [[ -n $session ]]; then args+=(-H "Mcp-Session-Id: $session"); fi
+    if [[ -n $body ]]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
+    curl "${args[@]}" "$PAIRING_SCHEME://$PAIRING_HOST:$PAIRING_PORT$path"
+}
+
+# Starts the listener and the helper, then waits for GET /v1/device to say the helper runs. Each
+# step checks its own status, since a caller's `||` turns set -e off inside the function.
+# shellcheck disable=SC2317
+command:helper() {
+    needs adb
+    needs jq
+    needs curl
+
+    [[ $# -eq 0 ]] || usage "helper takes no arguments; set FINGERTIPS_PKG for another package"
+    local PKG="$FINGERTIPS_PKG"
+    local sdk
+    # The package goes into a remote shell command line, so it must be a plain package name.
+    [[ $PKG =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] \
+        || die "FINGERTIPS_PKG '$PKG' is not a package name."
+    # The check below needs the pairing's token and the API forward.
+    load_pairing
+    forward_api "$PAIRING_PORT" "$PKG" || die "adb could not forward the API for $PKG."
+    adb shell am start-foreground-service -n "$PKG/com.fingertipsmcp.server.ListenerService" >/dev/null \
+        || die "Could not start the FingertipsMCP listener in $PKG."
+    adb shell "CLASSPATH=\$(pm path $PKG | tr -d '\r' | sed -e s/^package:// | tr '\n' ':') app_process / com.fingertipsmcp.helper.Main --pkg $PKG" \
+        || die "The helper did not start. Check logcat for FingertipsHelper."
+    # Android 10 has no wireless-debugging port. The helper connects to this reverse socket;
+    # the forward is what actually opens Chrome. Names match USB_DEVTOOLS_SOCKET / PORT.
+    sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')" \
+        || die "Could not read the phone's Android version."
+    [[ $sdk =~ ^[0-9]+$ ]] || die "The phone reported Android SDK level '$sdk'."
+    if ((sdk < 30)); then
+        adb forward tcp:9222 localabstract:chrome_devtools_remote >/dev/null \
+            || die "Could not forward Chrome DevTools for the Android 10 tunnel."
+        adb reverse localabstract:fingertips_cdp tcp:9222 >/dev/null \
+            || die "Could not reverse the Android 10 DevTools tunnel."
+    fi
+    HELPER_STATUS="no answer"
+    wait_until 30 helper_running \
+        || die "The helper is not running after 30s (last status: $HELPER_STATUS). Check logcat for FingertipsHelper."
+    echo "The helper is running." >&2
+}
+
+# Whether GET /v1/device says the helper runs; sets HELPER_STATUS to what it saw. A token FingertipsMCP
+# does not know, or one without the observe scope, can never see it run, so those end the wait.
+helper_running() {
+    local out status
+    if ! out="$(papi_curl GET /v1/device "" "" 2>/dev/null)"; then
+        HELPER_STATUS="no answer"
+        return 1
+    fi
+    status="${out##*$'\n'}"
+    case "$status" in
+        200) ;;
+        404) die "FingertipsMCP does not know the token in $PAIRING_FILE; run pair again." ;;
+        403) die "The token in $PAIRING_FILE lacks the observe scope, so the helper can't be checked." ;;
+        *)
+            HELPER_STATUS="HTTP $status"
+            return 1
+            ;;
+    esac
+    HELPER_STATUS="$(head -n 1 <<<"$out" | jq -r '.helper // "missing"' 2>/dev/null)" \
+        || HELPER_STATUS="unreadable"
+    [[ $HELPER_STATUS == running ]]
+}
+
+# shellcheck disable=SC2317
+command:help() {
+    usage
+}
+
+# Sets PAIRING_FILE, PAIRING_HOST, PAIRING_PORT, PAIRING_TOKEN, PAIRING_SCHEME.
+load_pairing() {
+    [[ -f $PAPI_PAIRING ]] || die "No pairing file at $PAPI_PAIRING; run pair first."
+    PAIRING_FILE="$(realpath "$PAPI_PAIRING")"
+    PAIRING_HOST="$(jq -r '.host | select(. != "") // "127.0.0.1"' "$PAIRING_FILE")"
+    PAIRING_PORT="$(jq -r .port "$PAIRING_FILE")"
+    PAIRING_TOKEN="$(jq -r .token "$PAIRING_FILE")"
+    PAIRING_SCHEME="$(jq -r '.scheme // "http"' "$PAIRING_FILE")"
+    if [[ -z $PAIRING_PORT || $PAIRING_PORT == null || -z $PAIRING_TOKEN || $PAIRING_TOKEN == null ]]; then
+        die "fingertips: $PAIRING_FILE is missing port or token"
+    fi
+}
+
+# Forwards the app's abstract socket to a loopback TCP port on the host.
+forward_api() {
+    local port=$1 pkg=$2
+    adb forward "tcp:$port" "localabstract:$pkg" >/dev/null
+}
+
+# Runs a check every half second until it succeeds, and fails once the seconds pass. A failed check
+# only means not yet.
+wait_until() {
+    local seconds=$1
+    shift
+    local deadline=$((SECONDS + seconds))
+    until "$@"; do
+        ((SECONDS < deadline)) || return 1
+        sleep 0.5
+    done
+}
+
+needs() {
+    command -v "$1" >/dev/null || die "$1 isn't available in \$PATH; please install it."
+}
+
+usage() {
+    if [[ -n ${1-} ]]; then
+        echo "Error: $1."
+        echo
+    fi
+
+    echo -n "$USAGE"
+
+    exit 1
+}
+
+die() {
+    # Output my args as individual lines to stderr and exit non-zero
+    printf "%s\n" "$@" 1>&2
+    exit 1
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi

@@ -16,12 +16,12 @@
     </issue>
     <!-- The helper intentionally calls hidden framework APIs via reflection, isolated in compat/. -->
     <issue id="PrivateApi">
-        <ignore path="**/helper/src/main/kotlin/net/die/phoneapi/helper/compat/**" />
+        <ignore path="**/helper/src/main/kotlin/com/fingertipsmcp/helper/compat/**" />
     </issue>
     <issue id="DiscouragedPrivateApi">
-        <ignore path="**/helper/src/main/kotlin/net/die/phoneapi/helper/compat/**" />
+        <ignore path="**/helper/src/main/kotlin/com/fingertipsmcp/helper/compat/**" />
     </issue>
     <issue id="SoonBlockedPrivateApi">
-        <ignore path="**/helper/src/main/kotlin/net/die/phoneapi/helper/compat/**" />
+        <ignore path="**/helper/src/main/kotlin/com/fingertipsmcp/helper/compat/**" />
     </issue>
 </lint>

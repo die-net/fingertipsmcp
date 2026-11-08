@@ -35,7 +35,7 @@
     </queries>
 
     <application
-        android:name=".PhoneApiApp"
+        android:name=".FingertipsApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
@@ -48,7 +48,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.PhoneApi">
+            android:theme="@style/Theme.Fingertips">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -65,7 +65,7 @@
             android:noHistory="true"
             android:showWhenLocked="true"
             android:taskAffinity=""
-            android:theme="@style/Theme.PhoneApi.Wake"
+            android:theme="@style/Theme.Fingertips.Wake"
             android:turnScreenOn="true" />
 
         <!-- The shell-UID helper registers its Binder here; the caller's UID is checked in code. -->
@@ -75,7 +75,7 @@
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
 
-        <!-- The image PhoneAPI last put on the clipboard. The clipboard grants readers access. -->
+        <!-- The image FingertipsMCP last put on the clipboard. The clipboard grants readers access. -->
         <provider
             android:name=".input.ClipProvider"
             android:authorities="${applicationId}.clip"
@@ -90,7 +90,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Holds the PhoneAPI abstract-socket listener for an adb session." />
+                android:value="Holds the FingertipsMCP abstract-socket listener for an adb session." />
         </service>
 
         <receiver
@@ -103,9 +103,9 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="net.die.phoneapi.CREATE_TOKEN" />
-                <action android:name="net.die.phoneapi.SET_PIN" />
-                <action android:name="net.die.phoneapi.PAIR_ADB" />
+                <action android:name="com.fingertipsmcp.CREATE_TOKEN" />
+                <action android:name="com.fingertipsmcp.SET_PIN" />
+                <action android:name="com.fingertipsmcp.PAIR_ADB" />
             </intent-filter>
         </receiver>
     </application>

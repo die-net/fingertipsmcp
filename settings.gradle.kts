@@ -17,6 +17,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "phoneapi"
+rootProject.name = "fingertipsmcp"
 
 include(":app", ":helper", ":api-model")

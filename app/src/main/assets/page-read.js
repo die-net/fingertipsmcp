@@ -400,7 +400,7 @@ if (options.selector) {
       articlePublished = article.publishedTime || null;
     }
   } catch (e) {
-    // Readability can fail on unusual documents; the page is read whole, and PhoneAPI logs why.
+    // Readability can fail on unusual documents; the page is read whole, and FingertipsMCP logs why.
     articleError = String((e && e.name) || "Error") + ": " + String((e && e.message) || e);
     articleError = articleError.slice(0, MAX_ERROR_CHARS);
   }

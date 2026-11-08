@@ -27,22 +27,22 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.PHONEAPI_KEYSTORE_BASE64 }}
         run: |
-          test -n "$KEYSTORE_BASE64" || { echo "PHONEAPI_KEYSTORE_BASE64 secret is not set"; exit 1; }
+          test -n "$KEYSTORE_BASE64" || { echo "FINGERTIPS_KEYSTORE_BASE64 secret is not set"; exit 1; }
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
       - name: Build signed release APK
         env:
-          PHONEAPI_VERSION: ${{ github.ref_name }}
-          PHONEAPI_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
-          PHONEAPI_KEYSTORE_PASSWORD: ${{ secrets.PHONEAPI_KEYSTORE_PASSWORD }}
-          PHONEAPI_KEY_ALIAS: ${{ secrets.PHONEAPI_KEY_ALIAS }}
-          PHONEAPI_KEY_PASSWORD: ${{ secrets.PHONEAPI_KEY_PASSWORD }}
+          FINGERTIPS_VERSION: ${{ github.ref_name }}
+          FINGERTIPS_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          FINGERTIPS_KEYSTORE_PASSWORD: ${{ secrets.PHONEAPI_KEYSTORE_PASSWORD }}
+          FINGERTIPS_KEY_ALIAS: ${{ secrets.PHONEAPI_KEY_ALIAS }}
+          FINGERTIPS_KEY_PASSWORD: ${{ secrets.PHONEAPI_KEY_PASSWORD }}
         run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test assembleRelease buildHealth
 
       - name: Collect artifacts
         run: |
           mkdir dist
-          cp app/build/outputs/apk/release/app-release.apk "dist/phoneapi-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/fingertipsmcp-android-${GITHUB_REF_NAME}.apk"
           cd dist && sha256sum *.apk > SHA256SUMS
 
       # Attestations on a private repository need GitHub Enterprise Cloud.

@@ -1,5 +1,5 @@
 plugins {
-    id("phoneapi.jvm.library")
+    id("fingertips.jvm.library")
     alias(libs.plugins.kotlin.serialization)
 }
 

@@ -11,15 +11,15 @@ dependencies {
 gradlePlugin {
     plugins {
         register("androidApplication") {
-            id = "phoneapi.android.application"
+            id = "fingertips.android.application"
             implementationClass = "AndroidApplicationConventionPlugin"
         }
         register("androidLibrary") {
-            id = "phoneapi.android.library"
+            id = "fingertips.android.library"
             implementationClass = "AndroidLibraryConventionPlugin"
         }
         register("jvmLibrary") {
-            id = "phoneapi.jvm.library"
+            id = "fingertips.jvm.library"
             implementationClass = "JvmLibraryConventionPlugin"
         }
     }
