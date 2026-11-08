@@ -84,7 +84,7 @@ class ClipboardServiceImpl(
                 .firstOrNull { it.startsWith("image/") } ?: return null
         val uri =
             (0 until clip.itemCount).firstNotNullOfOrNull { clip.getItemAt(it).uri } ?: return null
-        val bytes = readAll(call { readContent(uri.toString()) })
+        val bytes = readContent(uri)
         if (bytes.isEmpty()) {
             throw ApiException(409, "clipboard_unreadable", "The helper could not read the image")
         }
@@ -147,9 +147,15 @@ class ClipboardServiceImpl(
         return input.key(KeyRequest("KEYCODE_PASTE", autoWake = autoWake)).copy(backend = BACKEND)
     }
 
-    private suspend fun readAll(pipe: ParcelFileDescriptor): ByteArray =
-        withContext(io) {
+    /**
+     * Reads [uri] through the helper. The pipe is opened and read in one block, so a cancel between
+     * the two can't leave it open.
+     */
+    private suspend fun readContent(uri: Uri): ByteArray {
+        val proxy = helper.require()
+        return withContext(io) {
             try {
+                val pipe = proxy.readContent(uri.toString())
                 ParcelFileDescriptor.AutoCloseInputStream(pipe).use { input ->
                     val out = ByteArrayOutputStream()
                     val buffer = ByteArray(BUFFER_BYTES)
@@ -167,10 +173,13 @@ class ClipboardServiceImpl(
                     }
                     out.toByteArray()
                 }
+            } catch (e: RemoteException) {
+                throw ApiException.helperDropped(e)
             } catch (e: IOException) {
                 throw ApiException.helperDropped(e)
             }
         }
+    }
 
     private suspend fun <T> call(block: IHelper.() -> T): T {
         val proxy = helper.require()

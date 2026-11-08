@@ -503,7 +503,7 @@ class BrowserServiceTest {
         },
         press: suspend (KeyRequest) -> ActionResult = { ActionResult(ok = false) },
         type: suspend (TextRequest) -> ActionResult = { ActionResult(ok = false) },
-        open: (String) -> DevtoolsSocket = { socket(response) },
+        open: suspend (String) -> DevtoolsSocket = { socket(response) },
         targetTimeoutMs: Long = 5_000,
         axTreeCap: Int = AX_TREE_CACHE_CAP,
         prepare: suspend (Boolean) -> Boolean = { false },
