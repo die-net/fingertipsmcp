@@ -59,6 +59,18 @@ internal fun usKeystroke(c: Char): Keystroke? {
     return null
 }
 
+/**
+ * The character Shift makes of [c]'s key on a US layout, or null when Shift does not change it.
+ * Android's virtual keyboard map gives the same, so a key sent over DevTools types what an injected
+ * one would.
+ */
+internal fun usShifted(c: Char): Char? =
+    when (c) {
+        in 'a'..'z' -> c.uppercaseChar()
+        in '0'..'9' -> SHIFTED_DIGITS[c - '0']
+        else -> PUNCTUATION.values.firstOrNull { it.first == c }?.second
+    }
+
 /** [text] split into characters keys type, and runs of text no key types, such as emoji. */
 private fun keyedRuns(text: String): List<String> {
     val out = ArrayList<String>()

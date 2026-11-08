@@ -114,6 +114,8 @@ On that emulator, with a page running 3 s tasks back to back, 3 `cdp` keys into 
 
 Chrome refuses a DevTools connection to a closed tab with 500 "No such target id", in Chrome 133 on the emulator and Chrome 155 on the phone, and 404 in some releases. FingertipsMCP reports it as `not_found` rather than retrying. Chrome 156 on the phone did the same on 2026-11-07, every time: 30 of 30 reconnects after a cancelled save closed a tab, and 10 of 10 after `Target.closeTarget` closed a tab with a call waiting on it. That call's connection dropped with no answer. After the saves, `Target.targetDestroyed` had already come, so a reconnect ahead of that event was not tried.
 
+Closing Chrome's last tab, which opens the placeholder first, was checked on 2026-11-08 on the Android 16 emulator with Chrome 133 and the Android 17 emulator with Chrome 145, with Chrome holding only the session's tab (older tabs and the placeholder closed over raw DevTools first). With the session holding the screen and Chrome showing that tab, `POST /v1/browser/targets/{id}/close` left Chrome in front showing `about:blank`, 1 of 1 on Chrome 133 and 3 of 3 on Chrome 145. With Chrome behind the home screen, the home screen stayed in front, 1 of 1 each. Each time Chrome's own list then held only the placeholder, and `GET /v1/browser/targets` listed nothing. A restored tab Chrome had not loaded was in `/json/list`, with a short numeric id, and not in `Target.getTargets`, on both.
+
 ### Target events
 
 Chrome 156 on the Android 11 test phone on 2026-11-07, over raw DevTools, on a browser session with `Target.setDiscoverTargets`. Times are from the call that started it. Chrome hidden and Chrome in front gave the same events, unless noted.
@@ -173,7 +175,7 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 - Whether Chrome 156 still freezes a hidden tab whole at about 90 s with FingertipsMCP's helper running, as it did on 2026-11-07 without it.
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
 - That Chrome on the phone still ignores `Target.createTarget`'s `background` flag, now that a session without the screen sends it, or if it honors it, that the tab opens hidden.
-- That closing Chrome's last tab on the phone, which now opens the placeholder first, leaves Chrome in the background when it was there, and leaves it showing the placeholder when it was in front.
+- That closing Chrome's last tab on the phone's Chrome 156 does what it did on Chrome 133 and 145.
 
 ## Android's app freezer
 
@@ -202,6 +204,8 @@ FingertipsMCP used to take every row with a DevTools name for a socket. Each lis
 The threads were not leaked. Closing an `AdbStream` ended every read on it: 62 of them were in `MessageQueue.take`'s `await`, which `stopListening` wakes, and one was in the socket read, which needs the next message on the connection. No thread was left in either place 25 s after the listing, and the closing timer ran with the pool full.
 
 With only listeners counted, on the same emulator, a listing with 90 rows queued added one row, used one thread, and took 5.1 s, and `GET /v1/device` answered in 12 ms. 12 clients making 2 listings each all got 200 within 5.4 s, adding 24 rows and using 12 threads. After a thaw, a listing took 0.14 s. `GET /v1/browser/targets` made one listing. Opening a tab, a snapshot, navigating, evaluating, and a tap made none, and nothing listed while idle.
+
+On the Android 17 emulator on 2026-11-08, with no `am freeze`, the Google app's `googleapp` process sat in the cached state (`cch-empty`) a few minutes after boot, with 35 rows queued on its `webview_devtools_remote_*` listener. Its freeze state was not read. Every listing then took 5.0 s, the listing's limit: `GET /v1/browser/targets`, and each tab close, since closing a tab lists Chrome's tabs first to see whether it is the last. A close took 5.0 to 5.3 s, 8 of 8, against 0.02 to 0.17 s on the Android 16 emulator, which had no such socket. Over raw DevTools the same `Target.closeTarget` took 0.01 s. A session end that went home took 10.4 s to get there.
 
 On the Android 10 emulator (kernel 4.14) the same day, the listeners had the same flags and state, and a listing through the USB path found Chrome's tab.
 
@@ -560,6 +564,12 @@ Rotating while a viewer streamed, on the Android 16 and Android 13 emulators on 
 
 On the Android 11 test phone on 2026-11-06, video at `maxSize` 720 was H.264 High, 338x720, with its first frame at 0.8 s, and 27 of 29 frames decoded in `ffprobe`. A PNG screenshot took 0.8 to 1 s.
 
+On the Android 16 and Android 17 emulators on 2026-11-08, with the refusal reasons coming from `DeviceInfoProvider`:
+
+- With the helper running, `capabilities` had `stream.video.mirror` and `stream.audio.submix` true. The video socket sent its header and 6 to 10 frames in 4 s of a still home screen. The audio socket sent its header and one packet in 4 s, on emulators started with `-no-audio`, and the helper logged `audio reader stopped` when it closed.
+- With the helper killed, both capabilities read false, and the video socket closed with 1003 `Video needs the shell helper` and the audio socket with 1003 `Audio needs Android 11 or later and the shell helper`, each within 0.2 s and before any message. On the Android 17 emulator the app started the helper again over wireless debugging 0.55 s after the kill, so the sockets were opened right after it. On the Android 16 emulator it did not, since wireless debugging's port was not found then.
+- `GET /v1/screenshot` with `scale` 0.1 returned a 108x240 PNG of the 1080x2400 screen, and 0.09 and 1.01 got 400 `bad_request` `scale must be 0.1 to 1.0`. MCP `screenshot` did the same.
+
 ### Still to check
 
 - That a still screen on the Moto G Power looks sharp after scrolling, with the relay's settle redraws in place of `KEY_REPEAT_PREVIOUS_FRAME_AFTER`, and sends a frame every 4 s.
@@ -567,7 +577,7 @@ On the Android 11 test phone on 2026-11-06, video at `maxSize` 720 was H.264 Hig
 - That a viewer on a slow link pauses rather than smears, and catches up on a key frame. adb's buffering kept the emulator from reaching that path.
 - A real resolution change while streaming, which needs a phone with more than one display mode.
 - Rotation on Android 10 and 11 and viewer taps on Android 10, since the Android 10 emulator has no video. Android 10 taps in the viewer opening no audio socket.
-- That the viewer's video and audio sockets still refuse with `Video needs the shell helper` and `Audio needs Android 11 or later and the shell helper` while the helper is down, and on Android 10 for audio, now that the reason comes from the stream services rather than the capability map (2026-11-08). Unit tests cover the server side only.
+- That the audio socket refuses with `Audio needs Android 11 or later and the shell helper` on Android 10 with the helper running. Only the helper being down was checked on a device.
 
 ## UiAutomation
 
@@ -958,6 +968,13 @@ Seen while checking, and not changed:
 - On Chrome 145, `PUT /json/new` fails with HTTP 500 `Could not create new page`. FingertipsMCP's own tab calls work.
 - On Chrome 145, a tab opened while Chrome was behind the home screen reported `visible`, though Chrome wasn't drawing it, and showed no quads for a new node, as a hidden tab does.
 
+The phone's wait loop is the one the desktop uses since 2026-11-08. Checked that day on the Android 16 emulator with Chrome 133 and the Android 17 emulator with Chrome 145, through MCP `wait_for` with `screenshot` and through `POST /v1/wait`, on a hidden tab:
+
+- `browser.element` for a node a page adds 3 s after it loads matched with `elapsedMs` 3,180 and 3,040, as the node appeared. `screenshot` added 0.7 to 1.5 s to the call after the match.
+- `browser.settled` with `quietMs` 500 matched at 506 to 551 ms on a loaded page, and at 507 and 515 ms on a tab just opened.
+- A node that never comes timed out with `matched` false and `timedOut` true at 2,007 to 2,008 ms for a 2,000 ms limit and 513 to 534 ms for 500 ms over MCP, and at 1,506 and 1,511 ms for 1,500 ms over REST. Each still returned 200, with a screenshot when asked.
+- `all` with `browser.element` and `browser.settled` on the same tab matched both, `matchedAll` 0 and 1, at 528 ms.
+
 ### Still to check
 
 - The hidden-node taps through FingertipsMCP on Chrome 109 and 133, whose commands were read only over DevTools, and on the phone's Chrome 156.
@@ -981,6 +998,13 @@ On 2026-11-07, in desktop Chrome 156 made to look like a phone, MDN's HTTP page 
 `chrome-input-check` on Chrome 156 on the Android 11 test phone on 2026-11-06: all ten checks gave what the script expects, in 28 s.
 
 On the same phone that day, the system cancelled one swipe sent right after `BACK`, as the window changed.
+
+`browser_key` with Shift held over `cdp`, on the Android 16 emulator with Chrome 133 and the Android 17 emulator with Chrome 145 on 2026-11-08, into a focused field with Chrome behind the home screen, on its selected tab and on a tab behind another, read back over `evaluate`:
+
+- Shift and a letter typed the capital, with `key` the capital and `shiftKey` true. So did `metaState` 65, Shift with its left-key bit. A letter without Shift typed it in lower case.
+- Before the change below, on Chrome 133, Shift and 1 typed `1`, with `key` `1` and `shiftKey` true. The same request over `touch`, an injected key with Chrome in front, typed `!`, which is what Android's virtual keyboard map gives, and Shift with `COMMA` typed `<`. FingertipsMCP now sends a key with Shift held as a US keyboard types it, so `cdp` gives `!` with `code` `Digit1`, as checked on both Chromes after the change.
+- Shift with an arrow moved the selection's end and typed nothing. Shift with Tab moved focus to the field before, and typed nothing.
+- `COMMA` and `PERIOD` over `cdp` got 400 `Unknown key`, with or without Shift, since the `cdp` key names have no punctuation.
 
 ### Pages Chrome has not drawn
 
@@ -1016,7 +1040,7 @@ Chromium has a check, behind the `CDPScreenshotNewSurface` feature, that crashes
 - `chrome-input-check` on a phone, since it now tests a page from a server. It passed on the Android 13, 16, and 17 emulators on 2026-11-07, with Chrome on screen too. On Chrome 91 six checks differ, since that Chrome has no hold.
 - That `Page.captureScreenshot` ends the hold on Chrome 156 on the Android 11 test phone. It was not tried there. If it does not, a tap on a page Chrome has not drawn fails with `not_visible`.
 - Whether Chrome ever turns on `CDPScreenshotNewSurface`. FingertipsMCP sends a screenshot request to a `hidden` page that dropped a press, which that check would crash on.
-- `browser_key` with Shift held over `cdp` on Android now sends the key with its text, so Shift and a letter type the capital, where it sent `rawKeyDown` and typed nothing; `DomKeysTest` pins it. Unchecked on a phone.
+- `browser_key` with Shift over `cdp` on the phone's Chrome 156.
 
 ## Desktop Chrome (FingertipsMCP for Chrome)
 
