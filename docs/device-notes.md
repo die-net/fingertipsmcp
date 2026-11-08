@@ -76,6 +76,18 @@ On the phone, on 2026-10-22, with the phone locked and Chrome in the background,
 
 The tab Chrome had selected kept running at full rate and reported `visible` with Chrome in the background and the screen off, so only tabs behind another one in Chrome go hidden.
 
+Measured on the phone on 2026-11-07 with Chrome 156.0.8078.79, over raw DevTools, with PhoneAPI's helper not running. Chrome 156 freezes a hidden tab whole, with no stage where its timers stop but the page still runs:
+
+- A hidden tab ran its timers 4 times a second until about 32 s after it was hidden, then once a second.
+- At about 90.6 s the page got `freeze`, and its timers, fetches, the DOM changes they make, and a `MessageChannel` loop all stopped together. That held in 10 tabs. The 1 ms timer check in an isolated world stopped at the same moment.
+- `Page.setWebLifecycleState` with `frozen` and then `active` thawed it without the screen, 2 of 2. The page saw only `resume` and stayed `hidden`. It had not frozen again 8 to 12 minutes later, when the run ended. Its timers ran once a second, then once a minute from about 330 s after it was hidden. `active` alone did nothing.
+- A reload or navigate restarted the page, and it froze again 60 s after the load.
+- Chrome's selected tab never froze, even with Chrome in the background.
+
+That differs from Chrome 155 on 2026-10-22, where timers stopped at about a minute and the page paused minutes later. That run went through PhoneAPI, with its helper running, and this one did not, which may account for it.
+
+PhoneAPI fails a wait on a frozen tab with `tab_frozen` rather than thawing it. A thaw shows the page a `resume` while it stays hidden and then leaves the tab running in the background for minutes, which a person's tab would not do.
+
 ### The timer check
 
 Chrome runs a hidden tab's timers at most about once a second even when it has not stopped them, so the check allows 1.1 seconds, too long to wait before every input. It starts alongside each `cdp` or `cdp-mouse` input, in the background, on its own DevTools connection, and the next call on that tab reads the result.
@@ -158,6 +170,7 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 - How many hidden tabs Chrome keeps loaded on the Moto G Power before it unloads them, to check the cap of 8.
 - That Chrome 155 still sends `Inspector.targetCrashed` on `Inspector.enable` for a tab it unloaded.
 - Whether a hidden tab's timers also stop while Chrome itself is in front, with the tab behind another, or only while Chrome is in the background.
+- Whether Chrome 156 still freezes a hidden tab whole at about 90 s with PhoneAPI's helper running, as it did on 2026-11-07 without it.
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
 
 ## Android's app freezer

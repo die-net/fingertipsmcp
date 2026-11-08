@@ -75,10 +75,11 @@ internal class TabProbe(
     }
 
     /**
-     * Fails with `tab_frozen` when Chrome has paused [cdp]'s hidden tab, as it does after about 5
-     * minutes in the background. DevTools input still reaches a paused page, but its scripts do not
-     * run, so a click or keystroke appears to do nothing, which costs an agent more time than
-     * reloading or bringing the tab forward. Reading a paused tab is fine.
+     * Fails with `tab_frozen` when Chrome has paused [cdp]'s hidden tab, as it does to a tab hidden
+     * for a while. How long varies by Chrome release, from about 90 s to several minutes. DevTools
+     * input still reaches a paused page, but its scripts do not run, so a click or keystroke
+     * appears to do nothing, which costs an agent more time than reloading or bringing the tab
+     * forward. Reading a paused tab is fine.
      *
      * A paused page still evaluates DevTools script but runs none of its own tasks, so a message
      * posted to itself never arrives. A page busy running script answers neither, and is let

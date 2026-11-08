@@ -123,14 +123,30 @@ internal class TimerWatch(
     }
 }
 
-/** Input or a wait on a tab whose timers have stopped. */
+/** Input on a tab whose timers have stopped. */
 internal fun timersStopped(id: String): ApiException =
     ApiException(
         409,
         "tab_frozen",
         "Chrome has stopped the timers of tab $id, as it does to tabs in the background, so the " +
             "page may not react to input, and your last input on it may not have taken effect. " +
-            "Reading it still works. To use it, bring it forward with input touch, or " +
-            "browser_read or browser_snapshot with show, which take the screen. Or reload it with " +
-            "browser_navigate to its URL, which loses anything typed or scrolled.",
+            FROZEN_REMEDY,
     )
+
+/**
+ * A wait on a tab whose timers have stopped. Chrome stops a hidden tab's timers when it freezes the
+ * whole page, so nothing on it will change and the wait could only run out its timeout.
+ */
+internal fun waitOnStoppedTab(id: String): ApiException =
+    ApiException(
+        409,
+        "tab_frozen",
+        "Chrome has frozen tab $id, as it does to tabs hidden in the background, so nothing on " +
+            "the page will change and this wait cannot match. " +
+            FROZEN_REMEDY,
+    )
+
+private const val FROZEN_REMEDY =
+    "Reading it still works. To use it, bring it forward with input touch, or browser_read or " +
+        "browser_snapshot with show, which take the screen. Or reload it with browser_navigate " +
+        "to its URL, which loses anything typed or scrolled."

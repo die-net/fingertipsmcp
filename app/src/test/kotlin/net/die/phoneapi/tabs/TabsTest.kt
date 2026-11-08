@@ -218,7 +218,17 @@ class TabsTest {
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         browser.stalled = setOf(tab.id)
         val wait = WaitRequest(all = listOf(WaitCondition.BrowserUrl(target = tab.id)))
-        assertEquals("tab_frozen", error { tabs.waitsFor(a, RecordingWaits()).wait(wait, SCOPES) })
+        val failure =
+            try {
+                tabs.waitsFor(a, RecordingWaits()).wait(wait, SCOPES)
+                null
+            } catch (e: ApiException) {
+                e
+            }
+        assertEquals("tab_frozen", failure?.error)
+        // The caller sent no input, so the message must not say an input may have been lost.
+        assertTrue(failure!!.message!!.contains("this wait cannot match"), failure.message)
+        assertFalse(failure.message!!.contains("input on it"), failure.message)
         assertEquals(listOf(tab.id), browser.watched)
     }
 

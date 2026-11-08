@@ -3,7 +3,7 @@ package net.die.phoneapi.tabs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
-import net.die.phoneapi.browser.timersStopped
+import net.die.phoneapi.browser.waitOnStoppedTab
 import net.die.phoneapi.core.BrowserService
 import net.die.phoneapi.core.WaitService
 import net.die.phoneapi.model.ApiException
@@ -38,7 +38,7 @@ internal class SessionWaits(
                 val stopped = tabs.firstOrNull { watching.timersStalled(it) }
                 if (stopped != null) {
                     waiting.cancel()
-                    throw timersStopped(stopped)
+                    throw waitOnStoppedTab(stopped)
                 }
                 withTimeoutOrNull(STALL_POLL_MS) { waiting.join() }
             }
