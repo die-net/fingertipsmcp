@@ -39,6 +39,11 @@ enum class FingerMotion {
 }
 
 class Humanizer(private val random: Random = Random.Default) {
+    /** The same hand on a mouse, for desktop browsers. */
+    val mouse: MouseModel by lazy { MouseModel(random) }
+
+    /** The same hand on a keyboard. */
+    val keys: TypingModel by lazy { TypingModel(random) }
 
     /** One tap: jittered inside the inner [INNER_FRACTION] of [target], held with micro-moves. */
     fun tap(target: Rect, holdMs: Long? = null, humanize: Boolean = true): List<TimedPoint> =

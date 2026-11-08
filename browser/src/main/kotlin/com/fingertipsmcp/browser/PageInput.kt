@@ -44,10 +44,15 @@ internal class PageInput(
     private val target: (String?, String?) -> TapTarget?,
     private val refreshHz: () -> Float = { DEFAULT_REFRESH_HZ },
     private val touchscreen: suspend () -> TouchscreenAxes = { fallbackTouchscreen() },
-) {
+) : PageInputs {
     private val paths = Humanizer()
 
-    suspend fun tap(
+    /** A cdp pointer reaches only the tab Chrome is showing, so it is refused for any other. */
+    override suspend fun ready(cdp: CdpSession, input: BrowserInput, pointer: Boolean) {
+        if (pointer && input == BrowserInput.CDP) requireShowing(cdp)
+    }
+
+    override suspend fun tap(
         cdp: CdpSession,
         id: String,
         wanted: TapTarget,
@@ -61,27 +66,12 @@ internal class PageInput(
             BrowserInput.CDP_MOUSE -> mouseTap(cdp, id, wanted, request.humanize)
         }
 
-    fun checkSwipe(request: BrowserSwipeRequest) {
+    override fun checkSwipe(request: BrowserSwipeRequest) {
         if (request.input == BrowserInput.CDP_MOUSE) throw mouseOnlyTaps("swipe")
-        if (request.durationMs !in MIN_SWIPE_MS..MAX_SWIPE_MS) {
-            throw ApiException.badRequest("durationMs must be $MIN_SWIPE_MS..$MAX_SWIPE_MS")
-        }
-        val from = request.from
-        val to = request.to
-        if (from != null || to != null) {
-            if (from == null || to == null) {
-                throw ApiException.badRequest("Pass both from and to, or a direction")
-            }
-            if (request.direction != null) {
-                throw ApiException.badRequest("Pass from and to, or a direction, not both")
-            }
-        } else if (request.direction == null) {
-            throw ApiException.badRequest("Pass from and to, or a direction")
-        }
-        target(request.ref, request.selector)
+        checkSwipeRequest(request)
     }
 
-    suspend fun swipe(
+    override suspend fun swipe(
         cdp: CdpSession,
         id: String,
         pkg: String?,
@@ -126,21 +116,12 @@ internal class PageInput(
         }
     }
 
-    fun checkGesture(request: BrowserGestureRequest) {
+    override fun checkGesture(request: BrowserGestureRequest) {
         if (request.input == BrowserInput.CDP_MOUSE) throw mouseOnlyTaps("gesture")
-        val pointers = request.pointers
-        if (pointers.isEmpty() || pointers.any { it.isEmpty() }) {
-            throw ApiException.badRequest("Each pointer needs at least one point")
-        }
-        if (pointers.sumOf { it.size } > MAX_GESTURE_POINTS) {
-            throw ApiException.badRequest("At most $MAX_GESTURE_POINTS points per gesture")
-        }
-        if (pointers.any { path -> path.any { it.tMs < 0 } }) {
-            throw ApiException.badRequest("tMs must be >= 0")
-        }
+        checkGestureRequest(request)
     }
 
-    suspend fun gesture(
+    override suspend fun gesture(
         cdp: CdpSession,
         pkg: String?,
         request: BrowserGestureRequest,
@@ -170,7 +151,7 @@ internal class PageInput(
         }
 
     /** Resolves a CDP key before the socket opens. Device keys stay on `input=touch`. */
-    fun prepareKey(request: BrowserKeyRequest): DomKey? =
+    override fun prepareKey(request: BrowserKeyRequest): DomKey? =
         when (request.input) {
             BrowserInput.AUTO,
             BrowserInput.TOUCH -> null
@@ -178,7 +159,7 @@ internal class PageInput(
             BrowserInput.CDP_MOUSE -> throw mouseOnlyTaps("key")
         }
 
-    suspend fun key(
+    override suspend fun key(
         cdp: CdpSession,
         pkg: String?,
         request: BrowserKeyRequest,
@@ -209,13 +190,12 @@ internal class PageInput(
             BrowserInput.CDP_MOUSE -> throw mouseOnlyTaps("key")
         }
 
-    fun prepareText(request: BrowserTextRequest): TapTarget? {
+    override fun prepareText(request: BrowserTextRequest): TapTarget? {
         if (request.input == BrowserInput.CDP_MOUSE) throw mouseOnlyTaps("text")
-        checkText(request)
-        return target(request.ref, request.selector)
+        return checkTextRequest(request)
     }
 
-    suspend fun text(
+    override suspend fun text(
         cdp: CdpSession,
         id: String,
         pkg: String?,
@@ -370,26 +350,7 @@ internal class PageInput(
         }
     }
 
-    private fun checkText(request: BrowserTextRequest) {
-        if (request.text.length > MAX_TEXT) {
-            throw ApiException.badRequest("text is longer than $MAX_TEXT characters")
-        }
-        if (
-            request.minDelayMs < 0 ||
-                request.maxDelayMs < request.minDelayMs ||
-                request.maxDelayMs > MAX_DELAY_MS
-        ) {
-            throw ApiException.badRequest("Need 0 <= minDelayMs <= maxDelayMs <= $MAX_DELAY_MS")
-        }
-        target(request.ref, request.selector)
-    }
-
     private companion object {
-        const val MIN_SWIPE_MS = 20L
-        const val MAX_SWIPE_MS = 10_000L
-        const val MAX_GESTURE_POINTS = 10_000
-        const val MAX_TEXT = 10_000
-        const val MAX_DELAY_MS = 5_000L
         const val DEFAULT_REFRESH_HZ = 60f
     }
 }
