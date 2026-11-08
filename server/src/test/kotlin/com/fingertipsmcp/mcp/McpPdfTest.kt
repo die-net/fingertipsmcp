@@ -114,7 +114,8 @@ class McpPdfTest {
             val read = call(http, initialize(http), "browser_read", args)
             assertTrue(read.contains("No element matches"), read)
             assertTrue(read.contains("isError\":true"), read)
-            assertEquals(listOf("open $PAGE", "read $FIRST"), chrome.calls)
+            // The tab is Chrome's last, so the placeholder opens before it closes.
+            assertEquals(listOf("open $PAGE", "read $FIRST", "open about:blank"), chrome.calls)
             assertEquals(listOf(FIRST), chrome.closed)
         }
     }
@@ -175,12 +176,16 @@ class McpPdfTest {
             url: String,
             capture: Boolean,
             incognito: Boolean,
-            background: Boolean,
             created: suspend (String) -> Unit,
         ): BrowserTarget {
             calls += "open $url"
             if (url == PDF && !pdf) throw ApiException(409, "download_saved", SAVED_ERROR)
-            val id = if (url == PDF) SECOND else FIRST
+            val id =
+                when (url) {
+                    PDF -> SECOND
+                    "about:blank" -> BLANK
+                    else -> FIRST
+                }
             open[id] = url
             created(id)
             return target(id, url)
@@ -221,6 +226,7 @@ class McpPdfTest {
         const val PAGE = "https://example.com/"
         const val FIRST = "chrome_devtools_remote~first"
         const val SECOND = "chrome_devtools_remote~second"
+        const val BLANK = "chrome_devtools_remote~blank"
         const val INITIALIZE =
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",""" +
                 """"capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"""

@@ -26,6 +26,12 @@ interface DevtoolsEndpoints {
     /** The app that shows [tabs]' pages, which can be brought forward; null on a desktop. */
     val tabsPackage: String?
 
+    /**
+     * Whether the browser at [tabs] keeps a tab that `Target.createTarget` opens with `background`
+     * hidden. A desktop Chrome does. Chrome on Android ignores the flag.
+     */
+    val backgroundStaysHidden: Boolean
+
     /** Every endpoint that is up. Empty when nothing is debuggable. */
     suspend fun endpoints(): List<DevtoolsSocketInfo>
 
@@ -95,6 +101,8 @@ class SocketEndpoints(
     override val tabs: String = CHROME_SOCKET
 
     override val tabsPackage: String = CHROME_PACKAGE
+
+    override val backgroundStaysHidden: Boolean = false
 
     override fun gap(gap: BrowserGap): String = devtoolsGap(gap)
 

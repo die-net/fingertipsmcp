@@ -46,13 +46,12 @@ class BrowserRouteTest {
                             url: String,
                             capture: Boolean,
                             incognito: Boolean,
-                            background: Boolean,
                             created: suspend (String) -> Unit,
                         ): BrowserTarget {
                             // Cleanup reaches HOME and finishes while the open runs.
                             home.complete(Unit)
                             api.awaitCleanups(1)
-                            return super.openTab(url, capture, incognito, background, created)
+                            return super.openTab(url, capture, incognito, created)
                         }
                     }
             )

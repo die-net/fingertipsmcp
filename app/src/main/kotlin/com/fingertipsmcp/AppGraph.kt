@@ -24,7 +24,7 @@ import com.fingertipsmcp.browser.USB_DEVTOOLS_SOCKET
 import com.fingertipsmcp.browser.UsbDevtools
 import com.fingertipsmcp.browser.freezerOn
 import com.fingertipsmcp.core.AppsService
-import com.fingertipsmcp.core.BrowserService
+import com.fingertipsmcp.core.BaseBrowser
 import com.fingertipsmcp.core.ClipboardService
 import com.fingertipsmcp.core.DeviceInfoProvider
 import com.fingertipsmcp.core.DeviceStateTracker
@@ -252,7 +252,7 @@ class AppGraph(
             open = ::openDevtools,
             devtoolsGap = DevtoolsPreconditions(context)::explain,
         )
-    val browser: BrowserService = browserService()
+    val browser: BaseBrowser = browserService()
     // Cleanup runs only after a holder lets go, long after tabs exists.
     @Suppress("PropertyUsedBeforeDeclaration")
     private val screenCleanup =
@@ -453,7 +453,7 @@ class AppGraph(
         bus.emit(EventTypes.SCREEN_TAKEN, ScreenTakenData(session, pkg))
     }
 
-    private fun browserService(): BrowserService =
+    private fun browserService(): BaseBrowser =
         BrowserServiceImpl(
             devtools = devtools,
             // Android freezes Chrome in the background and unloads its hidden tabs.

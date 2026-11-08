@@ -14,8 +14,8 @@ import kotlinx.serialization.json.contentOrNull
  * freeze all of Chrome, and then nothing answers.
  */
 class TabProbe(private val devtools: DevtoolsEndpoints) {
-    /** Whether [socket] is Chrome's and its browser endpoint does not answer. */
-    suspend fun frozen(socket: String): Boolean = socket == CHROME_SOCKET && browserSilent(socket)
+    /** Whether [socket] is the tab browser's and its browser endpoint does not answer. */
+    suspend fun frozen(socket: String): Boolean = socket == devtools.tabs && browserSilent(socket)
 
     /**
      * Whether Chrome's browser endpoint on [socket] gives no answer within [PROBE_MS], to the
@@ -40,7 +40,7 @@ class TabProbe(private val devtools: DevtoolsEndpoints) {
      * with `browser_frozen`.
      */
     suspend fun revive(cdp: CdpSession, socket: String, reading: Boolean): Boolean {
-        if (socket != CHROME_SOCKET || !unloaded(cdp, socket)) return false
+        if (socket != devtools.tabs || !unloaded(cdp, socket)) return false
         cdp.call("Page.reload")
         if (!reading) {
             throw ApiException(
@@ -74,7 +74,7 @@ class TabProbe(private val devtools: DevtoolsEndpoints) {
      * can hold the message up for as long as it runs.
      */
     suspend fun requireRunning(cdp: CdpSession, socket: String) {
-        if (socket != CHROME_SOCKET) return
+        if (socket != devtools.tabs) return
         // In an isolated world, so the page can neither see the check nor fool it by replacing
         // MessageChannel. A page busy running script answers nothing here, and is let through.
         val world = withTimeoutOrNull(PROBE_MS) { isolatedWorld(cdp) } ?: return

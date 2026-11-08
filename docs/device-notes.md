@@ -173,6 +173,7 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 - Whether Chrome 156 still freezes a hidden tab whole at about 90 s with FingertipsMCP's helper running, as it did on 2026-11-07 without it.
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
 - That Chrome on the phone still ignores `Target.createTarget`'s `background` flag, now that a session without the screen sends it, or if it honors it, that the tab opens hidden.
+- That closing Chrome's last tab on the phone, which now opens the placeholder first, leaves Chrome in the background when it was there, and leaves it showing the placeholder when it was in front.
 
 ## Android's app freezer
 

@@ -42,7 +42,6 @@ internal class SessionBrowser(
         url: String,
         capture: Boolean,
         incognito: Boolean,
-        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget = tabs.opened(holder, url, capture, incognito, created)
 
@@ -61,7 +60,7 @@ internal class SessionBrowser(
     override suspend fun closeTab(id: String): ActionResult =
         mine(id) {
                 tabs.requireOffPersonsScreen(id)
-                base.closeTab(id)
+                tabs.closeTab(id)
             }
             .also { tabs.closed(id) }
 
@@ -137,9 +136,8 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
         url: String,
         capture: Boolean,
         incognito: Boolean,
-        background: Boolean,
         created: suspend (String) -> Unit,
-    ): BrowserTarget = base.openTab(url, capture, incognito, background, created)
+    ): BrowserTarget = base.openTab(url, capture, incognito, created)
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 
@@ -153,7 +151,7 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
     // Only Tabs asks, of the browser under this view.
     override suspend fun incognitoTabs(): Set<String> = emptySet()
 
-    override suspend fun closeTab(id: String): ActionResult = free(id) { base.closeTab(id) }
+    override suspend fun closeTab(id: String): ActionResult = free(id) { tabs.closeTab(id) }
 
     override suspend fun activate(id: String) = free(id) { base.activate(id) }
 

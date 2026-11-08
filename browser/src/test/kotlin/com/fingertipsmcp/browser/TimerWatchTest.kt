@@ -23,6 +23,7 @@ class TimerWatchTest {
     ) =
         TimerWatch(
             CoroutineScope(clock),
+            CHROME_SOCKET,
             onPage = { _, block ->
                 started.incrementAndGet()
                 val page = harness.socket(harness.switched() + replies())
