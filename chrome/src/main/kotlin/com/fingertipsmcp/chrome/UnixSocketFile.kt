@@ -14,7 +14,8 @@ import java.nio.file.NoSuchFileException
  * Makes [socket] free for `--unix` to bind, before Chrome starts. A socket file whose server is
  * gone is deleted, as one is left behind when a server is killed. Anything else at the path is
  * refused: a server that answers there, which would keep running unreachable if its file were
- * replaced, or a file that is not a socket.
+ * replaced, or a file that is not a socket. A symbolic link is refused even when it points at a
+ * socket, since deleting a stale one would delete the link and bind a socket in its place.
  */
 internal fun claimUnixSocket(socket: File) {
     // sockaddr_un holds 104 bytes on macOS and 108 on Linux, with the terminating NUL.
@@ -32,6 +33,11 @@ internal fun claimUnixSocket(socket: File) {
         } catch (e: UnsupportedOperationException) {
             throw UsageException("${socket.path} exists, and its file type cannot be read", e)
         }
+    if (mode and S_IFMT == S_IFLNK) {
+        throw UsageException(
+            "${socket.path} is a symbolic link. Give --unix the socket's own path."
+        )
+    }
     if (mode and S_IFMT != S_IFSOCK) {
         throw UsageException("${socket.path} exists and is not a socket")
     }
@@ -50,6 +56,7 @@ internal fun claimUnixSocket(socket: File) {
 }
 
 private const val MAX_SOCKET_PATH = 104
-// The file type bits of st_mode, and the type of a socket, which POSIX fixes.
+// The file type bits of st_mode, and the types of a socket and a symbolic link, which POSIX fixes.
 private const val S_IFMT = 0xF000
 private const val S_IFSOCK = 0xC000
+private const val S_IFLNK = 0xA000

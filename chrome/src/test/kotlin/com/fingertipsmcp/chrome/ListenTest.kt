@@ -107,6 +107,19 @@ class ListenTest {
     }
 
     @Test
+    fun `refuses a link to a socket`() {
+        val socket = File(dir, "s.sock")
+        val link = File(dir, "link.sock")
+        ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+            server.bind(UnixDomainSocketAddress.of(socket.toPath()))
+        }
+        Files.createSymbolicLink(link.toPath(), socket.toPath())
+        val error = assertThrows(UsageException::class.java) { claimUnixSocket(link) }
+        assertTrue("symbolic link" in error.message.orEmpty(), error.message)
+        assertTrue(socket.exists())
+    }
+
+    @Test
     fun `refuses a file not a socket`() {
         val file = File(dir, "notes.txt").apply { writeText("keep") }
         assertThrows(UsageException::class.java) { claimUnixSocket(file) }

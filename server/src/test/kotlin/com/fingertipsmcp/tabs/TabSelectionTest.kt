@@ -1,6 +1,7 @@
 package com.fingertipsmcp.tabs
 
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenLease
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -29,7 +30,7 @@ class TabSelectionTest {
         ScreenLease(
             CoroutineScope(Dispatchers.Unconfined),
             cleanup = { emptyList() },
-            lockedNow = { true },
+            phone = PhoneLock { true },
         )
     private val a = Holder.Session("a")
     private val b = Holder.Session("b")

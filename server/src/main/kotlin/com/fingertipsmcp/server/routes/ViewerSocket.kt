@@ -3,6 +3,7 @@ package com.fingertipsmcp.server.routes
 import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.lease.Holder
 import com.fingertipsmcp.lease.LeaseState
+import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.ClipboardWriteRequest
 import com.fingertipsmcp.model.KeyRequest
@@ -130,6 +131,7 @@ private class ViewerSocket(
                 act(op, id) {
                     val autoWake = decode<ViewerTake>(message).autoWake
                     (controls as? PhoneControls)?.take(autoWake)
+                    null
                 }
             }
             "key" -> act(op, id) { controls.key(decode<KeyRequest>(message)) }
@@ -139,7 +141,11 @@ private class ViewerSocket(
                     it.orientation(decode<OrientationRequest>(message))
                 }
             "paste" -> act(op, id) { controls.paste(decode<ClipboardWriteRequest>(message)) }
-            "copy" -> act(op, id) { copy(id) }
+            "copy" ->
+                act(op, id) {
+                    copy(id)
+                    null
+                }
             "hover" -> hover(op, id, message)
             "wheel" -> withMouse(op, id) { it.wheel(decode<ViewerWheel>(message)) }
             "release" -> {
@@ -172,18 +178,22 @@ private class ViewerSocket(
     }
 
     /**
-     * Runs the page's [op] request. A failure is sent back as an error that echoes [id]. A request
-     * dropped because someone else has the screen is answered too when it has an [id], since the
-     * page waits for that answer.
+     * Runs the page's [op] request. A failure, thrown or a result that is not ok, is sent back as
+     * an error that echoes [id]. A request dropped because someone else has the screen is answered
+     * too when it has an [id], since the page waits for that answer. [block] returns null for a
+     * request that answers the page itself or has no result.
      */
-    private suspend fun act(op: String, id: JsonElement?, block: suspend () -> Unit) {
+    private suspend fun act(op: String, id: JsonElement?, block: suspend () -> ActionResult?) {
         touched()
         if (!lease.viewerInput(viewer)) {
             if (id != null) send(ViewerError(id, "Someone else has the screen. Take over first."))
             return
         }
         try {
-            block()
+            val result = block()
+            if (result != null && !result.ok) {
+                send(ViewerError(id, result.message ?: "The $op did not go through."))
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: ApiException) {
@@ -209,7 +219,10 @@ private class ViewerSocket(
         block: suspend (MouseControls) -> Unit,
     ) {
         val mouse = controls as? MouseControls
-        act(op, id) { block(mouse ?: throw unsupported("This screen has no mouse.")) }
+        act(op, id) {
+            block(mouse ?: throw unsupported("This screen has no mouse."))
+            null
+        }
     }
 
     /** Runs [op] on the phone's controls, through [act], or refuses it as [refused] elsewhere. */
@@ -217,7 +230,7 @@ private class ViewerSocket(
         op: String,
         id: JsonElement?,
         refused: String,
-        block: suspend (PhoneControls) -> Unit,
+        block: suspend (PhoneControls) -> ActionResult,
     ) {
         val phone = controls as? PhoneControls
         act(op, id) { block(phone ?: throw unsupported(refused)) }

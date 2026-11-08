@@ -1,26 +1,9 @@
 package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.CdpTransport
-import com.fingertipsmcp.core.BrowserService
-import com.fingertipsmcp.model.ActionResult
-import com.fingertipsmcp.model.BrowserCaptureResult
-import com.fingertipsmcp.model.BrowserFindRequest
-import com.fingertipsmcp.model.BrowserFindResult
-import com.fingertipsmcp.model.BrowserGestureRequest
-import com.fingertipsmcp.model.BrowserKeyRequest
-import com.fingertipsmcp.model.BrowserReadRequest
-import com.fingertipsmcp.model.BrowserReadResult
-import com.fingertipsmcp.model.BrowserSnapshot
-import com.fingertipsmcp.model.BrowserSnapshotOptions
-import com.fingertipsmcp.model.BrowserSwipeRequest
-import com.fingertipsmcp.model.BrowserTapRequest
 import com.fingertipsmcp.model.BrowserTarget
-import com.fingertipsmcp.model.BrowserTextRequest
-import com.fingertipsmcp.model.ConsoleRequest
-import com.fingertipsmcp.model.ConsoleResult
-import com.fingertipsmcp.model.EvalRequest
-import com.fingertipsmcp.model.EvalResult
 import com.fingertipsmcp.stream.packFrame
+import com.fingertipsmcp.wait.TabBrowser
 import java.util.Base64
 import java.util.Collections
 import kotlinx.coroutines.channels.Channel
@@ -277,9 +260,9 @@ internal class FakeChrome : CdpTransport {
 
 /**
  * A browser whose page targets are [pages], with [shown] the one Chrome shows. The viewer asks only
- * which pages there are and which shows; anything else is not something it calls.
+ * which pages there are and which shows, so the rest is [TabBrowser]'s, which fails the test.
  */
-internal class ShowingBrowser(var pages: List<String>, var shown: String) : BrowserService {
+internal class ShowingBrowser(var pages: List<String>, var shown: String) : TabBrowser() {
     /** Calls to [targets], which start Chrome when it is not running. */
     var listed = 0
 
@@ -289,56 +272,4 @@ internal class ShowingBrowser(var pages: List<String>, var shown: String) : Brow
     }
 
     override suspend fun showing(id: String): Boolean = id == "chrome~$shown"
-
-    override suspend fun openTab(
-        url: String,
-        capture: Boolean,
-        incognito: Boolean,
-        created: suspend (String) -> Unit,
-    ): BrowserTarget = unused()
-
-    override fun awaitingPage(id: String): Boolean = unused()
-
-    override suspend fun awaitAnswer(id: String) = unused()
-
-    override suspend fun chromeStopped(): Boolean = unused()
-
-    override suspend fun navigate(id: String, url: String): BrowserTarget = unused()
-
-    override suspend fun incognitoTabs(): Set<String> = unused()
-
-    override suspend fun closeTab(id: String): ActionResult = unused()
-
-    override suspend fun activate(id: String) = unused()
-
-    override suspend fun timersStalled(id: String): Boolean = unused()
-
-    override suspend fun watchTimers(id: String) = unused()
-
-    override suspend fun snapshot(id: String, options: BrowserSnapshotOptions): BrowserSnapshot =
-        unused()
-
-    override suspend fun read(id: String, request: BrowserReadRequest): BrowserReadResult = unused()
-
-    override suspend fun find(id: String, request: BrowserFindRequest): BrowserFindResult = unused()
-
-    override suspend fun tap(id: String, request: BrowserTapRequest): ActionResult = unused()
-
-    override suspend fun swipe(id: String, request: BrowserSwipeRequest): ActionResult = unused()
-
-    override suspend fun gesture(id: String, request: BrowserGestureRequest): ActionResult =
-        unused()
-
-    override suspend fun key(id: String, request: BrowserKeyRequest): ActionResult = unused()
-
-    override suspend fun text(id: String, request: BrowserTextRequest): ActionResult = unused()
-
-    override suspend fun evaluate(id: String, request: EvalRequest): EvalResult = unused()
-
-    override suspend fun console(id: String, request: ConsoleRequest): ConsoleResult = unused()
-
-    override suspend fun capture(id: String, on: Boolean): BrowserCaptureResult = unused()
-
-    private fun unused(): Nothing =
-        throw UnsupportedOperationException("The viewer does not call this")
 }

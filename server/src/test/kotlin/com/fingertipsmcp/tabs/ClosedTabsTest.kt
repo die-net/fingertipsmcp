@@ -1,6 +1,7 @@
 package com.fingertipsmcp.tabs
 
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserTarget
@@ -30,7 +31,7 @@ class ClosedTabsTest {
                 ScreenLease(
                     CoroutineScope(Dispatchers.Unconfined),
                     cleanup = { emptyList() },
-                    lockedNow = { true },
+                    phone = PhoneLock { true },
                 ),
                 inFront = { false },
                 store = store,

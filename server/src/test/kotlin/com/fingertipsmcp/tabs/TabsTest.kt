@@ -3,6 +3,7 @@ package com.fingertipsmcp.tabs
 import com.fingertipsmcp.core.IntentStart
 import com.fingertipsmcp.core.WaitService
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
@@ -40,7 +41,7 @@ class TabsTest {
         ScreenLease(
             CoroutineScope(Dispatchers.Unconfined),
             cleanup = { emptyList() },
-            lockedNow = { true },
+            phone = PhoneLock { true },
         )
     private val a = Holder.Session("a")
     private val b = Holder.Session("b")

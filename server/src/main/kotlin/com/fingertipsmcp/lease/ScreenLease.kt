@@ -63,10 +63,10 @@ data class Screened<T>(val value: T, val notes: List<String>)
  * them, with cleanup, and is told on its next screen call, which waits like any other. So a client
  * that keeps its session open between tasks cannot keep others off the screen.
  *
- * Cleanup locks the phone only when the screen goes free and sessions found it locked, as
- * [lockedNow] tells when each gets it. Locking before a waiter gets the screen would only make it
- * unlock again with the same stored PIN, and a phone its owner left unlocked is left to Android's
- * own timeout. [cleanup] is told whether to lock.
+ * Cleanup locks the phone only when the screen goes free and sessions found it locked, as [phone]
+ * tells when each gets it. Locking before a waiter gets the screen would only make it unlock again
+ * with the same stored PIN, and a phone its owner left unlocked is left to Android's own timeout.
+ * [cleanup] is told whether to lock. A lease with no [phone], as on a desktop browser, never locks.
  *
  * A session that gets the screen, whether it was free, handed on, or handed back after a take over,
  * runs [ready] before its first screen call does anything else. That empties the clipboard, which a
@@ -77,17 +77,15 @@ data class Screened<T>(val value: T, val notes: List<String>)
  * [withScreen] to give it back. A session that did not have the screen before the call then lets it
  * go with cleanup when the call ends, unless another of its screen calls is still running.
  *
- * [cleanedNote] is what the next holder hears after a cleanup that went well, told whether it
- * locked the screen, or null when there is nothing to say, as on a desktop browser, which has no
- * home screen or lock to surprise anyone.
+ * After a cleanup that went well, the next holder hears [PhoneLock.cleanedNote] on a phone. A
+ * desktop browser has no home screen or lock to surprise anyone, so it hears nothing.
  */
 class ScreenLease(
     private val scope: CoroutineScope,
     private val cleanup: suspend (lock: Boolean) -> List<String>,
-    private val lockedNow: () -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
     private val ready: suspend () -> List<String> = { emptyList() },
-    private val cleanedNote: (locked: Boolean) -> String? = ::phoneCleanedNote,
+    private val phone: PhoneLock? = null,
 ) {
     /** A holder's place in the queue, which every one of its waiting [calls] shares. */
     private data class Waiter(
@@ -473,7 +471,7 @@ class ScreenLease(
                     failed.isNotEmpty() ->
                         "Cleanup after the last holder did not finish: " +
                             "${failed.joinToString("; ")}. Check the screen before acting."
-                    else -> cleanedNote(locked)
+                    else -> phone?.cleanedNote(locked)
                 }
             if (grantNext() == null && !locked && lockOwed()) {
                 locking = true
@@ -628,6 +626,9 @@ class ScreenLease(
     /** Whether the phone is unlocked and owes a lock. */
     private fun lockOwed(): Boolean = owesLock && !lockedNow()
 
+    /** Whether the phone's keyguard is up now. A screen with no lock never is. */
+    private fun lockedNow(): Boolean = phone?.locked?.invoke() == true
+
     private fun grant(holder: Holder) {
         if (holder is Holder.Session) {
             if (!owesLock) owesLock = lockedNow()
@@ -705,12 +706,21 @@ class ScreenLease(
     }
 }
 
-/** What a phone's next holder hears after cleanup, so a home screen and a lock are no surprise. */
-private fun phoneCleanedNote(locked: Boolean): String =
-    if (locked) {
-        "The screen was cleaned up after the last holder: keyboard hidden, home screen, locked. " +
-            "Unlock it before acting."
-    } else {
-        "The screen was cleaned up after the last holder: keyboard hidden, home screen. It was " +
-            "not locked, so check the screen before acting."
-    }
+/**
+ * A phone's lock, which only a phone's [ScreenLease] has. [locked] says whether the keyguard is up
+ * now, so cleanup knows whether it owes a lock.
+ */
+class PhoneLock(val locked: () -> Boolean) {
+    /**
+     * What the next holder hears after a cleanup that went well and [locked] the phone or did not,
+     * so a home screen and a lock are no surprise.
+     */
+    fun cleanedNote(locked: Boolean): String =
+        if (locked) {
+            "The screen was cleaned up after the last holder: keyboard hidden, home screen, " +
+                "locked. Unlock it before acting."
+        } else {
+            "The screen was cleaned up after the last holder: keyboard hidden, home screen. It " +
+                "was not locked, so check the screen before acting."
+        }
+}

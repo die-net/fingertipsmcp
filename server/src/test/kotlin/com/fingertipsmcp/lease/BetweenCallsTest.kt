@@ -27,7 +27,7 @@ class BetweenCallsTest {
                 events += "cleaned"
                 emptyList()
             },
-            lockedNow = { false },
+            phone = PhoneLock { false },
             now = { testScheduler.currentTime },
         )
 

@@ -222,6 +222,31 @@ class ViewerSocketTest {
     }
 
     @Test
+    fun `a failed key is reported`() = testApplication {
+        application { fingertipsModule(api.services) }
+        api.inputResult = ActionResult(ok = false, message = "The helper refused the key.")
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    lease(this)
+                    send(Frame.Text("""{"op":"key","id":"k","key":"HOME"}"""))
+                    val key = errorsUntilHandled(this).single()
+                    assertEquals("k", key["id"]?.jsonPrimitive?.content)
+                    assertEquals(
+                        "The helper refused the key.",
+                        key["message"]?.jsonPrimitive?.content,
+                    )
+                    api.inputResult = ActionResult(ok = false)
+                    send(Frame.Text("""{"op":"text","text":"hi"}"""))
+                    val text = errorsUntilHandled(this).single()
+                    assertEquals(null, text["id"])
+                    assertTrue(text["message"]?.jsonPrimitive?.content.orEmpty().contains("text"))
+                }
+            }
+        }
+    }
+
+    @Test
     fun `binary frames paste images`() = testApplication {
         application { fingertipsModule(api.services) }
         val png = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte())
@@ -371,6 +396,21 @@ class ViewerSocketTest {
     }
 
     private fun JsonObject.holder(): String? = this["holder"]?.jsonPrimitive?.content
+
+    /** The error messages the server sends for the frames sent before this call. */
+    private suspend fun errorsUntilHandled(
+        socket: DefaultClientWebSocketSession
+    ): List<JsonObject> {
+        socket.send(Frame.Text("""{"op":"copy","id":"handled"}"""))
+        val errors = mutableListOf<JsonObject>()
+        while (true) {
+            val frame = socket.incoming.receive()
+            if (frame !is Frame.Text) continue
+            val message = Json.parseToJsonElement(frame.readText()).jsonObject
+            if (message["id"]?.jsonPrimitive?.content == "handled") return errors
+            if (message["op"]?.jsonPrimitive?.content == "error") errors += message
+        }
+    }
 
     /**
      * Returns once the server has handled every frame sent before it. The socket handles frames in

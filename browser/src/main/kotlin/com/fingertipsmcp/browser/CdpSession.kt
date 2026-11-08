@@ -312,25 +312,27 @@ internal class CdpRouter(private val send: (String) -> Unit) {
 
     /**
      * Hands a reply to its call. One whose call has given up, as on a timeout, is dropped, and the
-     * session an abandoned attach returned is detached. The answer is completed under the gate, so
-     * a caller giving up at the same moment finds either its entry or its answer.
+     * session an abandoned attach returned is detached. The answer is recorded under the gate, so a
+     * caller giving up at the same moment finds either its entry or its answer. It is completed
+     * after the gate is released, since a caller on `Dispatchers.Unconfined` resumes inside the
+     * completion and would otherwise run its own code holding the gate.
      */
     private fun deliver(id: Int, result: Result<CdpReply>) {
-        val orphan =
+        val (waiter, answer, abandoned) =
             synchronized(gate) {
                 val waiter = pending.remove(id) ?: return
                 val answer = result.mapCatching { reply -> answer(waiter, reply) }
-                if (waiter.abandoned) return@synchronized answer.getOrNull()?.attached
-                answer.fold(
-                    onSuccess = {
-                        waiter.answered = it
-                        waiter.deferred.complete(it)
-                    },
-                    onFailure = waiter.deferred::completeExceptionally,
-                )
-                null
+                if (!waiter.abandoned) waiter.answered = answer.getOrNull()
+                Triple(waiter, answer, waiter.abandoned)
             }
-        orphan?.let(::release)
+        if (abandoned) {
+            answer.getOrNull()?.attached?.let(::release)
+            return
+        }
+        answer.fold(
+            onSuccess = waiter.deferred::complete,
+            onFailure = waiter.deferred::completeExceptionally,
+        )
     }
 
     /** The answer to [waiter], with the route of the session an attach made. Holds the gate. */

@@ -29,7 +29,6 @@ class DesktopTabsTest {
         ScreenLease(
             CoroutineScope(Dispatchers.Unconfined),
             cleanup = { emptyList() },
-            lockedNow = { false },
         )
     private val a = Holder.Session("a")
     private val b = Holder.Session("b")

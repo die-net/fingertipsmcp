@@ -88,7 +88,7 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 | --- | --- |
 | `--host ADDR` | Listen address. Default: from `settings.json`, first `127.0.0.1`. A non-loopback address is logged as a warning. Kept in `settings.json`. |
 | `--port N` | TCP port. Default: from `settings.json`, first one picked at random. Kept in `settings.json`. |
-| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. Kept in `settings.json` until `--host` or `--port` switches back to TCP. It refuses a path where a server answers or that is not a socket, replaces a socket file no server holds, and removes its socket when it stops. |
+| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. Kept in `settings.json` until `--host` or `--port` switches back to TCP. It refuses a path where a server answers or that is not a socket, including a symbolic link to one, replaces a socket file no server holds, and removes its socket when it stops. |
 | `--stdio` | MCP over stdin and stdout. Logs go to stderr. Refuses `--host`, `--port`, and `--unix`. |
 | `--chrome PATH` | Browser binary. Also `FINGERTIPS_CHROME`. |
 | `--profile DIR` | Chrome user data directory. |

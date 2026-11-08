@@ -13,6 +13,7 @@ import com.fingertipsmcp.core.ShellResult
 import com.fingertipsmcp.core.UiService
 import com.fingertipsmcp.core.WaitService
 import com.fingertipsmcp.lease.ForegroundWatch
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
@@ -153,6 +154,8 @@ internal class FakeApi(
     var inputTaps = 0
     var imeShow: ImeShowRequest? = null
     var orientation: OrientationRequest? = null
+    /** What the fake phone's key and text calls return. */
+    @Volatile var inputResult = acted()
     var snapshotOptions: SnapshotOptions? = null
     var findRequest: FindRequest? = null
     /** The fake phone's clipboard, and what the last clipboard call asked for. */
@@ -193,7 +196,7 @@ internal class FakeApi(
                 cleanups++
                 emptyList()
             },
-            lockedNow = { true },
+            phone = PhoneLock { true },
             now = { clock.now },
         )
 
@@ -259,9 +262,9 @@ internal class FakeApi(
                         pointerSessions.send(seen)
                     }
 
-                    override suspend fun key(request: KeyRequest) = acted()
+                    override suspend fun key(request: KeyRequest) = inputResult
 
-                    override suspend fun text(request: TextRequest) = acted()
+                    override suspend fun text(request: TextRequest) = inputResult
 
                     override suspend fun hideIme() = acted()
 

@@ -58,6 +58,7 @@ import com.fingertipsmcp.input.InputServiceImpl
 import com.fingertipsmcp.input.TouchInput
 import com.fingertipsmcp.input.asResult
 import com.fingertipsmcp.lease.ForegroundWatch
+import com.fingertipsmcp.lease.PhoneLock
 import com.fingertipsmcp.lease.ScreenCleanup
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.mcp.McpSessions
@@ -271,7 +272,7 @@ class AppGraph(
             scope,
             cleanup = screenCleanup::run,
             ready = screenCleanup::ready,
-            lockedNow = { state.refresh().keyguard.locked },
+            phone = PhoneLock { state.refresh().keyguard.locked },
         )
     private val tabs: Tabs =
         Tabs(
