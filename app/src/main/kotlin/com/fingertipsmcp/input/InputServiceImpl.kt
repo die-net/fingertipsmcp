@@ -57,9 +57,7 @@ class InputServiceImpl(
 
     override suspend fun swipe(request: SwipeRequest): ActionResult =
         action(request.autoWake) {
-            if (request.durationMs !in MIN_SWIPE_MS..MAX_SWIPE_MS) {
-                throw ApiException.badRequest("durationMs must be $MIN_SWIPE_MS..$MAX_SWIPE_MS")
-            }
+            checkSwipeDuration(request.durationMs)
             val (from, to) = swipeEnds(request)
             val spec = SwipeSpec(request.durationMs, request.fling, request.humanize)
             touch.swipe(from, to, spec).asResult()
@@ -67,16 +65,8 @@ class InputServiceImpl(
 
     override suspend fun gesture(request: GestureRequest): ActionResult =
         action(request.autoWake) {
-            val pointers = request.pointers
-            if (pointers.isEmpty() || pointers.any { it.isEmpty() }) {
-                throw ApiException.badRequest("Each pointer needs at least one point")
-            }
-            if (pointers.sumOf { it.size } > MAX_GESTURE_POINTS) {
-                throw ApiException.badRequest("At most $MAX_GESTURE_POINTS points per gesture")
-            }
-            if (pointers.any { path -> path.any { it.tMs < 0 } })
-                throw ApiException.badRequest("tMs must be >= 0")
-            touch.gesture(pointers, request.humanize).asResult()
+            checkGesturePointers(request.pointers)
+            touch.gesture(request.pointers, request.humanize).asResult()
         }
 
     override suspend fun pointer(frames: ReceiveChannel<PointerFrame>) {
@@ -226,9 +216,6 @@ class InputServiceImpl(
     private companion object {
         const val MAX_TAPS = 10
         const val MAX_HOLD_MS = 10_000L
-        const val MIN_SWIPE_MS = 20L
-        const val MAX_SWIPE_MS = 10_000L
-        const val MAX_GESTURE_POINTS = 10_000
         const val POINT_SLOP_PX = 3
         const val MIN_DISTANCE = 0.05f
         const val MAX_DISTANCE = 0.95f

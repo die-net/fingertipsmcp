@@ -3,14 +3,10 @@ package com.fingertipsmcp.input
 import com.fingertipsmcp.model.Point
 import com.fingertipsmcp.model.Rect
 import com.fingertipsmcp.model.TimedPoint
-import kotlin.math.PI
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.ln
 import kotlin.math.min
 import kotlin.math.roundToLong
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 data class SwipeSpec(
@@ -65,8 +61,16 @@ class Humanizer(private val random: Random = Random.Default) {
                 if (i == 0 || !humanize) first
                 else
                     Point(
-                        clamp(first.x + gaussian(REPEAT_TAP_SIGMA_PX), target.left, target.right),
-                        clamp(first.y + gaussian(REPEAT_TAP_SIGMA_PX), target.top, target.bottom),
+                        clamp(
+                            first.x + random.nextGaussian(REPEAT_TAP_SIGMA_PX),
+                            target.left,
+                            target.right,
+                        ),
+                        clamp(
+                            first.y + random.nextGaussian(REPEAT_TAP_SIGMA_PX),
+                            target.top,
+                            target.bottom,
+                        ),
                     )
             val stroke = tapAt(point, target, holdMs, humanize, start)
             strokes += stroke
@@ -118,7 +122,11 @@ class Humanizer(private val random: Random = Random.Default) {
             val s = progress(u, spec)
             var p = bezier(from, control, to, s)
             if (spec.humanize && i in 1 until steps) {
-                p = Point(p.x + gaussian(PATH_NOISE_SIGMA_PX), p.y + gaussian(PATH_NOISE_SIGMA_PX))
+                p =
+                    Point(
+                        p.x + random.nextGaussian(PATH_NOISE_SIGMA_PX),
+                        p.y + random.nextGaussian(PATH_NOISE_SIGMA_PX),
+                    )
             }
             points += TimedPoint(p.x, p.y, t)
         }
@@ -138,24 +146,36 @@ class Humanizer(private val random: Random = Random.Default) {
      */
     fun finger(count: Int, motion: FingerMotion, humanize: Boolean): List<FingerShape> {
         if (!humanize || count <= 0) return List(count.coerceAtLeast(0)) { FingerShape.steady }
-        val major0 = (MAJOR_BASE + gaussian(MAJOR_BASE_SIGMA)).coerceIn(MAJOR_MIN, MAJOR_MAX)
+        val major0 =
+            (MAJOR_BASE + random.nextGaussian(MAJOR_BASE_SIGMA)).coerceIn(MAJOR_MIN, MAJOR_MAX)
         val aspect = random.nextDouble(ASPECT_MIN, ASPECT_MAX).toFloat()
         val pressure0 =
-            (PRESSURE_BASE + gaussian(PRESSURE_BASE_SIGMA)).coerceIn(PRESSURE_MIN, PRESSURE_MAX)
-        var orient = (ORIENT_CENTER + gaussian(ORIENT_BASE_SIGMA)).coerceIn(ORIENT_MIN, ORIENT_MAX)
+            (PRESSURE_BASE + random.nextGaussian(PRESSURE_BASE_SIGMA)).coerceIn(
+                PRESSURE_MIN,
+                PRESSURE_MAX,
+            )
+        var orient =
+            (ORIENT_CENTER + random.nextGaussian(ORIENT_BASE_SIGMA)).coerceIn(
+                ORIENT_MIN,
+                ORIENT_MAX,
+            )
         var sizeWalk = 0f
         var pressureWalk = 0f
         return List(count) { i ->
             val u = if (count == 1) 0.5f else i.toFloat() / (count - 1)
             val depth = depth(u, motion)
             sizeWalk =
-                (sizeWalk * WALK_KEEP + gaussian(SIZE_WALK_SIGMA)).coerceIn(-SIZE_WALK, SIZE_WALK)
+                (sizeWalk * WALK_KEEP + random.nextGaussian(SIZE_WALK_SIGMA)).coerceIn(
+                    -SIZE_WALK,
+                    SIZE_WALK,
+                )
             pressureWalk =
-                (pressureWalk * WALK_KEEP + gaussian(PRESSURE_WALK_SIGMA)).coerceIn(
+                (pressureWalk * WALK_KEEP + random.nextGaussian(PRESSURE_WALK_SIGMA)).coerceIn(
                     -PRESSURE_WALK,
                     PRESSURE_WALK,
                 )
-            orient = (orient + gaussian(ORIENT_WALK_SIGMA)).coerceIn(ORIENT_MIN, ORIENT_MAX)
+            orient =
+                (orient + random.nextGaussian(ORIENT_WALK_SIGMA)).coerceIn(ORIENT_MIN, ORIENT_MAX)
             val major =
                 (major0 * (MAJOR_FLOOR + MAJOR_SPAN * depth) + sizeWalk).coerceIn(
                     MAJOR_CLAMP_MIN,
@@ -188,8 +208,8 @@ class Humanizer(private val random: Random = Random.Default) {
             if (index == 0 || index == path.lastIndex) point
             else
                 point.copy(
-                    x = point.x + gaussian(PATH_NOISE_SIGMA_PX),
-                    y = point.y + gaussian(PATH_NOISE_SIGMA_PX),
+                    x = point.x + random.nextGaussian(PATH_NOISE_SIGMA_PX),
+                    y = point.y + random.nextGaussian(PATH_NOISE_SIGMA_PX),
                 )
         }
     }
@@ -268,8 +288,8 @@ class Humanizer(private val random: Random = Random.Default) {
         val halfW = (target.right - target.left) * INNER_FRACTION / 2f
         val halfH = (target.bottom - target.top) * INNER_FRACTION / 2f
         return Point(
-            cx + gaussian(halfW / 2f).coerceIn(-halfW, halfW),
-            cy + gaussian(halfH / 2f).coerceIn(-halfH, halfH),
+            cx + random.nextGaussian(halfW / 2f).coerceIn(-halfW, halfW),
+            cy + random.nextGaussian(halfH / 2f).coerceIn(-halfH, halfH),
         )
     }
 
@@ -328,13 +348,6 @@ class Humanizer(private val random: Random = Random.Default) {
         }
     }
 
-    /** Standard normal via Box-Muller, scaled by [sigma]. */
-    private fun gaussian(sigma: Float): Float {
-        val u1 = 1.0 - random.nextDouble()
-        val u2 = random.nextDouble()
-        return (sqrt(-2.0 * ln(u1)) * cos(2 * PI * u2)).toFloat() * sigma
-    }
-
     private companion object {
         const val INNER_FRACTION = 0.6f
         const val MIN_HOLD_MS = 50L
@@ -359,7 +372,6 @@ class Humanizer(private val random: Random = Random.Default) {
         const val MIN_SETTLE_MS = 40L
         const val MAX_SETTLE_MS = 90L
         const val PLAIN_SETTLE_MS = 60L
-        const val MIN_SWIPE_MS = 20L
         const val MIN_SAMPLE_HZ = 30f
         const val MAX_SAMPLE_HZ = 240f
         const val MS_PER_SECOND = 1000.0

@@ -1,5 +1,8 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.core.settled
+import com.fingertipsmcp.input.checkGesturePointers
+import com.fingertipsmcp.input.checkSwipeDuration
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserGestureRequest
@@ -64,9 +67,7 @@ internal interface PageInputs {
 
 /** The swipe checks every platform makes: duration, and from and to or a direction. */
 internal fun checkSwipeRequest(request: BrowserSwipeRequest) {
-    if (request.durationMs !in MIN_SWIPE_MS..MAX_SWIPE_MS) {
-        throw ApiException.badRequest("durationMs must be $MIN_SWIPE_MS..$MAX_SWIPE_MS")
-    }
+    checkSwipeDuration(request.durationMs)
     val from = request.from
     val to = request.to
     if (from != null || to != null) {
@@ -84,16 +85,17 @@ internal fun checkSwipeRequest(request: BrowserSwipeRequest) {
 
 /** The gesture checks every platform makes: point counts and times. */
 internal fun checkGestureRequest(request: BrowserGestureRequest) {
-    val pointers = request.pointers
-    if (pointers.isEmpty() || pointers.any { it.isEmpty() }) {
-        throw ApiException.badRequest("Each pointer needs at least one point")
-    }
-    if (pointers.sumOf { it.size } > MAX_GESTURE_POINTS) {
-        throw ApiException.badRequest("At most $MAX_GESTURE_POINTS points per gesture")
-    }
-    if (pointers.any { path -> path.any { it.tMs < 0 } }) {
-        throw ApiException.badRequest("tMs must be >= 0")
-    }
+    checkGesturePointers(request.pointers)
+}
+
+/**
+ * Selects the tab, and refuses the input if Chrome won't within [FRONT_MS], so it can't land on
+ * another tab.
+ */
+internal suspend fun selectTab(cdp: CdpSession) {
+    cdp.call("Page.bringToFront")
+    if (settled(FRONT_MS) { tabShowing(cdp) }) return
+    throw ApiException(409, "not_visible", "Chrome did not bring this tab forward.")
 }
 
 /**
@@ -114,8 +116,5 @@ internal fun checkTextRequest(request: BrowserTextRequest): TapTarget? {
     return optionalTarget(request.ref, request.selector)
 }
 
-private const val MIN_SWIPE_MS = 20L
-private const val MAX_SWIPE_MS = 10_000L
-private const val MAX_GESTURE_POINTS = 10_000
 private const val MAX_TEXT = 10_000
 private const val MAX_DELAY_MS = 5_000L

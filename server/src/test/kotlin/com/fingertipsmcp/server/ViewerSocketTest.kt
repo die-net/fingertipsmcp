@@ -2,16 +2,15 @@ package com.fingertipsmcp.server
 
 import com.fingertipsmcp.core.ClipImage
 import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ClipboardWriteRequest
 import com.fingertipsmcp.model.KeyRequest
-import com.fingertipsmcp.model.OrientationRequest
 import com.fingertipsmcp.model.PointerFrame
 import com.fingertipsmcp.model.PointerOp
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.ScreenOrientation
 import com.fingertipsmcp.model.TextRequest
 import com.fingertipsmcp.model.ViewerHover
-import com.fingertipsmcp.model.ViewerPointer
 import com.fingertipsmcp.model.ViewerWheel
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
@@ -273,7 +272,7 @@ class ViewerSocketTest {
     /** The next lease message, skipping anything else. */
     @Test
     fun `hover needs the screen`() = testApplication {
-        val mouse = MouseControls()
+        val mouse = DesktopControls()
         val streams = checkNotNull(api.services.streams).copy(controls = mouse)
         application { fingertipsModule(api.services.copy(streams = streams)) }
         apiClient().use { client ->
@@ -294,36 +293,69 @@ class ViewerSocketTest {
         assertTrue(mouse.calls.tryReceive().isFailure, "the first hover reached no page")
     }
 
-    /** A desktop browser's viewer controls, which record the mouse's hovers and wheel turns. */
-    private class MouseControls : ViewerControls {
-        val calls = Channel<String>(Channel.UNLIMITED)
+    @Test
+    fun `a desktop refuses phone ops`() = testApplication {
+        val mouse = DesktopControls()
+        val streams = checkNotNull(api.services.streams).copy(controls = mouse)
+        application { fingertipsModule(api.services.copy(streams = streams)) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    assertEquals("none", lease(this).holder())
+                    send(Frame.Text("""{"op":"take"}"""))
+                    assertEquals("you", lease(this).holder())
+                    send(Frame.Text("""{"op":"orientation","id":"o","orientation":"90"}"""))
+                    val refused = next(this, "error")
+                    assertEquals("o", refused["id"]?.jsonPrimitive?.content)
+                    send(Frame.Binary(true, byteArrayOf(1, 2, 3)))
+                    val image = next(this, "error")
+                    assertTrue(image["message"]?.jsonPrimitive?.content.orEmpty().contains("image"))
+                }
+            }
+        }
+        assertEquals(null, api.orientation)
+    }
 
-        override val pointerKind = ViewerPointer.MOUSE
+    @Test
+    fun `a phone refuses the mouse`() = testApplication {
+        application { fingertipsModule(api.services) }
+        apiClient().use { client ->
+            withTimeout(5.seconds) {
+                client.webSocket("/v1/input/pointer", { bearer(secret) }) {
+                    assertEquals("none", lease(this).holder())
+                    send(Frame.Text("""{"op":"take"}"""))
+                    assertEquals("you", lease(this).holder())
+                    send(Frame.Text("""{"op":"wheel","id":"w","x":1,"y":2,"dx":0,"dy":100}"""))
+                    val refused = next(this, "error")
+                    assertEquals("w", refused["id"]?.jsonPrimitive?.content)
+                    assertTrue(
+                        refused["message"]?.jsonPrimitive?.content.orEmpty().contains("mouse")
+                    )
+                }
+            }
+        }
+    }
+
+    /** A desktop browser's viewer controls, which record the mouse's hovers and wheel turns. */
+    private class DesktopControls : MouseControls {
+        val calls = Channel<String>(Channel.UNLIMITED)
 
         override suspend fun contacts(frames: ReceiveChannel<PointerFrame>) {
             for (frame in frames) calls.send("contact ${frame.op}")
         }
 
-        override suspend fun take(autoWake: Boolean) = Unit
+        override suspend fun key(request: KeyRequest) = ActionResult(ok = true)
 
-        override suspend fun wake() = Unit
+        override suspend fun text(request: TextRequest) = ActionResult(ok = true)
 
-        override suspend fun key(request: KeyRequest): Any = Unit
-
-        override suspend fun text(request: TextRequest): Any = Unit
-
-        override suspend fun orientation(request: OrientationRequest): Any = Unit
-
-        override suspend fun paste(request: ClipboardWriteRequest): Any = Unit
-
-        override suspend fun pasteImage(bytes: ByteArray): Any = Unit
+        override suspend fun paste(request: ClipboardWriteRequest) = ActionResult(ok = true)
 
         override suspend fun copy() = ViewerCopy(null, null, changed = false)
 
-        override suspend fun hover(at: ViewerHover): Any =
+        override suspend fun hover(at: ViewerHover) =
             calls.send("hover ${at.x.toInt()},${at.y.toInt()}")
 
-        override suspend fun wheel(turn: ViewerWheel): Any =
+        override suspend fun wheel(turn: ViewerWheel) =
             calls.send(
                 "wheel ${turn.x.toInt()},${turn.y.toInt()} by ${turn.dx.toInt()},${turn.dy.toInt()}"
             )

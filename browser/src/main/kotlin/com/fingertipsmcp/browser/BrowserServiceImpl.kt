@@ -66,11 +66,11 @@ class BrowserServiceImpl(
      */
     freezesTabs: Boolean = false,
     /**
-     * For a desktop browser, the host's mouse and keyboard conventions, and input goes as a mouse
-     * and keyboard ([DesktopPageInput]). Null for Android's [PageInput], through [touchAt],
-     * [swipeAt], [gestureAt], [pressKey], and [typeText].
+     * For a desktop browser, its mouse and keyboard, and input goes through them
+     * ([DesktopPageInput]). Null for Android's [PageInput], through [touchAt], [swipeAt],
+     * [gestureAt], [pressKey], and [typeText].
      */
-    desktopInput: DesktopStyle? = null,
+    desktopInput: DesktopPointer? = null,
     private val contentBounds: suspend (String?) -> Rect = { Rect(0, 0, 0, 0) },
     private val touchAt: suspend (Rect, Boolean) -> ActionResult = { _, _ ->
         ActionResult(ok = false)

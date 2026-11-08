@@ -67,24 +67,25 @@ internal suspend fun dispatchInsertText(
     submit: Boolean,
 ) {
     if (clear) {
-        dispatchDomKey(cdp, domKey("A", CTRL), cdpModifiers(CTRL), longPress = false)
-        dispatchDomKey(cdp, domKey("DEL", 0), modifiers = 0, longPress = false)
+        val control = setOf(CdpModifier.CONTROL)
+        dispatchDomKey(cdp, domKey("A", 0), control, longPress = false)
+        dispatchDomKey(cdp, domKey("DEL", 0), emptySet(), longPress = false)
     }
     if (text.isNotEmpty()) {
         cdp.call("Input.insertText", buildJsonObject { put("text", text) })
     }
     if (submit) {
-        dispatchDomKey(cdp, domKey("ENTER", 0), modifiers = 0, longPress = false)
+        dispatchDomKey(cdp, domKey("ENTER", 0), emptySet(), longPress = false)
     }
 }
 
 internal suspend fun dispatchDomKey(
     cdp: CdpSession,
     key: DomKey,
-    modifiers: Int,
+    modifiers: Set<CdpModifier>,
     longPress: Boolean,
 ) {
-    val withText = key.text != null && modifiers == 0
+    val withText = key.text != null && typesText(modifiers)
     val down = if (withText) "keyDown" else "rawKeyDown"
     val landed =
         pressPastHold(cdp, "keydown") {
@@ -175,21 +176,22 @@ private fun mouseEvent(type: String, at: TimedPoint, pressed: Boolean): JsonObje
         put("pointerType", "mouse")
     }
 
-private fun keyEvent(type: String, key: DomKey, modifiers: Int, withText: Boolean): JsonObject =
-    buildJsonObject {
-        put("type", type)
-        put("key", key.key)
-        put("code", key.code)
-        put("windowsVirtualKeyCode", key.virtualKey)
-        put("nativeVirtualKeyCode", key.virtualKey)
-        put("modifiers", modifiers)
-        if (withText && key.text != null) {
-            put("text", key.text)
-            put("unmodifiedText", key.text)
-        }
+private fun keyEvent(
+    type: String,
+    key: DomKey,
+    modifiers: Set<CdpModifier>,
+    withText: Boolean,
+): JsonObject = buildJsonObject {
+    put("type", type)
+    put("key", key.key)
+    put("code", key.code)
+    put("windowsVirtualKeyCode", key.virtualKey)
+    put("nativeVirtualKeyCode", key.virtualKey)
+    put("modifiers", cdpBits(modifiers))
+    if (withText && key.text != null) {
+        put("text", key.text)
+        put("unmodifiedText", key.text)
     }
-
-/** Android META_CTRL_ON, so select-all does not depend on [android.view.KeyEvent]. */
-private const val CTRL = 4_096
+}
 
 private const val LONG_PRESS_MS = 400L

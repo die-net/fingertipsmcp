@@ -1,5 +1,7 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.input.TypingModel
+import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.Point
 import kotlin.math.hypot
 import kotlinx.serialization.json.JsonPrimitive
@@ -8,23 +10,26 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * A person's mouse and keyboard on one desktop page, from the viewer, at CSS viewport points.
  * Unlike [DesktopPageInput], nothing is planned or humanized: the person's own hand already moves
- * the pointer and types. Clicks close together in time and place count as a double click, as an OS
- * counts them.
+ * the pointer and types. Each event goes through [pointer], the one the agent's input uses too, so
+ * it waits for an agent's action to finish and leaves the pointer where the person put it. Clicks
+ * close together in time and place count as a double click, as an OS counts them.
  */
 class ViewerPageInput(
     private val cdp: CdpSession,
     devicePixelRatio: Float,
+    private val pointer: DesktopPointer,
     /** Monotonic milliseconds, for telling a double click. */
     private val now: () -> Long,
 ) {
-    private val events = CdpDesktopEvents(cdp, devicePixelRatio)
+    private val events = pointer.tracked(CdpDesktopEvents(cdp, devicePixelRatio))
+    private val untimed = TypingModel()
     private var lastPress: Point? = null
     private var lastPressAt = 0L
     private var clicks = 1
 
     /** Moves the pointer, with the left button held when [pressed]. */
     suspend fun move(at: Point, pressed: Boolean) {
-        events.mouseMove(at, buttons = if (pressed) 1 else 0)
+        pointer.act { events.mouseMove(at, buttons = if (pressed) 1 else 0) }
     }
 
     suspend fun press(at: Point) {
@@ -42,52 +47,47 @@ class ViewerPageInput(
             }
         lastPress = at
         lastPressAt = at0
-        events.mouseMove(at, buttons = 0)
-        events.mouseDown(at, clicks)
+        pointer.act {
+            events.mouseMove(at, buttons = 0)
+            events.mouseDown(at, clicks)
+        }
     }
 
     suspend fun release(at: Point) {
-        events.mouseUp(at, clicks)
+        pointer.act { events.mouseUp(at, clicks) }
     }
 
     /** One turn of the wheel, by [dx] and [dy] CSS pixels of scroll. */
     suspend fun wheel(at: Point, dx: Float, dy: Float) {
-        events.wheel(at, dx, dy)
+        pointer.act { events.wheel(at, dx, dy) }
     }
 
     /** A named key, as a key request names it, with Android's [metaState] for its modifiers. */
-    suspend fun key(name: String, metaState: Int) {
+    suspend fun key(name: String, metaState: Int): ActionResult {
         val key = domKey(name, metaState)
-        val modifiers = cdpModifiers(metaState)
-        events.keyDown(key, modifiers, 0, emptyList())
-        events.keyUp(key, modifiers, 0)
+        val modifiers = CdpModifier.fromMetaState(metaState)
+        pointer.act {
+            events.keyDown(key, modifiers, 0, emptyList())
+            events.keyUp(key, modifiers, 0)
+        }
+        return ActionResult(ok = true, backend = BACKEND)
     }
 
     /**
-     * Types [text] key by key on a US layout, with Shift held for the characters that need it. Text
-     * no key types, such as emoji, is inserted as an input method commits it.
+     * Types [text] key by key on a US layout, with Shift held for the characters that need it, as
+     * [typingSteps] lays it out with no delays. Text no key types, such as emoji, is inserted as an
+     * input method commits it.
      */
-    suspend fun type(text: String) {
-        val keyless = StringBuilder()
-        for (c in text) {
-            val stroke = usKeystroke(c).takeUnless { c.isSurrogate() }
-            if (stroke == null) {
-                keyless.append(c)
-                continue
-            }
-            if (keyless.isNotEmpty()) insert(keyless.toString().also { keyless.clear() })
-            if (stroke.shift) events.keyDown(SHIFT_KEY, SHIFT_MODIFIER, LEFT, emptyList())
-            val modifiers = if (stroke.shift) SHIFT_MODIFIER else 0
-            events.keyDown(stroke.key, modifiers, 0, emptyList())
-            events.keyUp(stroke.key, modifiers, 0)
-            if (stroke.shift) events.keyUp(SHIFT_KEY, 0, LEFT)
-        }
-        if (keyless.isNotEmpty()) insert(keyless.toString())
+    suspend fun type(text: String): ActionResult {
+        val steps = typingSteps(text, untimed, minMs = 0, maxMs = 0)
+        pointer.act { playKeys(events, steps, now) }
+        return ActionResult(ok = true, backend = BACKEND)
     }
 
     /** Puts [text] in the focused field at once, as a paste does. */
-    suspend fun insert(text: String) {
-        events.insertText(text)
+    suspend fun insert(text: String): ActionResult {
+        pointer.act { events.insertText(text) }
+        return ActionResult(ok = true, backend = BACKEND)
     }
 
     /** The text the page has selected, or null when none is. */
@@ -99,6 +99,7 @@ class ViewerPageInput(
     private companion object {
         const val DOUBLE_CLICK_MS = 500L
         const val DOUBLE_CLICK_PX = 5f
+        const val BACKEND = "cdp"
     }
 }
 

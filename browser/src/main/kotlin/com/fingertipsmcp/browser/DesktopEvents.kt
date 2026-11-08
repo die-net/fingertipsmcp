@@ -28,9 +28,14 @@ internal interface DesktopEvents {
     suspend fun wheel(at: Point, dx: Float, dy: Float)
 
     /** A key going down. [commands] are editing commands macOS needs for shortcuts. */
-    suspend fun keyDown(key: DomKey, modifiers: Int, location: Int, commands: List<String>)
+    suspend fun keyDown(
+        key: DomKey,
+        modifiers: Set<CdpModifier>,
+        location: Int,
+        commands: List<String>,
+    )
 
-    suspend fun keyUp(key: DomKey, modifiers: Int, location: Int)
+    suspend fun keyUp(key: DomKey, modifiers: Set<CdpModifier>, location: Int)
 
     /** Text no key produces, committed the way an input method does. */
     suspend fun insertText(text: String)
@@ -73,11 +78,11 @@ internal class CdpDesktopEvents(
 
     override suspend fun keyDown(
         key: DomKey,
-        modifiers: Int,
+        modifiers: Set<CdpModifier>,
         location: Int,
         commands: List<String>,
     ) {
-        val withText = key.text != null && modifiers and NON_SHIFT_MODIFIERS == 0
+        val withText = key.text != null && typesText(modifiers)
         val event =
             keyEvent(if (withText) "keyDown" else "rawKeyDown", key, modifiers, location) {
                 if (withText) {
@@ -89,7 +94,7 @@ internal class CdpDesktopEvents(
         cdp.call("Input.dispatchKeyEvent", event)
     }
 
-    override suspend fun keyUp(key: DomKey, modifiers: Int, location: Int) {
+    override suspend fun keyUp(key: DomKey, modifiers: Set<CdpModifier>, location: Int) {
         cdp.call("Input.dispatchKeyEvent", keyEvent("keyUp", key, modifiers, location) {})
     }
 
@@ -116,7 +121,7 @@ internal class CdpDesktopEvents(
     private fun keyEvent(
         type: String,
         key: DomKey,
-        modifiers: Int,
+        modifiers: Set<CdpModifier>,
         location: Int,
         extra: JsonObjectBuilder.() -> Unit,
     ): JsonObject = buildJsonObject {
@@ -125,7 +130,7 @@ internal class CdpDesktopEvents(
         put("code", key.code)
         put("windowsVirtualKeyCode", key.virtualKey)
         put("nativeVirtualKeyCode", key.virtualKey)
-        put("modifiers", modifiers)
+        put("modifiers", cdpBits(modifiers))
         if (location != 0) put("location", location)
         extra()
     }
@@ -134,10 +139,5 @@ internal class CdpDesktopEvents(
     private fun snap(value: Float): Float {
         val ratio = devicePixelRatio.takeIf { it > 0f } ?: 1f
         return (value * ratio).roundToInt() / ratio
-    }
-
-    private companion object {
-        /** Alt, Ctrl, and Meta: with any of them held a key types nothing. */
-        const val NON_SHIFT_MODIFIERS = 1 or 2 or 4
     }
 }

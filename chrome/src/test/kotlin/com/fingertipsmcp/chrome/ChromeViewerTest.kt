@@ -2,6 +2,7 @@ package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.CdpBrowserConnection
 import com.fingertipsmcp.browser.CdpTransport
+import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserTarget
@@ -54,6 +55,7 @@ class ChromeViewerTest {
                         browser = showingOnePage(),
                         extensionHome = home,
                         scope = backgroundScope,
+                        pointer = DesktopPointer(),
                     )
                 assertThrows<ApiException> { watch(viewer) }
                 watch(viewer)

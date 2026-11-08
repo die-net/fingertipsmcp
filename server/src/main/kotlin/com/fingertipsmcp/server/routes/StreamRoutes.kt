@@ -2,6 +2,7 @@ package com.fingertipsmcp.server.routes
 
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
+import com.fingertipsmcp.server.PhoneControls
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.VIEWER_COOKIE
@@ -96,7 +97,7 @@ private suspend fun ViewerControls.serveStream(
         return
     }
     try {
-        wake()
+        (this as? PhoneControls)?.wake()
         serve()
     } catch (e: ApiException) {
         failStream(session, e, failed)

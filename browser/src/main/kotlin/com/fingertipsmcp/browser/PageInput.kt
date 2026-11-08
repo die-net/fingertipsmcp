@@ -1,6 +1,5 @@
 package com.fingertipsmcp.browser
 
-import com.fingertipsmcp.core.settled
 import com.fingertipsmcp.input.FingerMotion
 import com.fingertipsmcp.input.Humanizer
 import com.fingertipsmcp.input.SwipeSpec
@@ -34,8 +33,10 @@ internal class PageInput(
     private val gestureAt: suspend (List<List<TimedPoint>>, Boolean, Rect) -> ActionResult,
     private val pressKey: suspend (KeyRequest) -> ActionResult,
     private val typeText: suspend (TextRequest) -> ActionResult,
-    /** Where the app's page is drawn on screen; fails with `content_unavailable` when it is not. */
-    /** Where the page is drawn. Call it before reading a box, since it can move the page. */
+    /**
+     * Where the app's page is drawn on screen; fails with `content_unavailable` when it is not.
+     * Call it before reading a box, since it can move the page.
+     */
     private val pageBounds: suspend (CdpSession, String?) -> Rect,
     /** Brings the app up when it is not in front, and fails when it does not come. */
     private val appUp: suspend (String?) -> Unit,
@@ -182,7 +183,7 @@ internal class PageInput(
                 dispatchDomKey(
                     cdp,
                     pageKey ?: domKey(request.key, request.metaState),
-                    cdpModifiers(request.metaState),
+                    CdpModifier.fromMetaState(request.metaState),
                     request.longPress,
                 )
                 ActionResult(ok = true, backend = "cdp")
@@ -296,14 +297,7 @@ internal class PageInput(
      */
     private suspend fun showTab(cdp: CdpSession, pkg: String?) {
         appUp(pkg)
-        foreground(cdp)
-    }
-
-    /** Selects the tab, and refuses the input if Chrome won't, so it can't land on another. */
-    private suspend fun foreground(cdp: CdpSession) {
-        cdp.call("Page.bringToFront")
-        if (settled(FRONT_MS) { tabShowing(cdp) }) return
-        throw ApiException(409, "not_visible", "Chrome did not bring this tab forward.")
+        selectTab(cdp)
     }
 
     private fun cdpPoints(pointers: List<List<TimedPoint>>): ActionResult {

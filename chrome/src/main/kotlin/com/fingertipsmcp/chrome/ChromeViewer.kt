@@ -1,6 +1,7 @@
 package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.CdpBrowserConnection
+import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.OpenCdpSession
 import com.fingertipsmcp.browser.ViewerPageInput
 import com.fingertipsmcp.browser.decodeCdp
@@ -8,11 +9,11 @@ import com.fingertipsmcp.browser.pagePixelRatio
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.core.BrowserService
+import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.AudioHeader
 import com.fingertipsmcp.model.ClipboardWriteRequest
 import com.fingertipsmcp.model.KeyRequest
-import com.fingertipsmcp.model.OrientationRequest
 import com.fingertipsmcp.model.Point
 import com.fingertipsmcp.model.PointerFrame
 import com.fingertipsmcp.model.PointerOp
@@ -22,6 +23,7 @@ import com.fingertipsmcp.model.ViewerHover
 import com.fingertipsmcp.model.ViewerPointer
 import com.fingertipsmcp.model.ViewerWheel
 import com.fingertipsmcp.server.AudioFeed
+import com.fingertipsmcp.server.MouseControls
 import com.fingertipsmcp.server.VideoFeed
 import com.fingertipsmcp.server.ViewerControls
 import com.fingertipsmcp.server.ViewerCopy
@@ -70,6 +72,8 @@ class ChromeViewer(
     /** The directory the extension's files are written under for Chrome to load. */
     private val extensionHome: File,
     private val scope: CoroutineScope,
+    /** The browser's mouse and keyboard, which the viewer shares with the agent's input. */
+    private val pointer: DesktopPointer,
     /** Monotonic milliseconds. */
     private val now: () -> Long = { System.nanoTime() / NANOS_PER_MS },
 ) {
@@ -521,16 +525,14 @@ class ChromeViewer(
             PageInput(
                 shown.pageId,
                 session,
-                ViewerPageInput(session, shown.display.pixelRatio, now),
+                ViewerPageInput(session, shown.display.pixelRatio, pointer, now),
             )
         input = made
         return made.input
     }
 
     /** The viewer's mouse and keyboard, on the captured tab. */
-    private inner class Controls : ViewerControls {
-        override val pointerKind: ViewerPointer = ViewerPointer.MOUSE
-
+    private inner class Controls : MouseControls {
         override suspend fun contacts(frames: ReceiveChannel<PointerFrame>) {
             var down: Point? = null
             try {
@@ -571,38 +573,24 @@ class ChromeViewer(
             }
         }
 
-        override suspend fun take(autoWake: Boolean) = Unit
-
-        override suspend fun wake() = Unit
-
-        override suspend fun key(request: KeyRequest): Any =
+        override suspend fun key(request: KeyRequest): ActionResult =
             gate.withLock { pageInput() }.key(request.key, request.metaState)
 
-        override suspend fun text(request: TextRequest): Any =
+        override suspend fun text(request: TextRequest): ActionResult =
             gate.withLock { pageInput() }.type(request.text)
 
-        override suspend fun orientation(request: OrientationRequest): Any =
-            throw ApiException(422, "unsupported", "A desktop browser has no orientation.")
-
-        override suspend fun paste(request: ClipboardWriteRequest): Any =
+        override suspend fun paste(request: ClipboardWriteRequest): ActionResult =
             gate.withLock { pageInput() }.insert(request.text)
-
-        override suspend fun pasteImage(bytes: ByteArray): Any =
-            throw ApiException(
-                422,
-                "unsupported",
-                "Pasting an image into a desktop tab is not supported.",
-            )
 
         override suspend fun copy(): ViewerCopy {
             val selected = gate.withLock { pageInput() }.selection()
             return ViewerCopy(selected, null, changed = selected != null)
         }
 
-        override suspend fun hover(at: ViewerHover): Any =
+        override suspend fun hover(at: ViewerHover) =
             gate.withLock { pageInput() }.move(Point(at.x, at.y), pressed = false)
 
-        override suspend fun wheel(turn: ViewerWheel): Any =
+        override suspend fun wheel(turn: ViewerWheel) =
             gate.withLock { pageInput() }.wheel(Point(turn.x, turn.y), turn.dx, turn.dy)
     }
 
