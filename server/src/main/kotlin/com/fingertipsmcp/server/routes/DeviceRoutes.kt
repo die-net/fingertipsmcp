@@ -5,6 +5,7 @@ import com.fingertipsmcp.model.PinStatus
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.SetPinRequest
 import com.fingertipsmcp.model.UnlockRequest
+import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.SESSION_HEADER
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.SessionsKey
@@ -24,10 +25,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 
-/**
- * `GET /v1/device`, `POST /v1/device/wake|unlock|lock|orientation`, and `PUT|DELETE
- * /v1/device/pin`.
- */
+/** `GET /v1/device`. */
 fun Route.deviceRoutes(services: ServerServices) {
     scoped(Scope.OBSERVE) {
         get("/v1/device") {
@@ -44,32 +42,39 @@ fun Route.deviceRoutes(services: ServerServices) {
             )
         }
     }
+}
+
+/**
+ * `POST /v1/device/wake|unlock|lock|orientation`, and `PUT|DELETE /v1/device/pin`: the phone's
+ * power, orientation, and stored PIN.
+ */
+fun Route.powerRoutes(services: ServerServices, phone: PhoneServices) {
     // Browser touch input needs an awake, unlocked phone, so a browser token may get one.
     scoped(Scope.CONTROL, Scope.BROWSER) {
         post("/v1/device/wake") {
-            call.respond(withScreen(call, services) { services.power.wake() })
+            call.respond(withScreen(call, services) { phone.power.wake() })
         }
         post("/v1/device/unlock") {
             val request = bodyOrDefault(call, UnlockRequest())
-            call.respond(withScreen(call, services) { services.power.unlock(request) })
+            call.respond(withScreen(call, services) { phone.power.unlock(request) })
         }
     }
     scoped(Scope.CONTROL) {
         post("/v1/device/lock") {
-            call.respond(withScreen(call, services) { services.power.lock() })
+            call.respond(withScreen(call, services) { phone.power.lock() })
         }
         post("/v1/device/orientation") {
             val request = call.receive<OrientationRequest>()
-            call.respond(withScreen(call, services) { services.power.orientation(request) })
+            call.respond(withScreen(call, services) { phone.power.orientation(request) })
         }
     }
     scoped(Scope.ADMIN) {
         put("/v1/device/pin") {
-            services.writePin(call.receive<SetPinRequest>().pin)
+            phone.writePin(call.receive<SetPinRequest>().pin)
             call.respond(PinStatus(stored = true))
         }
         delete("/v1/device/pin") {
-            services.writePin(null)
+            phone.writePin(null)
             call.respond(HttpStatusCode.NoContent)
         }
     }

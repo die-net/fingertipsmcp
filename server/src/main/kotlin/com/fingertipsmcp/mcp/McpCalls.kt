@@ -44,6 +44,8 @@ import com.fingertipsmcp.model.WaitCondition
 import com.fingertipsmcp.model.WaitRequest
 import com.fingertipsmcp.model.schema.Doc
 import com.fingertipsmcp.server.ServerServices
+import com.fingertipsmcp.server.requirePhone
+import com.fingertipsmcp.server.requireScreenshots
 import com.fingertipsmcp.server.routes.releaseScreen
 import com.fingertipsmcp.tabs.withTarget
 import com.fingertipsmcp.wait.requireWaitAccess
@@ -76,62 +78,65 @@ internal suspend fun uiSnapshot(
 ): CallToolResult = runTool {
     val args = request.args<SnapshotArgs>()
     val snapshot =
-        services.ui.snapshot(
-            SnapshotOptions(
-                format = SnapshotFormat.COMPACT,
-                windowId = args.window?.let(::windowId),
-                maxDepth = args.maxDepth,
-                maxNodes = args.maxNodes,
-                maxChars = args.maxChars,
-                textOnly = args.textOnly,
-                redact = args.redact,
-                includeInvisible = args.includeInvisible,
-                allWindows = args.all,
-                autoWake = args.autoWake,
+        services
+            .requirePhone()
+            .ui
+            .snapshot(
+                SnapshotOptions(
+                    format = SnapshotFormat.COMPACT,
+                    windowId = args.window?.let(::windowId),
+                    maxDepth = args.maxDepth,
+                    maxNodes = args.maxNodes,
+                    maxChars = args.maxChars,
+                    textOnly = args.textOnly,
+                    redact = args.redact,
+                    includeInvisible = args.includeInvisible,
+                    allWindows = args.all,
+                    autoWake = args.autoWake,
+                )
             )
-        )
     snapshot.compact ?: "(empty snapshot)"
 }
 
 internal suspend fun uiFind(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.ui.find(request.args<FindRequest>()))
+        jsonText(services.requirePhone().ui.find(request.args<FindRequest>()))
     }
 
 internal suspend fun uiAct(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
         val ref = request.args<NodeRefArg>().ref
-        jsonText(services.ui.act(ref, request.args<NodeActionRequest>()))
+        jsonText(services.requirePhone().ui.act(ref, request.args<NodeActionRequest>()))
     }
 
 internal suspend fun tap(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.input.tap(request.args<TapRequest>()))
+        jsonText(services.requirePhone().input.tap(request.args<TapRequest>()))
     }
 
 internal suspend fun swipe(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.input.swipe(request.args<SwipeRequest>()))
+        jsonText(services.requirePhone().input.swipe(request.args<SwipeRequest>()))
     }
 
 internal suspend fun typeText(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.input.text(request.args<TextRequest>()))
+        jsonText(services.requirePhone().input.text(request.args<TextRequest>()))
     }
 
 internal suspend fun pressKey(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.input.key(request.args<KeyRequest>()))
+        jsonText(services.requirePhone().input.key(request.args<KeyRequest>()))
     }
 
 internal suspend fun clipboardRead(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runContent {
-    val clip = services.clipboard.read(request.args<ClipboardReadRequest>())
+    val clip = services.requirePhone().clipboard.read(request.args<ClipboardReadRequest>())
     val image =
         if (clip.text == null && clip.mimeTypes.any { it.startsWith("image/") }) {
-            services.clipboard.image()
+            services.requirePhone().clipboard.image()
         } else {
             null
         }
@@ -161,7 +166,7 @@ internal suspend fun clipboardWrite(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    jsonText(services.clipboard.write(request.args<ClipboardWriteRequest>()))
+    jsonText(services.requirePhone().clipboard.write(request.args<ClipboardWriteRequest>()))
 }
 
 internal suspend fun waitFor(
@@ -225,30 +230,30 @@ internal suspend fun screenRelease(
 }
 
 internal suspend fun keyboardHide(services: ServerServices): CallToolResult = runTool {
-    jsonText(services.input.hideIme())
+    jsonText(services.requirePhone().input.hideIme())
 }
 
 internal suspend fun keyboardShow(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    jsonText(services.input.showIme(request.args<ImeShowRequest>()))
+    jsonText(services.requirePhone().input.showIme(request.args<ImeShowRequest>()))
 }
 
 internal suspend fun appLaunch(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
         val pkg = request.args<PackageArg>().packageName
-        jsonText(services.apps.launch(pkg, request.args<LaunchRequest>()))
+        jsonText(services.requirePhone().apps.launch(pkg, request.args<LaunchRequest>()))
     }
 
 internal suspend fun appStop(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.apps.stop(request.args<PackageArg>().packageName))
+        jsonText(services.requirePhone().apps.stop(request.args<PackageArg>().packageName))
     }
 
 internal suspend fun appClear(services: ServerServices, request: CallToolRequest): CallToolResult =
     runTool {
-        jsonText(services.apps.clear(request.args<PackageArg>().packageName))
+        jsonText(services.requirePhone().apps.clear(request.args<PackageArg>().packageName))
     }
 
 internal suspend fun openIntent(
@@ -256,26 +261,30 @@ internal suspend fun openIntent(
     request: CallToolRequest,
 ): CallToolResult = runTool {
     val intent = request.args<IntentRequest>()
-    jsonText(services.tabs.intent(checkNotNull(services.holder)) { services.apps.intent(intent) })
+    jsonText(
+        services.tabs.intent(checkNotNull(services.holder)) {
+            services.requirePhone().apps.intent(intent)
+        }
+    )
 }
 
 internal suspend fun deviceWake(services: ServerServices): CallToolResult = runTool {
-    jsonText(services.power.wake())
+    jsonText(services.requirePhone().power.wake())
 }
 
 internal suspend fun deviceUnlock(services: ServerServices): CallToolResult = runTool {
-    jsonText(services.power.unlock(UnlockRequest()))
+    jsonText(services.requirePhone().power.unlock(UnlockRequest()))
 }
 
 internal suspend fun deviceLock(services: ServerServices): CallToolResult = runTool {
-    jsonText(services.power.lock())
+    jsonText(services.requirePhone().power.lock())
 }
 
 internal suspend fun deviceOrientation(
     services: ServerServices,
     request: CallToolRequest,
 ): CallToolResult = runTool {
-    jsonText(services.power.orientation(request.args<OrientationRequest>()))
+    jsonText(services.requirePhone().power.orientation(request.args<OrientationRequest>()))
 }
 
 internal suspend fun browserTargets(services: ServerServices): CallToolResult = runTool {
@@ -390,7 +399,7 @@ internal suspend fun screenshot(
 }
 
 private suspend fun screenshotContent(services: ServerServices, scale: Float): ImageContent {
-    val png = services.screenshots(scale)
+    val png = services.requireScreenshots()(scale)
     if (png.size > MAX_IMAGE_BYTES) {
         throw ApiException.badRequest("Screenshot is too large; pass a smaller scale")
     }
@@ -415,7 +424,7 @@ internal suspend fun logcatTail(
         } else {
             listOf("logcat", "-d", "-s", "$tag:I")
         }
-    val result = services.shell(argv)
+    val result = services.requirePhone().shell(argv)
     if (!result.ok) {
         val detail = result.failureMessage().ifBlank { "logcat exited ${result.exit}" }
         throw ApiException.unavailable("helper_error", detail)

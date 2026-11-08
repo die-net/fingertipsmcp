@@ -3,6 +3,7 @@ package com.fingertipsmcp.mcp
 import com.fingertipsmcp.model.BrowserCaptureRequest
 import com.fingertipsmcp.model.BrowserFindRequest
 import com.fingertipsmcp.model.BrowserGestureRequest
+import com.fingertipsmcp.model.BrowserInputKind
 import com.fingertipsmcp.model.BrowserKeyRequest
 import com.fingertipsmcp.model.BrowserReadRequest
 import com.fingertipsmcp.model.BrowserSnapshotOptions
@@ -33,7 +34,9 @@ import com.fingertipsmcp.model.SwipeRequest
 import com.fingertipsmcp.model.TapRequest
 import com.fingertipsmcp.model.TargetArg
 import com.fingertipsmcp.model.TextRequest
+import com.fingertipsmcp.model.openapi.ApiGroup
 import com.fingertipsmcp.model.schema.JsonSchemas
+import com.fingertipsmcp.server.Product
 import com.fingertipsmcp.server.ServerServices
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
@@ -70,14 +73,41 @@ internal data class McpTool(
     val schema: ToolSchema = toolSchema(arguments)
 }
 
-internal fun visibleMcpTools(scopes: Set<Scope>, capabilities: Capabilities): List<McpTool> =
+/**
+ * The tools a token with [scopes] sees on a server with [groups], in [product]'s wording, and with
+ * what [capabilities] has right now.
+ */
+internal fun visibleMcpTools(
+    scopes: Set<Scope>,
+    capabilities: Capabilities,
+    product: Product = Product.ANDROID,
+    groups: Set<ApiGroup> = ApiGroup.entries.toSet(),
+): List<McpTool> =
     MCP_TOOLS.filter {
-            (it.scopes.isEmpty() || it.scopes.any(scopes::contains)) && it.available(capabilities)
+            (it.scopes.isEmpty() || it.scopes.any(scopes::contains)) &&
+                toolGroup(it.name) in groups &&
+                it.available(capabilities)
         }
         .map { tool ->
+            val text =
+                product.toolDescriptions[tool.name]?.let {
+                    if (tool.screen.always) "$it Uses the screen." else it
+                } ?: tool.description
             val note = reducedNote(tool.name, capabilities)
-            if (note == null) tool else tool.copy(description = "${tool.description} $note")
+            tool.copy(description = if (note == null) text else "$text $note")
         }
+
+/** The feature group a tool belongs to, which a server must have to list it. */
+private fun toolGroup(name: String): ApiGroup =
+    when {
+        name.startsWith("browser_") -> ApiGroup.BROWSER
+        name == "screenshot" -> ApiGroup.SCREENSHOTS
+        name in CORE_TOOLS -> ApiGroup.CORE
+        else -> ApiGroup.PHONE
+    }
+
+private val CORE_TOOLS =
+    setOf("device_info", "session_start", "session_end", "screen_release", "wait_for")
 
 private val readOnly = ToolAnnotations(readOnlyHint = true, openWorldHint = false)
 
@@ -467,7 +497,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserTapRequest>()),
-            screen = ToolScreen.POINTER,
+            screen = ToolScreen.input(BrowserInputKind.TAP),
             annotations = changes,
             call = { graph, _, request -> browserTap(graph, request) },
         ),
@@ -478,7 +508,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserSwipeRequest>()),
-            screen = ToolScreen.POINTER,
+            screen = ToolScreen.input(BrowserInputKind.POINTER),
             annotations = changes,
             call = { graph, _, request -> browserSwipe(graph, request) },
         ),
@@ -489,7 +519,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserGestureRequest>()),
-            screen = ToolScreen.POINTER,
+            screen = ToolScreen.input(BrowserInputKind.POINTER),
             annotations = changes,
             call = { graph, _, request -> browserGesture(graph, request) },
         ),
@@ -500,7 +530,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserKeyRequest>()),
-            screen = ToolScreen.TYPING,
+            screen = ToolScreen.input(BrowserInputKind.KEY),
             annotations = changes,
             call = { graph, scopes, request -> browserKey(graph, scopes, request) },
         ),
@@ -511,7 +541,7 @@ private val TOOLS: List<McpTool> =
             scopes = setOf(Scope.BROWSER),
             available = Capabilities::browserCdp,
             arguments = listOf(serializer<TargetArg>(), serializer<BrowserTextRequest>()),
-            screen = ToolScreen.TYPING,
+            screen = ToolScreen.input(BrowserInputKind.TEXT),
             annotations = changes,
             call = { graph, _, request -> browserText(graph, request) },
         ),
@@ -583,31 +613,38 @@ internal val MCP_TOOLS: List<McpTool> = TOOLS.map {
 }
 
 internal data class McpResource(
-    val uri: String,
+    /** The part after `<product>://`. */
+    val path: String,
+    val group: ApiGroup,
     val name: String,
     val description: String,
     val mimeType: String,
     val read: (ServerServices) -> String,
 )
 
-internal fun mcpResources(scopes: Set<Scope>): List<McpResource> =
-    if (Scope.OBSERVE !in scopes) emptyList() else MCP_RESOURCES
+internal fun mcpResources(
+    scopes: Set<Scope>,
+    groups: Set<ApiGroup> = ApiGroup.entries.toSet(),
+): List<McpResource> =
+    if (Scope.OBSERVE !in scopes) emptyList() else MCP_RESOURCES.filter { it.group in groups }
 
 private val MCP_RESOURCES =
     listOf(
         McpResource(
-            uri = "fingertips-android://device/capabilities",
+            path = "device/capabilities",
+            group = ApiGroup.CORE,
             name = "capabilities",
             description = "Which device features are available right now.",
             mimeType = "application/json",
             read = { services -> jsonText(services.device.capabilities()) },
         ),
         McpResource(
-            uri = "fingertips-android://viewer",
+            path = "viewer",
+            group = ApiGroup.STREAMS,
             name = "viewer",
             description =
                 "WebCodecs page at /viewer. Pass the bearer token as access_token. That URL sets a cookie and redirects without the token. WebSocket upgrades also accept the query parameter.",
             mimeType = "text/plain",
-            read = { services -> services.viewerText() },
+            read = { services -> services.streams?.viewerText?.invoke().orEmpty() },
         ),
     )

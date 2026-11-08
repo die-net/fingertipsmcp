@@ -3,6 +3,7 @@ package com.fingertipsmcp.mcp
 import com.fingertipsmcp.lease.Holder
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.Scope
+import com.fingertipsmcp.server.BrowserInputPolicy
 import com.fingertipsmcp.server.FakeBrowser
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
@@ -182,7 +183,8 @@ class McpScreenTest {
 
     private fun tool(name: String) = MCP_TOOLS.first { it.name == name }
 
-    private fun takes(name: String, args: JsonObject?) = tool(name).screen.takes(args)
+    private fun takes(name: String, args: JsonObject?) =
+        tool(name).screen.takes(args, BrowserInputPolicy.PHONE)
 
     private companion object {
         /** The tools that act on the screen or show what is on it, whatever their arguments. */

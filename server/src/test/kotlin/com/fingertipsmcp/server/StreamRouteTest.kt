@@ -41,10 +41,14 @@ class StreamRouteTest {
             "The helper could not start display mirroring. The shell helper has to be running."
         val services =
             api.services.copy(
-                video =
-                    VideoFeed { _, _ ->
-                        throw ApiException.unavailable("stream_error", message)
-                    }
+                streams =
+                    checkNotNull(api.services.streams)
+                        .copy(
+                            video =
+                                VideoFeed { _, _ ->
+                                    throw ApiException.unavailable("stream_error", message)
+                                }
+                        )
             )
         application { fingertipsModule(services) }
         apiClient().use { client ->
@@ -65,7 +69,14 @@ class StreamRouteTest {
         val message = "Audio capture could not start; it needs the helper."
         val services =
             api.services.copy(
-                audio = AudioFeed { _ -> throw ApiException.unavailable("audio_error", message) }
+                streams =
+                    checkNotNull(api.services.streams)
+                        .copy(
+                            audio =
+                                AudioFeed { _ ->
+                                    throw ApiException.unavailable("audio_error", message)
+                                }
+                        )
             )
         application { fingertipsModule(services) }
         apiClient().use { client ->
@@ -86,14 +97,18 @@ class StreamRouteTest {
         val released = CompletableDeferred<Unit>()
         val services =
             api.services.copy(
-                video =
-                    VideoFeed { session, _ ->
-                        try {
-                            sendUntilClientLeaves(session) { awaitCancellation() }
-                        } finally {
-                            released.complete(Unit)
-                        }
-                    }
+                streams =
+                    checkNotNull(api.services.streams)
+                        .copy(
+                            video =
+                                VideoFeed { session, _ ->
+                                    try {
+                                        sendUntilClientLeaves(session) { awaitCancellation() }
+                                    } finally {
+                                        released.complete(Unit)
+                                    }
+                                }
+                        )
             )
         application { fingertipsModule(services) }
         apiClient().use { client ->
@@ -108,14 +123,21 @@ class StreamRouteTest {
         val secret = api.tokens.issue("stream", setOf(Scope.STREAM))
         val services =
             api.services.copy(
-                video =
-                    VideoFeed { session, _ ->
-                        // The stream ends of its own accord, as when the helper stops.
-                        sendUntilClientLeaves(session) {}
-                        session.close(
-                            CloseReason(CloseReason.Codes.INTERNAL_ERROR, "The helper stopped")
+                streams =
+                    checkNotNull(api.services.streams)
+                        .copy(
+                            video =
+                                VideoFeed { session, _ ->
+                                    // The stream ends of its own accord, as when the helper stops.
+                                    sendUntilClientLeaves(session) {}
+                                    session.close(
+                                        CloseReason(
+                                            CloseReason.Codes.INTERNAL_ERROR,
+                                            "The helper stopped",
+                                        )
+                                    )
+                                }
                         )
-                    }
             )
         application { fingertipsModule(services) }
         apiClient().use { client ->
@@ -135,10 +157,14 @@ class StreamRouteTest {
         val secret = api.tokens.issue("stream", setOf(Scope.STREAM))
         val services =
             api.services.copy(
-                video =
-                    VideoFeed { _, _ ->
-                        throw ApiException.unavailable("stream_error", "x".repeat(400))
-                    }
+                streams =
+                    checkNotNull(api.services.streams)
+                        .copy(
+                            video =
+                                VideoFeed { _, _ ->
+                                    throw ApiException.unavailable("stream_error", "x".repeat(400))
+                                }
+                        )
             )
         application { fingertipsModule(services) }
         apiClient().use { client ->

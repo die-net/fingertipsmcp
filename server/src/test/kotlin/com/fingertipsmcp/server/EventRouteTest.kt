@@ -92,11 +92,15 @@ class EventRouteTest {
         val opened = AtomicInteger()
         val services =
             api.services.copy(
-                logcat =
-                    LogcatFeed { _ ->
-                        opened.incrementAndGet()
-                        emptyFlow()
-                    }
+                phone =
+                    checkNotNull(api.services.phone)
+                        .copy(
+                            logcat =
+                                LogcatFeed { _ ->
+                                    opened.incrementAndGet()
+                                    emptyFlow()
+                                }
+                        )
             )
         RawServer(services).use { raw ->
             val auth = "Authorization: Bearer $secret"
@@ -133,15 +137,19 @@ private class LogcatHarness {
                     emit(ui)
                     awaitCancellation()
                 },
-            logcat =
-                LogcatFeed { filter ->
-                    seen.set(filter)
-                    opened.incrementAndGet()
-                    flow {
-                        emit(log)
-                        awaitCancellation()
-                    }
-                },
+            phone =
+                checkNotNull(api.services.phone)
+                    .copy(
+                        logcat =
+                            LogcatFeed { filter ->
+                                seen.set(filter)
+                                opened.incrementAndGet()
+                                flow {
+                                    emit(log)
+                                    awaitCancellation()
+                                }
+                            }
+                    ),
         )
 }
 

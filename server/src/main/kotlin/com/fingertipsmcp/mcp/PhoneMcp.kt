@@ -18,6 +18,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import io.modelcontextprotocol.kotlin.sdk.server.DnsRebindingProtection
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.StreamableHttpServerTransport
@@ -37,38 +38,23 @@ import kotlinx.serialization.SerializationException
  * picks; later requests carry it in `Mcp-Session-Id` along with the token that started it. POSTs
  * are answered with JSON, GET is refused since FingertipsMCP sends nothing unprompted, and `DELETE`
  * ends the session. Tools and resources follow the caller's scopes at `initialize`, and the session
- * ends if the token later loses one of them. DNS rebinding protection stays off: the rest of the
- * API is a superset of these tools and does not check Host.
+ * ends if the token later loses one of them. FingertipsMCP for Android leaves
+ * [dnsRebindingProtection] off: it is reached only through adb, and the rest of the API is a
+ * superset of these tools and does not check Host.
  */
-fun Application.installPhoneMcp(services: ServerServices, sessions: McpSessions) {
+internal fun Application.installPhoneMcp(
+    services: ServerServices,
+    sessions: McpSessions,
+    dnsRebindingProtection: Boolean,
+) {
     routing {
         route("/mcp") {
-            post {
-                val id = call.request.header(SESSION_HEADER)
-                if (id == null) {
-                    startSession(services, sessions, call)
-                    return@post
-                }
-                // Another token's session answers as one that does not exist.
-                val session = sessions.get(id)?.takeIf { it.tokenId == call.token.id }
-                when {
-                    session == null -> call.respond(HttpStatusCode.NotFound, noSession())
-                    // Its tools were built for scopes the token no longer has, so it ends now,
-                    // not at the next sweep, and the client initializes again.
-                    !call.token.scopes.containsAll(session.scopes) -> {
-                        sessions.end(session.id, "its token lost a scope")
-                        call.respond(HttpStatusCode.NotFound, noSession())
-                    }
-                    session.transport != null -> {
-                        session.touch(sessions.clock())
-                        serve(session, call)
-                    }
-                    // A REST session takes an initialize, which gives it a transport.
-                    session.rest -> attachSession(services, sessions, session, call)
-                    // One from session_start has no transport: it is only a tool argument.
-                    else -> call.respond(HttpStatusCode.NotFound, noSession())
-                }
+            // The default hosts are the loopback names. MCP clients send no Origin, and a web
+            // page's request always does, so none is allowed.
+            if (dnsRebindingProtection) {
+                install(DnsRebindingProtection) { allowedOrigins = emptyList() }
             }
+            post { servePost(services, sessions, call) }
             get {
                 call.response.header(HttpHeaders.Allow, "POST, DELETE")
                 call.respond(HttpStatusCode.MethodNotAllowed)
@@ -89,6 +75,38 @@ fun Application.installPhoneMcp(services: ServerServices, sessions: McpSessions)
                 }
             }
         }
+    }
+}
+
+/** A POST to `/mcp`: starts a session, or hands the call to the session it names. */
+private suspend fun servePost(
+    services: ServerServices,
+    sessions: McpSessions,
+    call: ApplicationCall,
+) {
+    val id = call.request.header(SESSION_HEADER)
+    if (id == null) {
+        startSession(services, sessions, call)
+        return
+    }
+    // Another token's session answers as one that does not exist.
+    val session = sessions.get(id)?.takeIf { it.tokenId == call.token.id }
+    when {
+        session == null -> call.respond(HttpStatusCode.NotFound, noSession())
+        // Its tools were built for scopes the token no longer has, so it ends now, not at the
+        // next sweep, and the client initializes again.
+        !call.token.scopes.containsAll(session.scopes) -> {
+            sessions.end(session.id, "its token lost a scope")
+            call.respond(HttpStatusCode.NotFound, noSession())
+        }
+        session.transport != null -> {
+            session.touch(sessions.clock())
+            serve(session, call)
+        }
+        // A REST session takes an initialize, which gives it a transport.
+        session.rest -> attachSession(services, sessions, session, call)
+        // One from session_start has no transport: it is only a tool argument.
+        else -> call.respond(HttpStatusCode.NotFound, noSession())
     }
 }
 
@@ -185,10 +203,11 @@ private fun phoneServer(
     control: SessionControl,
 ): Server {
     val services = shared.forHolder(holder, control)
-    val tools = visibleMcpTools(scopes, services.device.capabilities())
-    val resources = mcpResources(scopes)
+    val product = services.product
+    val tools = visibleMcpTools(scopes, services.device.capabilities(), product, services.groups)
+    val resources = mcpResources(scopes, services.groups)
     return Server(
-        Implementation(name = "fingertips-android", version = services.device.versionName()),
+        Implementation(name = product.name, version = services.device.versionName()),
         ServerOptions(
             capabilities =
                 ServerCapabilities(
@@ -201,7 +220,7 @@ private fun phoneServer(
                         },
                 )
         ),
-        instructions = mcpInstructions(scopes),
+        instructions = mcpInstructions(scopes, product),
     ) {
         tools.forEach { tool ->
             addTool(
@@ -214,8 +233,9 @@ private fun phoneServer(
             }
         }
         resources.forEach { resource ->
+            val uri = "${product.name}://${resource.path}"
             addResource(
-                uri = resource.uri,
+                uri = uri,
                 name = resource.name,
                 description = resource.description,
                 mimeType = resource.mimeType,
@@ -225,7 +245,7 @@ private fun phoneServer(
                         listOf(
                             TextResourceContents(
                                 text = resource.read(services),
-                                uri = resource.uri,
+                                uri = uri,
                                 mimeType = resource.mimeType,
                             )
                         )
@@ -273,9 +293,10 @@ private suspend fun callTool(
         }
     val services = if (holder == own.holder) own else shared.forHolder(holder, control)
     // The tool's own types ignore the session argument, as they ignore each other's fields.
-    val request = resolveInput(tool.name, asked, services.lease.holds(holder), scopes)
+    val policy = services.product.browserInput
+    val request = resolveInput(tool.name, asked, services.lease.holds(holder), scopes, policy)
     val arguments = request.params.arguments
-    val (screen, brief) = screenUse(tool.screen, arguments, services.browser)
+    val (screen, brief) = screenUse(tool.screen, arguments, services.browser, policy)
     val current = services.lease.state.value.holder as? Holder.Session
     if (screen && current != null) {
         control.conflict(holder, current)?.let {

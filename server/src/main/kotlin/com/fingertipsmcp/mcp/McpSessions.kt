@@ -37,6 +37,8 @@ internal class McpSession(
     val parentId: String? = null,
     val rest: Boolean = false,
     scopes: Set<Scope> = emptySet(),
+    /** A local client's session, as on stdio, which lasts as long as the client does. */
+    val local: Boolean = false,
 ) {
     @Volatile
     var transport: StreamableHttpServerTransport? = transport
@@ -138,14 +140,7 @@ class McpSessions(
         val at = now()
         val live = tokens.list().associate { it.id to it.scopes }
         for (session in sessions.values.toList()) {
-            val scopes = live[session.tokenId]
-            val why =
-                when {
-                    scopes == null -> "its token was revoked"
-                    !scopes.containsAll(session.scopes) -> "its token lost a scope"
-                    at - session.lastActiveMs > idleMs -> "it was idle"
-                    else -> continue
-                }
+            val why = endReason(session, live, at) ?: continue
             try {
                 end(session.id, why)
             } catch (e: CancellationException) {
@@ -157,6 +152,22 @@ class McpSessions(
                 e: Exception) {
                 log.warn("Ending MCP session ${hashOf(session.id)} failed", e)
             }
+        }
+    }
+
+    /**
+     * Why the sweep ends [session], given the [live] tokens' scopes at [at], or null to keep it.
+     * The stdio session is the process's own and ends with it. A local client has no token; the
+     * sessions it starts idle out like any other.
+     */
+    private fun endReason(session: McpSession, live: Map<String, Set<Scope>>, at: Long): String? {
+        if (session.local) return null
+        val scopes = if (session.tokenId == LOCAL_TOKEN) session.scopes else live[session.tokenId]
+        return when {
+            scopes == null -> "its token was revoked"
+            !scopes.containsAll(session.scopes) -> "its token lost a scope"
+            at - session.lastActiveMs > idleMs -> "it was idle"
+            else -> null
         }
     }
 
@@ -200,6 +211,27 @@ class McpSessions(
                 server = null,
                 startedAtMs = now(),
                 rest = true,
+            )
+        add(session)
+        return session.id
+    }
+
+    /**
+     * Starts a session for a local client that has no token, such as an MCP client that started
+     * this process on stdio, and returns its id. It holds [scopes] and lasts until [end].
+     */
+    fun startLocal(name: String, scopes: Set<Scope>): String {
+        admit(LOCAL_TOKEN)
+        val session =
+            McpSession(
+                id = newId(),
+                tokenId = LOCAL_TOKEN,
+                tokenName = name,
+                transport = null,
+                server = null,
+                startedAtMs = now(),
+                scopes = scopes,
+                local = true,
             )
         add(session)
         return session.id
@@ -342,6 +374,8 @@ class McpSessions(
     }
 
     companion object {
+        /** The token id of a local client's sessions. No real token id is empty. */
+        internal const val LOCAL_TOKEN = ""
         const val IDLE_MS = 20 * 60 * 1000L
         const val PER_TOKEN = 16
         const val TOTAL = 32

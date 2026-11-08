@@ -58,6 +58,21 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.serializer
 
+/**
+ * Feature groups a server may provide. [CORE] is always there. FingertipsMCP for Android has every
+ * group; FingertipsMCP for Chrome has [CORE], [BROWSER], and [SCREENSHOTS].
+ */
+public enum class ApiGroup {
+    /** Device info, tokens, events, sessions, the screen lease, waits, and this document. */
+    CORE,
+    /** Android's screen, input, apps, power, clipboard, and lock-screen PIN. */
+    PHONE,
+    BROWSER,
+    /** The viewer page and its media sockets. */
+    STREAMS,
+    SCREENSHOTS,
+}
+
 public enum class ApiMethod {
     GET,
     POST,
@@ -87,6 +102,7 @@ public data class ApiEndpoint(
     public val requestContentType: String? = null,
     /** False when the route takes an empty body as the request type's defaults. */
     public val requestRequired: Boolean = true,
+    public val group: ApiGroup = ApiGroup.CORE,
 ) {
     public companion object {
         public const val JSON: String = "application/json"
@@ -94,6 +110,11 @@ public data class ApiEndpoint(
         public const val HTML: String = "text/html"
         public const val IMAGE: String = "image/*"
     }
+}
+
+/** The routes a server with [groups] installs, in the order it registers them. */
+public fun apiEndpoints(groups: Set<ApiGroup>): List<ApiEndpoint> = fingertipsEndpoints.filter {
+    it.group in groups
 }
 
 /** Every route installed from `server/routes`, in the order the server registers them. */
@@ -565,4 +586,20 @@ private fun endpoint(
         responseContentType = responseContentType ?: response?.let { ApiEndpoint.JSON },
         requestContentType = requestContentType,
         requestRequired = requestRequired,
+        group = groupOf(path),
     )
+
+private fun groupOf(path: String): ApiGroup =
+    when {
+        path == "/v1/screenshot" -> ApiGroup.SCREENSHOTS
+        path.startsWith("/v1/browser/") -> ApiGroup.BROWSER
+        path == "/viewer" || path.startsWith("/v1/stream/") -> ApiGroup.STREAMS
+        path.startsWith("/v1/tokens") || path.startsWith("/v1/sessions") -> ApiGroup.CORE
+        // Literals rather than a set: fingertipsEndpoints is built before a property below it.
+        path == "/v1/device" ||
+            path == "/v1/events" ||
+            path == "/v1/wait" ||
+            path == "/v1/screen/release" ||
+            path == "/v1/openapi.json" -> ApiGroup.CORE
+        else -> ApiGroup.PHONE
+    }

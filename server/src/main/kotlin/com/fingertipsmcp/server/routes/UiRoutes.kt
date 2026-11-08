@@ -8,6 +8,7 @@ import com.fingertipsmcp.model.NodeActionRequest
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.SnapshotFormat
 import com.fingertipsmcp.model.SnapshotOptions
+import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.scoped
 import com.fingertipsmcp.server.withScreen
@@ -25,7 +26,7 @@ import io.ktor.server.routing.post
  * /v1/ui/snapshot?format=compact|json|both&window=&maxDepth=&maxNodes=&maxChars=&textOnly=&redact=&includeInvisible=&all=`,
  * `POST /v1/ui/find`, `POST /v1/ui/nodes/{ref}/action` and `GET /v1/screenshot?scale=`.
  */
-fun Route.uiRoutes(services: ServerServices) {
+fun Route.uiRoutes(services: ServerServices, phone: PhoneServices) {
     scoped(Scope.OBSERVE) {
         get("/v1/ui/snapshot") {
             val q = call.request.queryParameters
@@ -42,26 +43,32 @@ fun Route.uiRoutes(services: ServerServices) {
                     allWindows = q.flag("all", default = false),
                     autoWake = q.flag("autoWake", default = true),
                 )
-            call.respond(withScreen(call, services) { services.ui.snapshot(options) })
+            call.respond(withScreen(call, services) { phone.ui.snapshot(options) })
         }
         post("/v1/ui/find") {
             val request = call.receive<FindRequest>()
-            call.respond(withScreen(call, services) { services.ui.find(request) })
-        }
-        get("/v1/screenshot") {
-            val scale =
-                call.request.queryParameters["scale"]?.let {
-                    it.toFloatOrNull() ?: throw ApiException.badRequest("scale must be a number")
-                } ?: ScreenshotScale.REST
-            val png = withScreen(call, services) { services.screenshots(scale) }
-            call.respondBytes(png, ContentType.Image.PNG)
+            call.respond(withScreen(call, services) { phone.ui.find(request) })
         }
     }
     scoped(Scope.CONTROL) {
         post("/v1/ui/nodes/{ref}/action") {
             val ref = call.parameters["ref"] ?: throw ApiException.badRequest("ref required")
             val request = call.receive<NodeActionRequest>()
-            call.respond(withScreen(call, services) { services.ui.act(ref, request) })
+            call.respond(withScreen(call, services) { phone.ui.act(ref, request) })
+        }
+    }
+}
+
+/** `GET /v1/screenshot`: a PNG of the screen, from [screenshots]. */
+fun Route.screenshotRoutes(services: ServerServices, screenshots: suspend (Float) -> ByteArray) {
+    scoped(Scope.OBSERVE) {
+        get("/v1/screenshot") {
+            val scale =
+                call.request.queryParameters["scale"]?.let {
+                    it.toFloatOrNull() ?: throw ApiException.badRequest("scale must be a number")
+                } ?: ScreenshotScale.REST
+            val png = withScreen(call, services) { screenshots(scale) }
+            call.respondBytes(png, ContentType.Image.PNG)
         }
     }
 }
