@@ -1030,10 +1030,12 @@ Checked with Chrome 155 on macOS while the desktop build was first written, and 
 - The ported build on 2026-11-08, with Chrome 156.0.8078.80 headless on macOS: a click on a button 1,600 px down a page landed after 36 wheel ticks scrolled it 1,168 px; typing `Hi there` sent Shift around the H; an arXiv PDF read as `pdf`, 38,965 characters, the same as on Android; a tab a session without the screen opened read `shown` false, true after `show`, and false again once `screen_release` put the placeholder up; and `/mcp` answered 403 to a request with an `Origin`.
 - The same build windowed on macOS that day: `navigator.webdriver` read false; the first window's tab and a new tab had the same content height, 1998 of 2085 px, so neither showed the flag's bar; a tab a session without the screen opened was `hidden`, and with no screen holder the placeholder replaced the tab that had been showing; a click and typing `Hello, World! 42` landed, and the first input on the hidden tab gave Chrome the focus, as `Page.bringToFront` does; an arXiv PDF read as `pdf` in the window too.
 - A PDF sent with `Content-Disposition: attachment` saved to the download folder and closed the new tab, as on Android. Two `url` reads of it returned its text and left one file (2026-11-06).
+- On 2026-11-08, with Chrome 156.0.8078.80 headless on macOS and a scratch config, data folder, and `--profile`: after Chrome was killed, a `GET /v1/browser/targets` that curl gave up on after 0.3 s started it again, the next two calls got that Chrome, one Chrome ran on the profile, and stopping the server left none. The same held with a `--chrome` wrapper that starts Chrome 2 s late and a `POST /v1/wait` with `timeoutMs` 0 as the first call. Neither the hang-up nor the wait cancelled the start, on the build before the fix either, which also started Chrome once and kept it.
 
 ### Still to check
 
 - Chrome on Linux with no window left, under Xvfb, and in the Docker image, which has never been built or run, on amd64 or arm64; and what desktop Chrome answers when attaching to a tab that has just closed, so `not_found` covers that race as it does on Android.
+- A call cancelled while Chrome starts, end to end. The unit tests cover it, but neither a REST client hanging up nor a short wait cancelled the start on a real Chrome.
 
 ### Tab capture for a viewer
 

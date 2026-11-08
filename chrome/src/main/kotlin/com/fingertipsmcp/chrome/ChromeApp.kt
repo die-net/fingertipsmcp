@@ -58,7 +58,7 @@ class ChromeApp(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + background)
     private val profile = options.profile?.let(::File) ?: paths.profile
-    val supervisor = BrowserSupervisor(::startBrowser)
+    val supervisor = BrowserSupervisor(scope, io, ::startBrowser)
     @Suppress("MissingUseCall") // The supervisor owns the browser connection.
     private val devtools =
         ConnectionEndpoints(
