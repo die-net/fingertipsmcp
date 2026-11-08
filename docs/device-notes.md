@@ -172,6 +172,7 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 - Whether a hidden tab's timers also stop while Chrome itself is in front, with the tab behind another, or only while Chrome is in the background.
 - Whether Chrome 156 still freezes a hidden tab whole at about 90 s with FingertipsMCP's helper running, as it did on 2026-11-07 without it.
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
+- That Chrome on the phone still ignores `Target.createTarget`'s `background` flag, now that a session without the screen sends it, or if it honors it, that the tab opens hidden.
 
 ## Android's app freezer
 
@@ -1023,6 +1024,7 @@ Checked with Chrome 155 on macOS while the desktop build was first written, and 
 - Mouse clicks, wheel scrolls, and keys over `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent` reach the page with `isTrusted` true, and a click on an element 3000 px down the page landed after wheel scrolling (2026-11-04).
 
 - Chrome shows a PDF at the file's own URL, not at a viewer address as on Android. On 2026-11-06, with Chrome 156, `document.contentType` and the main frame's `mimeType` in `Page.getFrameTree` were `application/pdf`, and the document held only an empty body, so page-read.js found 0 characters. Taking the tab over as on Android worked: `read`, a second `read`, `find`, and `url` reads of a local PDF, and the 38,965 characters of the arXiv PDF of "Attention Is All You Need" over https. The window then shows FingertipsMCP's empty page rather than Chrome's viewer.
+- `Target.createTarget` with `background` true opened a tab that reported `hidden` from the start, and the tab showing stayed `visible`. Measured on 2026-11-06 with Chrome 156, with `document.hasFocus()` standing in for which app is in front: with Finder in front, `Target.activateTarget` switched tabs and left focus alone, while `Page.bringToFront` and a plain `Target.createTarget` both took focus.
 - A PDF sent with `Content-Disposition: attachment` saved to the download folder and closed the new tab, as on Android. Two `url` reads of it returned its text and left one file (2026-11-06).
 
 ### Still to check

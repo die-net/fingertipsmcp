@@ -387,8 +387,8 @@ Full request and response schemas live in OpenAPI and under `api-model` (`Device
 | `gesture` | Several fingers | One path is a mouse drag; more is **422** `unsupported` |
 | `text` with `cdp` | `Input.insertText` | Key by key, `minDelayMs`..`maxDelayMs` apart; emoji and other keyless text inserted |
 | `incognito` on open | Chrome's incognito shortcut | **422** `unsupported` |
-| `tookScreen` on open | Whether Chrome switched to the new tab on screen | False |
-| Screen release | Hides the keyboard, goes home, may lock | Nothing to clean up; no note for the next holder |
+| `tookScreen` on open | Whether Chrome switched to the new tab on screen | False. A session without the screen opens the tab hidden; the holder's tab shows |
+| Screen release | Hides the keyboard, goes home, may lock | Shows a blank placeholder tab; no note for the next holder |
 | `wait` | All conditions | `browser.*` only; `snapshot` is **400** |
 | `screenshot` | Device screen | `Page.captureScreenshot` of the tab that is showing |
 | Events | Includes `logcat` | No `logcat`; asking for it refuses the upgrade |

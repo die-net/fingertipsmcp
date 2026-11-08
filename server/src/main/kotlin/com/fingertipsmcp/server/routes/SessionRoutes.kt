@@ -66,13 +66,12 @@ internal suspend fun releaseScreen(
     val held = services.lease.holds(holder)
     if (request.cleanup) {
         services.lease.release(holder)
-        // Only a phone has a keyboard to hide, a home screen, and a lock to put back.
         val cleanup =
             if (services.phone != null) {
                 " FingertipsMCP hides the keyboard and goes home before the next client gets it, " +
                     "and locks the phone if no one is waiting and it was locked before."
             } else {
-                ""
+                " The browser goes back to a blank tab, so yours is hidden until you act on it."
             }
         return if (held) {
             "Released the screen.$cleanup Your tabs stay yours, and your next call that needs " +

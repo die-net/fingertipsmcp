@@ -102,11 +102,18 @@ internal class TabEvents(private val cdp: CdpSession) {
 
     /**
      * Opens a tab on [url] and returns the id Chrome lists it under, closing it if that can't be
-     * had, since no caller has its id yet and an unowned tab would stay open for good.
+     * had, since no caller has its id yet and an unowned tab would stay open for good. With
+     * [background], a desktop Chrome keeps the tab hidden; Chrome on Android ignores it.
      */
-    suspend fun newTab(url: String): String {
+    suspend fun newTab(url: String, background: Boolean = false): String {
         val given =
-            cdp.call("Target.createTarget", buildJsonObject { put("url", url) })
+            cdp.call(
+                    "Target.createTarget",
+                    buildJsonObject {
+                        put("url", url)
+                        if (background) put("background", true)
+                    },
+                )
                 .decodeCdp<CreatedTarget>()
                 ?.targetId
                 ?: throw ApiException(502, "cdp_error", "Chrome did not return a target id")

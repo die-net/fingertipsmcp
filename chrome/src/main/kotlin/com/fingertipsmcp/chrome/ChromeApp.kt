@@ -75,13 +75,25 @@ class ChromeApp(
                 scope = scope,
             )
         )
-    // Leaving the screen needs no cleanup: there is no keyboard to hide, home screen, or lock.
-    private val lease = ScreenLease(scope, cleanup = null, lockedNow = { false })
-    private val tabs =
+    // Cleanup runs only after a holder lets go, long after tabs exists.
+    @Suppress("PropertyUsedBeforeDeclaration")
+    private val lease: ScreenLease =
+        ScreenLease(
+            scope,
+            // Background means background, here as on a phone: no session's tab stays showing
+            // once it lets go, so a workflow can't come to depend on its tab being on screen.
+            cleanup = {
+                tabs.showPlaceholder()
+                emptyList()
+            },
+            lockedNow = { false },
+            cleanedNote = { null },
+        )
+    private val tabs: Tabs =
         Tabs(
             browser,
             lease,
-            inFront = { false },
+            inFront = { true },
             store = FileTabStore(File(paths.config, "session-tabs")),
             scope = scope,
             chrome = DESKTOP_ENDPOINT,

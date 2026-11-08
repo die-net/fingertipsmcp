@@ -42,6 +42,7 @@ internal class SessionBrowser(
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget = tabs.opened(holder, url, capture, incognito, created)
 
@@ -136,8 +137,9 @@ internal class SharedBrowser(private val tabs: Tabs, private val base: BrowserSe
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        background: Boolean,
         created: suspend (String) -> Unit,
-    ): BrowserTarget = base.openTab(url, capture, incognito, created)
+    ): BrowserTarget = base.openTab(url, capture, incognito, background, created)
 
     override suspend fun chromeStopped(): Boolean = base.chromeStopped()
 

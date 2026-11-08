@@ -77,15 +77,17 @@ data class Screened<T>(val value: T, val notes: List<String>)
  * [withScreen] to give it back. A session that did not have the screen before the call then lets it
  * go with cleanup when the call ends, unless another of its screen calls is still running.
  *
- * A screen with nothing to clean up, such as a desktop browser's, has no [cleanup]. Letting it go
- * then hands it on as it is, and the next holder gets no note about it.
+ * [cleanedNote] is what the next holder hears after a cleanup that went well, told whether it
+ * locked the screen, or null when there is nothing to say, as on a desktop browser, which has no
+ * home screen or lock to surprise anyone.
  */
 class ScreenLease(
     private val scope: CoroutineScope,
-    private val cleanup: (suspend (lock: Boolean) -> List<String>)?,
+    private val cleanup: suspend (lock: Boolean) -> List<String>,
     private val lockedNow: () -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
     private val ready: suspend () -> List<String> = { emptyList() },
+    private val cleanedNote: (locked: Boolean) -> String? = ::phoneCleanedNote,
 ) {
     /** A holder's place in the queue, which every one of its waiting [calls] shares. */
     private data class Waiter(
@@ -323,7 +325,7 @@ class ScreenLease(
         }
         _state.value = LeaseState()
         val note = if (holder is Holder.Viewer) LEFT_BY_PERSON else left
-        val clean = cleanup && note == null && this.cleanup != null
+        val clean = cleanup && note == null
         if (note != null) forNext = note
         if (!clean) {
             grantNext()
@@ -444,7 +446,7 @@ class ScreenLease(
 
     private suspend fun runCleanup(lock: Boolean): List<String> =
         try {
-            cleanup?.invoke(lock).orEmpty()
+            cleanup(lock)
         } catch (e: CancellationException) {
             throw e
         } catch (
@@ -471,12 +473,7 @@ class ScreenLease(
                     failed.isNotEmpty() ->
                         "Cleanup after the last holder did not finish: " +
                             "${failed.joinToString("; ")}. Check the screen before acting."
-                    locked ->
-                        "The screen was cleaned up after the last holder: keyboard hidden, home " +
-                            "screen, locked. Unlock it before acting."
-                    else ->
-                        "The screen was cleaned up after the last holder: keyboard hidden, home " +
-                            "screen. It was not locked, so check the screen before acting."
+                    else -> cleanedNote(locked)
                 }
             if (grantNext() == null && !locked && lockOwed()) {
                 locking = true
@@ -707,3 +704,13 @@ class ScreenLease(
         private const val MS_PER_S = 1_000
     }
 }
+
+/** What a phone's next holder hears after cleanup, so a home screen and a lock are no surprise. */
+private fun phoneCleanedNote(locked: Boolean): String =
+    if (locked) {
+        "The screen was cleaned up after the last holder: keyboard hidden, home screen, locked. " +
+            "Unlock it before acting."
+    } else {
+        "The screen was cleaned up after the last holder: keyboard hidden, home screen. It was " +
+            "not locked, so check the screen before acting."
+    }

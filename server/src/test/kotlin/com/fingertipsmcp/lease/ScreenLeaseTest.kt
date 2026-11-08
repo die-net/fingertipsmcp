@@ -68,14 +68,18 @@ class ScreenLeaseTest {
     }
 
     @Test
-    fun `nothing to clean hands on`() = runTest {
-        // A desktop browser's screen has no keyboard, home screen, or lock to put back.
+    fun `cleanup can go unmentioned`() = runTest {
+        // A desktop browser's cleanup hides the last holder's tab, which surprises nobody.
         val lease =
             ScreenLease(
                 scope = backgroundScope,
-                cleanup = null,
+                cleanup = {
+                    cleanups++
+                    emptyList()
+                },
                 lockedNow = { false },
                 now = { testScheduler.currentTime },
+                cleanedNote = { null },
             )
         lease.withScreen(a) {}
         val waiting = async { lease.withScreen(b) { "b ran" } }
@@ -83,10 +87,26 @@ class ScreenLeaseTest {
         lease.release(a)
         val got = waiting.await()
         assertEquals("b ran", got.value)
+        assertEquals(1, cleanups)
         assertTrue(got.notes.isEmpty(), got.notes.toString())
         assertTrue(lease.holds(b))
-        lease.release(b)
-        assertTrue(lease.withScreen(c) {}.notes.isEmpty())
+    }
+
+    @Test
+    fun `failed cleanup is reported`() = runTest {
+        val lease =
+            ScreenLease(
+                scope = backgroundScope,
+                cleanup = { listOf("no blank tab") },
+                lockedNow = { false },
+                now = { testScheduler.currentTime },
+                cleanedNote = { null },
+            )
+        lease.withScreen(a) {}
+        lease.release(a)
+        runCurrent()
+        val notes = lease.withScreen(b) {}.notes
+        assertTrue(notes.single().contains("no blank tab"), notes.toString())
     }
 
     @Test
