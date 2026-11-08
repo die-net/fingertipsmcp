@@ -11,7 +11,6 @@ dependencies {
     api(libs.ktor.server.websockets)
     api(libs.kotlinx.io.core)
     api(libs.ktor.io)
-    implementation(libs.kotlinx.serialization.json)
     api(libs.mcp.core)
     api(libs.mcp.server)
     implementation(libs.kotlinx.serialization.core)

@@ -15,14 +15,10 @@ import com.fingertipsmcp.model.WaitRequest
 import com.fingertipsmcp.model.WaitResult
 import com.fingertipsmcp.tree.TreeSession
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.launch
 
 /**
  * The single condition engine behind `POST /v1/wait`. Conditions are re-evaluated when something
@@ -76,30 +72,23 @@ internal class WaitServiceImpl(
         val all = request.all.map(watchers::watcher)
         val any = request.any.map(watchers::watcher)
         val started = SystemClock.uptimeMillis()
-        val deadline = started + request.timeoutMs
-        return coroutineScope {
-            val changes = Channel<Unit>(Channel.CONFLATED)
+        val outcome =
             try {
                 browserWatch?.open(request.all + request.any, request.timeoutMs)
-                val pump: Job = launch {
-                    changeSources(browserWatch).collect { changes.trySend(Unit) }
-                }
-                try {
-                    val outcome =
-                        awaitConditions(all, any, deadline, changes, SystemClock::uptimeMillis)
-                    if (outcome.matched) {
-                        settle(request.settleMs, deadline, changes, SystemClock::uptimeMillis) {
-                            tree.lastChangeMs
-                        }
-                    }
-                    result(request, outcome, SystemClock.uptimeMillis() - started, scopes)
-                } finally {
-                    pump.cancel()
-                }
+                runWait(
+                    all,
+                    any,
+                    changeSources(browserWatch),
+                    deadline = started + request.timeoutMs,
+                    settleMs = request.settleMs,
+                    now = SystemClock::uptimeMillis,
+                    // A page's own changes don't hold a phone wait back; the UI tree's do.
+                    lastChangeMs = { tree.lastChangeMs },
+                )
             } finally {
                 browserWatch?.close()
             }
-        }
+        return result(request, outcome, SystemClock.uptimeMillis() - started, scopes)
     }
 
     private fun changeSources(browser: BrowserWatch?): Flow<Any> {

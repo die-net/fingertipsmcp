@@ -10,7 +10,6 @@ import com.fingertipsmcp.core.EventBus
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.mcp.localMcp
 import com.fingertipsmcp.model.ApiException
-import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.server.Product
 import com.fingertipsmcp.server.ScreenshotService
 import com.fingertipsmcp.server.ServerServices
@@ -32,6 +31,7 @@ import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -139,59 +139,58 @@ class ChromeApp(
     private val sessions = mcpSessions(services, scope)
 
     /** HTTP API and MCP at `/mcp`, on loopback TCP or a Unix socket, until the process ends. */
-    fun serveHttp(port: Int) {
-        warnIfExposed()
-        val socket = options.unixSocket?.let(::File)
-        if (socket != null) {
-            // sockaddr_un holds 104 bytes on macOS and 108 on Linux, with the terminating NUL.
-            if (socket.path.toByteArray().size >= MAX_SOCKET_PATH) {
-                throw UsageException(
-                    "--unix path is too long for a Unix socket (at most ${MAX_SOCKET_PATH - 1} " +
-                        "bytes): ${socket.path}"
-                )
+    fun serveHttp(listen: Listen) {
+        warnIfExposed(listen)
+        when (listen) {
+            is Listen.Unix -> claimUnixSocket(File(listen.path))
+            is Listen.Tcp -> {
+                requirePortFree(listen)
+                viewerPort = listen.port
             }
-            if (socket.exists()) socket.delete()
-        } else {
-            requirePortFree(port)
-            viewerPort = port
         }
         val server =
             embeddedServer(
                 CIO,
                 applicationEnvironment {},
                 configure = {
-                    if (socket != null) {
-                        unixConnector(socket.path)
-                    } else {
-                        connector {
-                            host = options.host
-                            this.port = port
-                        }
+                    when (listen) {
+                        is Listen.Unix -> unixConnector(listen.path)
+                        is Listen.Tcp ->
+                            connector {
+                                host = listen.host
+                                port = listen.port
+                            }
                     }
                 },
                 module = { fingertipsModule(services, sessions, mcpDnsRebindingProtection = true) },
             )
         startBrowserEagerly()
+        // Set once this process holds the socket, so a failed start leaves another's file alone.
+        val bound = AtomicBoolean(false)
         Runtime.getRuntime()
             .addShutdownHook(
                 Thread {
                     server.stop(gracePeriodMillis = STOP_GRACE_MS, timeoutMillis = STOP_TIMEOUT_MS)
+                    if (listen is Listen.Unix && bound.get()) File(listen.path).delete()
                     supervisor.close()
                 }
             )
         try {
             server.start(wait = false)
         } catch (e: IOException) {
-            throw listenFailure(socket, port, e)
+            throw listenFailure(listen, e)
         } catch (e: CancellationException) {
             // CIO binds in a coroutine and reports a failed bind by cancelling the start.
-            throw listenFailure(socket, port, e)
+            throw listenFailure(listen, e)
         }
-        if (socket != null) {
-            ownerOnly(socket)
-            logger.info("fingertips-chrome listening on unix socket {}", socket.path)
-        } else {
-            logger.info("fingertips-chrome listening on http://{}:{}", options.host, port)
+        bound.set(true)
+        when (listen) {
+            is Listen.Unix -> {
+                ownerOnly(File(listen.path))
+                logger.info("fingertips-chrome listening on unix socket {}", listen.path)
+            }
+            is Listen.Tcp ->
+                logger.info("fingertips-chrome listening on http://{}:{}", listen.host, listen.port)
         }
         Thread.currentThread().join()
     }
@@ -216,7 +215,7 @@ class ChromeApp(
         Runtime.getRuntime().addShutdownHook(Thread { supervisor.close() })
         startBrowserEagerly()
         runBlocking {
-            val local = localMcp(services, sessions, STDIO_NAME, STDIO_SCOPES)
+            val local = localMcp(services, sessions, STDIO_NAME, DEFAULT_SCOPES)
             val server = local.server
             val closed = CompletableDeferred<Unit>()
             server.onClose { closed.complete(Unit) }
@@ -279,42 +278,43 @@ class ChromeApp(
     }
 
     /** Fails before Chrome starts when the port is taken, rather than after. */
-    private fun requirePortFree(port: Int) {
+    private fun requirePortFree(listen: Listen.Tcp) {
         try {
-            ServerSocket().use { probe -> probe.bind(InetSocketAddress(options.host, port)) }
+            ServerSocket().use { probe -> probe.bind(InetSocketAddress(listen.host, listen.port)) }
         } catch (e: IOException) {
             throw UsageException(
-                "Could not listen on ${options.host}:$port: ${e.message.orEmpty()}",
+                "Could not listen on ${listen.host}:${listen.port}: ${e.message.orEmpty()}",
                 e,
             )
         }
     }
 
-    private fun listenFailure(socket: File?, port: Int, error: Exception): UsageException {
+    private fun listenFailure(listen: Listen, error: Exception): UsageException {
         val reason = generateSequence<Throwable>(error) { it.cause }.last().message.orEmpty()
-        val where = socket?.path ?: "${options.host}:$port"
+        val where =
+            when (listen) {
+                is Listen.Unix -> listen.path
+                is Listen.Tcp -> "${listen.host}:${listen.port}"
+            }
         supervisor.close()
         return UsageException("Could not listen on $where: $reason", error)
     }
 
-    private fun warnIfExposed() {
-        if (options.unixSocket != null) return
-        val loopback = runCatching { InetAddress.getByName(options.host).isLoopbackAddress }
+    private fun warnIfExposed(listen: Listen) {
+        if (listen !is Listen.Tcp) return
+        val loopback = runCatching { InetAddress.getByName(listen.host).isLoopbackAddress }
         if (loopback.getOrDefault(false)) return
         logger.warn(
             "Listening on {}, which is not loopback. Anyone who can reach it and holds a token " +
                 "can drive this browser, and MCP accepts only localhost Host headers.",
-            options.host,
+            listen.host,
         )
     }
 
     private companion object {
         const val STDIO_NAME = "stdio"
-        const val MAX_SOCKET_PATH = 104
         const val STOP_GRACE_MS = 200L
         const val STOP_TIMEOUT_MS = 1_000L
-        /** A local MCP client started this process, so it gets what a paired client gets. */
-        val STDIO_SCOPES = setOf(Scope.OBSERVE, Scope.CONTROL, Scope.BROWSER)
     }
 }
 

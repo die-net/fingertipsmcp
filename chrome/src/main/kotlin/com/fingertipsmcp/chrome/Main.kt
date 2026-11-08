@@ -30,7 +30,13 @@ fun main(args: Array<String>) {
                 System.err.println("fingertips-chrome: ${e.message.orEmpty()}")
                 exitProcess(USAGE_EXIT)
             }
-        is Command.TokenCreate -> createToken(command, paths, System.out)
+        is Command.TokenCreate ->
+            try {
+                createToken(command, paths, System.out)
+            } catch (e: UsageException) {
+                System.err.println("fingertips-chrome: ${e.message.orEmpty()}")
+                exitProcess(1)
+            }
         Command.TokenList -> listTokens(paths, System.out)
         is Command.TokenRevoke ->
             if (!revokeToken(command.id, paths)) {
@@ -46,22 +52,28 @@ private fun serve(options: ServeOptions, paths: ChromePaths) {
     if (options.stdio) {
         app.serveStdio()
     } else {
-        app.serveHttp(options.port ?: loadSettings(paths.config).port)
+        app.serveHttp(listenFor(options, paths.config))
     }
 }
 
+/**
+ * Mints a token and writes `pairing.json` for it, with the address in `settings.json` that `serve`
+ * listens on. It is refused before minting when that address is a Unix socket.
+ */
 internal fun createToken(command: Command.TokenCreate, paths: ChromePaths, out: PrintStream) {
     paths.ensure()
+    val address =
+        if (command.writePairing) pairingAddress(loadSettings(paths.config).listen) else null
     val created = TokenStore(paths.config).create(command.name, command.scopes)
     out.println(
         "Created token ${created.info.id} (${command.name}) with scopes " +
             command.scopes.joinToString(",") { it.name.lowercase() }
     )
-    if (command.writePairing) {
+    if (address != null) {
         val pairing =
             PairingInfo(
-                host = "127.0.0.1",
-                port = loadSettings(paths.config).port,
+                host = address.first,
+                port = address.second,
                 token = created.token,
                 name = command.name,
             )
