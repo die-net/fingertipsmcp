@@ -62,6 +62,7 @@ import com.fingertipsmcp.lease.ScreenCleanup
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.mcp.McpSessions
 import com.fingertipsmcp.model.ApiException
+import com.fingertipsmcp.model.Capabilities
 import com.fingertipsmcp.model.EventTypes
 import com.fingertipsmcp.model.HelperStatus
 import com.fingertipsmcp.model.KeyRequest
@@ -75,6 +76,8 @@ import com.fingertipsmcp.server.DeviceFacts
 import com.fingertipsmcp.server.NetworkWatcher
 import com.fingertipsmcp.server.PhoneServices
 import com.fingertipsmcp.server.PhoneViewerControls
+import com.fingertipsmcp.server.Product
+import com.fingertipsmcp.server.ScreenshotService
 import com.fingertipsmcp.server.ServerController
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.StreamServices
@@ -312,6 +315,14 @@ class AppGraph(
             writePin = { pin -> pins.write(pin) },
             shell = { argv -> this.shell.exec(argv) },
             logcat = HelperLogcatFeed(helper, bus, ioDispatcher),
+            foreground =
+                ForegroundWatch(
+                    screenLease,
+                    scope,
+                    top = { topPackage() },
+                    bringBack = { pkg -> bringBack(pkg) },
+                    report = { holder, pkg -> tookScreen(McpSessions.hashOf(holder.id), pkg) },
+                ),
         )
 
     val services =
@@ -322,25 +333,24 @@ class AppGraph(
             ioDispatcher = ioDispatcher,
             device = GraphDevice(deviceInfo),
             events = bus.events,
+            product = Product.ANDROID,
             phone = phone,
             streams =
                 StreamServices(
                     video = VideoFeed { session, spec -> this.video.serve(session, spec) },
+                    videoRefusal = deviceInfo::videoRefusal,
                     audio = AudioFeed { session -> this.audio.serve(session) },
+                    audioRefusal = deviceInfo::audioRefusal,
                     viewerText = { viewerLink() },
                     controls = PhoneViewerControls(phone),
                 ),
-            screenshots = { scale -> this.screenshots.png(scale) },
+            screenshots =
+                ScreenshotService(
+                    available = Capabilities::screenshotHelper,
+                    png = { scale -> this.screenshots.png(scale) },
+                ),
             lease = screenLease,
             tabs = tabs,
-            foreground =
-                ForegroundWatch(
-                    screenLease,
-                    scope,
-                    top = { topPackage() },
-                    bringBack = { pkg -> bringBack(pkg) },
-                    report = { holder, pkg -> tookScreen(McpSessions.hashOf(holder.id), pkg) },
-                ),
         )
 
     val server = ApiServer(context.packageName, ioDispatcher) { fingertipsModule(services) }

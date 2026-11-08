@@ -88,7 +88,7 @@ class RouteScopeTest {
 /** MCP checks scopes per tool; it is not wrapped in [scoped]. */
 private val UNSCOPED = setOf("/mcp")
 
-private data class RegisteredRoute(
+internal data class RegisteredRoute(
     val method: ApiMethod,
     val path: String,
     val scopes: Set<Scope>,
@@ -126,7 +126,8 @@ private fun HttpRequestBuilder.json(secret: String) {
     setBody("{}")
 }
 
-private fun RoutingNode.scopedRoutes(): List<RegisteredRoute> =
+/** The routes in [scoped] and [anyToken] blocks, with their scopes. */
+internal fun RoutingNode.scopedRoutes(): List<RegisteredRoute> =
     getAllRoutes().mapNotNull { node ->
         val selector = node.scopeSelector() ?: return@mapNotNull null
         RegisteredRoute(node.routeMethod(), node.routePath(), selector.scopes)

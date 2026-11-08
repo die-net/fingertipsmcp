@@ -171,7 +171,7 @@ Authenticated errors are JSON:
 
 | Method | Path | Scope | Summary |
 | --- | --- | --- | --- |
-| `GET` | `/v1/device` | observe | `DeviceInfo`: display, helper status, capabilities, whether Android's app freezer is on (`appFreezer`), whether FingertipsMCP holds Chrome's Custom Tabs binding, which keeps the freezer off Chrome while the helper runs (`chromeKept`), and who has the screen (`screenHolder`: `you` when `Mcp-Session-Id` names the holder, `parent` or `subagent` for a session related by `session_start`, `agent`, `person`, or `script`) and for how long (`screenHeldMs`) |
+| `GET` | `/v1/device` | observe | `DeviceInfo`: display, Android's API level (`sdkInt`), the screen, keyguard, keyboard, and foreground app (`state`), helper status (`helper`, `uiAutomationConnected`), capabilities, whether Android's app freezer is on (`appFreezer`), whether FingertipsMCP holds Chrome's Custom Tabs binding, which keeps the freezer off Chrome while the helper runs (`chromeKept`), and who has the screen (`screenHolder`: `you` when `Mcp-Session-Id` names the holder, `parent` or `subagent` for a session related by `session_start`, `agent`, `person`, or `script`) and for how long (`screenHeldMs`) |
 | `POST` | `/v1/device/wake` | control or browser | Turn the screen on → `ActionResult` |
 | `POST` | `/v1/device/unlock` | control or browser | Dismiss keyguard (`UnlockRequest`, optional) |
 | `POST` | `/v1/device/lock` | control | Lock the device |
@@ -299,7 +299,7 @@ Auth: Bearer header, the `fingertips` cookie, or `access_token` on the upgrade U
 | `/v1/events` | observe | JSON event frames (see Conventions) |
 | `/v1/input/pointer` | control | The viewer's input: live pointer contacts (`PointerFrame` JSON text frames), keys, text, orientation, copy and paste, and taking the screen over. The socket is a holder of the screen lease |
 | `/v1/stream/video` | stream | H.264; query `maxSize`, `fps`, `bitRate`. A `VideoHeader` text frame comes first and again when the picture or the screen changes size: the encoded `width` and `height`, the screen's `displayWidth` and `displayHeight`, which `/v1/input/pointer` points use, and `pointer`, `touch` or `mouse`, which says what those points drive |
-| `/v1/stream/audio` | stream | Device audio (submix capability) |
+| `/v1/stream/audio` | stream | Device audio. On a phone it needs the submix capability |
 
 `/v1/input/pointer` frames are `{"op":"down"|"move"|"up","id":0,"x":1,"y":2,"tMs":0}` or `{"op":"cancel"}`. `id` is the contact, 0 through 9. `tMs` is milliseconds since that gesture's first `down`, shared by every contact. `x` and `y` are screen pixels. The first `down` is `ACTION_DOWN`; another finger is `ACTION_POINTER_DOWN`. A `move` carries the latest point of every finger still down. The last `up` is `ACTION_UP`. `cancel`, a bad frame, or the socket closing while a contact is down injects `ACTION_CANCEL` and releases the touch. An 11th `down`, or a `move`/`up` for an id that is not down, is ignored. Closing with nothing down injects nothing.
 
@@ -398,6 +398,7 @@ Full request and response schemas live in OpenAPI and under `api-model` (`Device
 | `wait` | All conditions | `browser.*` only; `snapshot` is **400** |
 | `screenshot` | Device screen | `Page.captureScreenshot` of the tab that is showing |
 | Events | Includes `logcat` | No `logcat`; asking for it refuses the upgrade |
-| `device_info` | Phone | OS in `manufacturer`/`release`, Chrome in `model`, screen from Chrome; `helper` is `running` while Chrome is up |
+| `device_info` | Phone | OS in `manufacturer`/`release`, Chrome in `model` (`Chrome (not running)` while it is down), screen from Chrome. No `sdkInt`, `state`, `helper`, `uiAutomationConnected`, or `chromeKept` |
+| `capabilities` | What works on the phone now | Only `browser.cdp` is true. The others name Android's mechanisms; screenshots and the viewer come with their feature groups |
 | Target ids | `chrome_devtools_remote~<id>` | `chrome~<id>` |
 | MCP `Host` and `Origin` | Not checked | A loopback `Host` only, and no `Origin` |

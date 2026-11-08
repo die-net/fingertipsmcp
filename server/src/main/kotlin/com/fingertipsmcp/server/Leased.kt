@@ -39,10 +39,10 @@ internal fun ApplicationCall.session(): Holder.Session {
 /**
  * Runs a REST call as the session it names. When [needed], the call holds the screen, waiting for
  * it first, and the session keeps it afterwards, as an MCP session does; Chrome shows none of
- * another session's tabs meanwhile. A call that could make a page launch an app, [launching], is
- * watched for that while the session lacks the screen. A call that needs the screen only while it
- * runs, [giveBack], lets it go afterwards if the session did not have it before. Notes for the
- * session go in `X-FingertipsMCP-Note` headers.
+ * another session's tabs meanwhile. On a phone, a call that could make a page launch an app,
+ * [launching], is watched for that while the session lacks the screen. A call that needs the screen
+ * only while it runs, [giveBack], lets it go afterwards if the session did not have it before.
+ * Notes for the session go in `X-FingertipsMCP-Note` headers.
  */
 internal suspend fun <T> withScreen(
     call: ApplicationCall,
@@ -54,8 +54,8 @@ internal suspend fun <T> withScreen(
 ): T {
     val holder = call.session()
     if (!needed) {
-        val value =
-            if (launching) services.foreground.watch(holder) { block(holder) } else block(holder)
+        val watch = services.phone?.foreground?.takeIf { launching }
+        val value = if (watch != null) watch.watch(holder) { block(holder) } else block(holder)
         services.lease.takeNotes(holder).forEach { call.response.headers.append(NOTE_HEADER, it) }
         return value
     }

@@ -19,7 +19,7 @@ class StreamRouteTest {
     @Test
     fun `unsupported audio is refused`() = testApplication {
         val api = FakeApi()
-        api.capabilities = allCapabilities().copy(streamAudioSubmix = false)
+        api.audioRefusal = "Audio needs Android 11 or later and the shell helper"
         val secret = api.tokens.issue("stream", setOf(Scope.STREAM))
         application { fingertipsModule(api.services) }
         apiClient().use { client ->

@@ -66,16 +66,10 @@ internal suspend fun releaseScreen(
     val held = services.lease.holds(holder)
     if (request.cleanup) {
         services.lease.release(holder)
-        val cleanup =
-            if (services.phone != null) {
-                " FingertipsMCP hides the keyboard and goes home before the next client gets it, " +
-                    "and locks the phone if no one is waiting and it was locked before."
-            } else {
-                " The browser goes back to a blank tab, so yours is hidden until you act on it."
-            }
         return if (held) {
-            "Released the screen.$cleanup Your tabs stay yours, and your next call that needs " +
-                "the screen takes it again, waiting if someone else has it."
+            "Released the screen. ${services.product.releaseCleanup} Your tabs stay yours, and " +
+                "your next call that needs the screen takes it again, waiting if someone else " +
+                "has it."
         } else {
             "This session did not hold the screen."
         }

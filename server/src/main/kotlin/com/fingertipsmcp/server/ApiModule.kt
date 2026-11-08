@@ -5,6 +5,7 @@ import com.fingertipsmcp.mcp.McpSessions
 import com.fingertipsmcp.mcp.installPhoneMcp
 import com.fingertipsmcp.model.ApiError
 import com.fingertipsmcp.model.ApiException
+import com.fingertipsmcp.model.openapi.ApiGroup
 import com.fingertipsmcp.server.routes.appRoutes
 import com.fingertipsmcp.server.routes.browserRoutes
 import com.fingertipsmcp.server.routes.deviceRoutes
@@ -26,6 +27,7 @@ import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
@@ -65,27 +67,35 @@ fun Application.fingertipsModule(
     install(BearerAuth) { tokens = services.tokens }
     attributes.put(SessionsKey, sessions)
     services.tabs.sessionsFrom { sessions.isLive(it.id) }
-    routing {
-        val phone = services.phone
-        val streams = services.streams
-        val screenshots = services.screenshots
-        deviceRoutes(services)
-        openApiRoutes(services)
-        tokenRoutes(services)
-        eventRoutes(services)
-        if (phone != null) {
+    routing { services.groups.forEach { groupRoutes(it, services, sessions) } }
+    installPhoneMcp(services, sessions, mcpDnsRebindingProtection)
+}
+
+/**
+ * The routes of feature [group], which `fingertipsEndpoints` lists with that group. A server
+ * installs the groups in [ServerServices.groups], so it serves the routes its OpenAPI document has.
+ */
+private fun Route.groupRoutes(group: ApiGroup, services: ServerServices, sessions: McpSessions) {
+    when (group) {
+        ApiGroup.CORE -> {
+            deviceRoutes(services)
+            openApiRoutes(services)
+            tokenRoutes(services)
+            eventRoutes(services)
+            waitRoutes(services)
+            sessionRoutes(services, sessions)
+        }
+        ApiGroup.PHONE -> {
+            val phone = services.requirePhone()
             powerRoutes(services, phone)
             uiRoutes(services, phone)
             inputRoutes(services, phone)
             appRoutes(services, phone)
         }
-        if (screenshots != null) screenshotRoutes(services, screenshots)
-        browserRoutes(services)
-        waitRoutes(services)
-        if (streams != null) streamRoutes(services, streams)
-        sessionRoutes(services, sessions)
+        ApiGroup.BROWSER -> browserRoutes(services)
+        ApiGroup.STREAMS -> streamRoutes(services, services.requireStreams())
+        ApiGroup.SCREENSHOTS -> screenshotRoutes(services, services.requireScreenshots().png)
     }
-    installPhoneMcp(services, sessions, mcpDnsRebindingProtection)
 }
 
 private fun Throwable.rootMessage(): String? = generateSequence(this) { it.cause }.last().message
@@ -103,10 +113,10 @@ fun mcpSessions(services: ServerServices, scope: CoroutineScope): McpSessions =
             onEnd = {
                 services.lease.forget(Holder.Session(it))
                 services.tabs.end(Holder.Session(it))
-                services.foreground.forget(Holder.Session(it))
+                services.phone?.foreground?.forget(Holder.Session(it))
             },
             holdsScreen = { services.lease.holds(Holder.Session(it)) },
             tabCount = { services.tabs.count(Holder.Session(it)) },
-            tookScreen = { services.foreground.count(Holder.Session(it)) },
+            tookScreen = { services.phone?.foreground?.count(Holder.Session(it)) ?: 0 },
         )
         .also { it.start() }

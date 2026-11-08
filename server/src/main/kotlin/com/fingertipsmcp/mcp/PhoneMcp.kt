@@ -228,7 +228,7 @@ private fun phoneServer(
 ): Server {
     val services = shared.forHolder(holder, control)
     val product = services.product
-    val tools = visibleMcpTools(scopes, services.device.capabilities(), product, services.groups)
+    val tools = visibleMcpTools(scopes, services, services.device.capabilities())
     val resources = mcpResources(scopes, services.groups)
     return Server(
         Implementation(name = product.name, version = services.device.versionName()),
@@ -244,7 +244,7 @@ private fun phoneServer(
                         },
                 )
         ),
-        instructions = mcpInstructions(scopes, product),
+        instructions = mcpInstructions(scopes, product, services.groups),
     ) {
         tools.forEach { tool ->
             addTool(
@@ -292,8 +292,8 @@ private fun ServerServices.forHolder(holder: Holder.Session, control: SessionCon
 
 /**
  * Runs a call to [tool] for the session it names, or the caller's own: holding the screen when it
- * needs it, keeping other sessions' tabs off Chrome's screen meanwhile, and otherwise watching for
- * it bringing an app forward.
+ * needs it, keeping other sessions' tabs off Chrome's screen meanwhile, and otherwise, on a phone,
+ * watching for it bringing an app forward.
  */
 private suspend fun callTool(
     shared: ServerServices,
@@ -329,10 +329,10 @@ private suspend fun callTool(
     }
     return leased(services.lease, holder, screen, brief) {
         val call = suspend { tool.call(services, scopes, request) }
+        val watch = services.phone?.foreground?.takeIf { tool.screen.launches(arguments) }
         when {
             screen -> services.tabs.screenCall(holder, call)
-            tool.screen.launches(arguments) ->
-                tookScreenError { services.foreground.watch(holder, call) }
+            watch != null -> tookScreenError { watch.watch(holder, call) }
             else -> call()
         }
     }

@@ -94,10 +94,16 @@ class McpScreenTest {
         val stopped = FakeBrowser().apply { stopped = true }
         val url = args("""{"url":"https://example.com/","query":"x"}""")
         val find = tool("browser_find").screen
-        assertEquals(ScreenUse(needed = true, brief = true), screenUse(find, url, stopped))
-        assertEquals(ScreenUse(needed = false, brief = false), screenUse(find, url, FakeBrowser()))
+        assertEquals(ScreenUse(needed = true, brief = true), screenUse(find, url, stopped, PHONE))
+        assertEquals(
+            ScreenUse(needed = false, brief = false),
+            screenUse(find, url, FakeBrowser(), PHONE),
+        )
         val byTarget = args("""{"target":"t","query":"x"}""")
-        assertEquals(ScreenUse(needed = false, brief = false), screenUse(find, byTarget, stopped))
+        assertEquals(
+            ScreenUse(needed = false, brief = false),
+            screenUse(find, byTarget, stopped, PHONE),
+        )
     }
 
     @Test
@@ -141,8 +147,8 @@ class McpScreenTest {
         assertEquals("touch", resolved("browser_swipe", "{}", holds = false))
         assertEquals("cdp", resolved("browser_tap", """{"input":"cdp"}""", holds = true))
         val untouched = request("browser_read", "{}")
-        assertEquals(untouched, resolveInput("browser_read", untouched, false, ALL))
-        val rest = resolveInput("browser_tap", request("browser_tap", "{}"), false, ALL)
+        assertEquals(untouched, resolveInput("browser_read", untouched, false, ALL, PHONE))
+        val rest = resolveInput("browser_tap", request("browser_tap", "{}"), false, ALL, PHONE)
         assertFalse(takes("browser_tap", rest.params.arguments))
     }
 
@@ -165,7 +171,7 @@ class McpScreenTest {
         holds: Boolean,
         scopes: Set<Scope> = ALL,
     ): String? =
-        resolveInput(tool, request(tool, json), holds, scopes)
+        resolveInput(tool, request(tool, json), holds, scopes, PHONE)
             .params
             .arguments
             ?.get("input")
@@ -183,10 +189,12 @@ class McpScreenTest {
 
     private fun tool(name: String) = MCP_TOOLS.first { it.name == name }
 
-    private fun takes(name: String, args: JsonObject?) =
-        tool(name).screen.takes(args, BrowserInputPolicy.PHONE)
+    private fun takes(name: String, args: JsonObject?) = tool(name).screen.takes(args, PHONE)
 
     private companion object {
+        /** These tests are of the phone, whose touch input brings a tab forward. */
+        val PHONE = BrowserInputPolicy.PHONE
+
         /** The tools that act on the screen or show what is on it, whatever their arguments. */
         val SCREEN_TOOLS =
             setOf(

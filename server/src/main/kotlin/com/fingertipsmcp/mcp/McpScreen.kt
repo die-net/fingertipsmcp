@@ -105,7 +105,7 @@ internal suspend fun screenUse(
     screen: ToolScreen,
     args: JsonObject?,
     browser: BrowserService,
-    policy: BrowserInputPolicy = BrowserInputPolicy.PHONE,
+    policy: BrowserInputPolicy,
 ): ScreenUse {
     val byArguments = screen.takes(args, policy)
     val startsChrome = screen.opensTab(args) && browser.chromeStopped()
@@ -136,7 +136,7 @@ internal fun resolveInput(
     request: CallToolRequest,
     holdsScreen: Boolean,
     scopes: Set<Scope>,
-    policy: BrowserInputPolicy = BrowserInputPolicy.PHONE,
+    policy: BrowserInputPolicy,
 ): CallToolRequest {
     val kind = INPUT_KINDS[tool] ?: return request
     val args = request.params.arguments ?: JsonObject(emptyMap())

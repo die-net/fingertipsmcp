@@ -60,8 +60,7 @@ fun Route.streamRoutes(services: ServerServices, streams: StreamServices) {
         webSocket("/v1/stream/video") {
             controls.serveStream(
                 this,
-                available = services.device.capabilities().streamVideoMirror,
-                refused = "Video needs the shell helper",
+                refusal = streams.videoRefusal(),
                 failed = "The video encoder could not start",
             ) {
                 streams.video.serve(this, videoSpec(call))
@@ -70,8 +69,7 @@ fun Route.streamRoutes(services: ServerServices, streams: StreamServices) {
         webSocket("/v1/stream/audio") {
             controls.serveStream(
                 this,
-                available = services.device.capabilities().streamAudioSubmix,
-                refused = "Audio needs Android 11 or later and the shell helper",
+                refusal = streams.audioRefusal(),
                 failed = "Audio capture could not start",
             ) {
                 streams.audio.serve(this)
@@ -81,19 +79,18 @@ fun Route.streamRoutes(services: ServerServices, streams: StreamServices) {
 }
 
 /**
- * Serves one stream socket with [serve], after waking the screen. A device that cannot stream at
- * all, not [available], closes it with CANNOT_ACCEPT and [refused], which the viewer takes as
- * final. A stream that fails to start closes with its error's message, or [failed].
+ * Serves one stream socket with [serve], after waking the screen. A device that cannot stream, with
+ * a [refusal], closes it with CANNOT_ACCEPT and that reason, which the viewer takes as final. A
+ * stream that fails to start closes with its error's message, or [failed].
  */
 private suspend fun ViewerControls.serveStream(
     session: DefaultWebSocketServerSession,
-    available: Boolean,
-    refused: String,
+    refusal: String?,
     failed: String,
     serve: suspend () -> Unit,
 ) {
-    if (!available) {
-        session.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, refused))
+    if (refusal != null) {
+        session.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, refusal))
         return
     }
     try {
@@ -127,7 +124,6 @@ private fun ApplicationCall.viewerPathWithoutAccessToken(): String {
     return "$VIEWER_PATH?$query"
 }
 
-/** A bundled page, read once the first time a client asks for it. */
 /** The viewer page, which every product serves from this module's resources. */
 private fun viewerPage(): ByteArray =
     checkNotNull(StreamServices::class.java.getResourceAsStream("viewer.html")) {
@@ -135,6 +131,7 @@ private fun viewerPage(): ByteArray =
         }
         .use { it.readBytes() }
 
+/** A bundled page, read once the first time a client asks for it. */
 internal class CachedBytes(private val load: suspend () -> ByteArray) {
     private val gate = Mutex()
 

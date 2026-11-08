@@ -6,11 +6,16 @@ import com.fingertipsmcp.mcp.mcpInstructions
 import com.fingertipsmcp.mcp.mcpResources
 import com.fingertipsmcp.mcp.resolveInput
 import com.fingertipsmcp.mcp.visibleMcpTools
+import com.fingertipsmcp.model.ApiError
+import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserInput
 import com.fingertipsmcp.model.BrowserInputKind
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.openapi.ApiGroup
+import com.fingertipsmcp.model.openapi.apiEndpoints
+import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -20,12 +25,16 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.application.Application
+import io.ktor.server.application.plugin
+import io.ktor.server.routing.RoutingNode
+import io.ktor.server.routing.RoutingRoot
 import io.ktor.server.testing.testApplication
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
@@ -35,8 +44,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 /**
  * A server with only some feature groups, as FingertipsMCP for Chrome runs: the browser and
@@ -44,7 +55,13 @@ import org.junit.jupiter.api.Test
  */
 class FeatureGroupTest {
     private val api = FakeApi()
-    private val desk = api.services.copy(product = Product.CHROME, phone = null, streams = null)
+    private val desk =
+        api.services.copy(
+            product = Product.CHROME,
+            phone = null,
+            streams = null,
+            screenshots = ScreenshotService(available = { true }, png = api.screenshotPng),
+        )
 
     @Test
     fun `groups follow the services`() {
@@ -118,23 +135,96 @@ class FeatureGroupTest {
     }
 
     @Test
-    fun `logcat events need the phone`() = testApplication {
+    fun `routes match the endpoints`() {
+        val servers =
+            listOf<(FakeApi) -> ServerServices>(
+                { it.services },
+                { it.services.copy(product = Product.CHROME, phone = null, streams = null) },
+                { it.services.copy(product = Product.CHROME, phone = null) },
+            )
+        for (server in servers) {
+            val services = server(FakeApi())
+            val declared =
+                apiEndpoints(services.groups)
+                    .map { RegisteredRoute(it.method, it.path, it.scopes) }
+                    .toSet()
+            assertEquals(declared, registeredRoutes(services), services.groups.toString())
+        }
+    }
+
+    /** A core call that needs the phone is refused on a server without it, before anything runs. */
+    @Test
+    fun `logcat events need the phone`() {
+        val refused = assertThrows<ApiException> { desk.requirePhone() }
+        assertEquals(422, refused.status)
+        assertEquals("unsupported", refused.error)
         val observe = api.tokens.issue("observe", setOf(Scope.OBSERVE))
-        application { fingertipsModule(desk) }
+        RawServer(desk).use { raw ->
+            val reply = raw.upgrade("/v1/events?types=logcat", "Authorization: Bearer $observe")
+            assertEquals(422, reply.status, reply.body)
+            val error = ApiJson.decodeFromString(ApiError.serializer(), reply.body)
+            assertEquals("unsupported", error.error)
+            assertEquals(
+                "FingertipsMCP for Chrome does not have Android's screen and apps.",
+                error.message,
+            )
+        }
+    }
+
+    /** wait_for's screenshot needs the screenshots group, and is refused before the wait. */
+    @Test
+    fun `waits need the screenshots`() = testApplication {
+        val bare = desk.copy(screenshots = null)
+        val all = api.tokens.issue("all", Scope.entries.toSet())
+        application { fingertipsModule(bare) }
         apiClient().use { client ->
-            // The test engine hides the status of a rejected upgrade, so only its failure shows.
-            val refused =
-                try {
-                    withTimeout(5.seconds) {
-                        client.webSocket("/v1/events?types=logcat", { bearer(observe) }) {}
+            val id = initializeMcp(client, all)
+            val page =
+                """{"type":"browser.url","target":"chrome_devtools_remote~t","contains":"x"}"""
+            val result =
+                callMcp(client, all, id, "wait_for", """{"all":[$page],"screenshot":true}""")
+            assertTrue(
+                result.contains("unsupported: FingertipsMCP for Chrome does not have screenshots."),
+                result,
+            )
+        }
+        assertEquals(0, api.waits.calls)
+    }
+
+    /**
+     * A desktop's capabilities name Android's mechanisms, which it does not have, and its
+     * screenshots and viewer still work: their groups offer them.
+     */
+    @Test
+    fun `no phone mechanism needed`() = testApplication {
+        api.capabilities =
+            allCapabilities()
+                .copy(
+                    screenshotHelper = false,
+                    streamVideoMirror = false,
+                    streamAudioSubmix = false,
+                )
+        val viewer = desk.copy(streams = api.services.streams)
+        val tools = visibleMcpTools(Scope.entries.toSet(), viewer, api.capabilities)
+        assertTrue(tools.any { it.name == "screenshot" })
+        // The phone's screenshots need its helper, so the same capabilities hide them there.
+        val phoneTools = visibleMcpTools(Scope.entries.toSet(), api.services, api.capabilities)
+        assertFalse(phoneTools.any { it.name == "screenshot" })
+        val stream = api.tokens.issue("stream", setOf(Scope.STREAM))
+        application { fingertipsModule(viewer) }
+        apiClient().use { client ->
+            for (path in listOf("/v1/stream/video", "/v1/stream/audio")) {
+                withTimeout(5.seconds) {
+                    client.webSocket(path, { bearer(stream) }) {
+                        val reason = closeReason.await()
+                        assertNotEquals(
+                            CloseReason.Codes.CANNOT_ACCEPT.code,
+                            reason?.code,
+                            "$path closed with ${reason?.message.orEmpty()}",
+                        )
                     }
-                    false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: IllegalStateException) {
-                    e.message.orEmpty().contains("failed")
                 }
-            assertTrue(refused)
+            }
         }
     }
 
@@ -166,8 +256,7 @@ class FeatureGroupTest {
 
     @Test
     fun `mcp tools follow groups`() {
-        val tools =
-            visibleMcpTools(Scope.entries.toSet(), api.capabilities, desk.product, desk.groups)
+        val tools = visibleMcpTools(Scope.entries.toSet(), desk, api.capabilities)
         val names = tools.map { it.name }.toSet()
         assertTrue("browser_tap" in names)
         assertTrue("screenshot" in names)
@@ -182,7 +271,7 @@ class FeatureGroupTest {
         val shot = tools.first { it.name == "screenshot" }
         assertTrue(shot.description.endsWith("Uses the screen."), shot.description)
         val phoneTap =
-            visibleMcpTools(Scope.entries.toSet(), api.capabilities).first {
+            visibleMcpTools(Scope.entries.toSet(), api.services, api.capabilities).first {
                 it.name == "browser_tap"
             }
         assertTrue(phoneTap.description.startsWith("Tap a snapshot ref"), phoneTap.description)
@@ -192,11 +281,13 @@ class FeatureGroupTest {
 
     @Test
     fun `instructions name the product`() {
-        val desktop = mcpInstructions(Scope.entries.toSet(), Product.CHROME)
+        val desktop = mcpInstructions(Scope.entries.toSet(), Product.CHROME, desk.groups)
         assertTrue(desktop.startsWith("FingertipsMCP drives one Chrome browser"), desktop)
         assertFalse(desktop.contains("phone"), desktop)
-        val phone = mcpInstructions(Scope.entries.toSet())
+        assertFalse(desktop.contains("snapshot or screenshot true"), desktop)
+        val phone = mcpInstructions(Scope.entries.toSet(), Product.ANDROID, api.services.groups)
         assertTrue(phone.startsWith("FingertipsMCP drives one Android phone"), phone)
+        assertTrue(phone.contains("snapshot or screenshot true"), phone)
     }
 
     @Test
@@ -224,6 +315,56 @@ class FeatureGroupTest {
             )
         val resolved = resolveInput("browser_key", asked, false, Scope.entries.toSet(), desktop)
         assertEquals(JsonPrimitive("cdp"), resolved.params.arguments!!["input"])
+    }
+
+    /** The routes [services] registers, from Ktor's routing tree. */
+    private fun registeredRoutes(services: ServerServices): Set<RegisteredRoute> {
+        var routes = emptySet<RegisteredRoute>()
+        testApplication {
+            lateinit var app: Application
+            application {
+                app = this
+                fingertipsModule(services)
+            }
+            // A request starts the application, which builds the routing tree.
+            apiClient().use { it.get("/v1/device") }
+            routes = (app.plugin(RoutingRoot) as RoutingNode).scopedRoutes().toSet()
+        }
+        return routes
+    }
+
+    private suspend fun initializeMcp(client: HttpClient, secret: String): String {
+        val response =
+            client.post("/mcp") {
+                mcpHeaders(secret, null)
+                setBody(INITIALIZE)
+            }
+        return response.headers[SESSION_HEADER] ?: error("no session: ${response.bodyAsText()}")
+    }
+
+    private suspend fun callMcp(
+        client: HttpClient,
+        secret: String,
+        id: String,
+        tool: String,
+        args: String,
+    ): String =
+        client
+            .post("/mcp") {
+                mcpHeaders(secret, id)
+                setBody(
+                    """{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"$tool",""" +
+                        """"arguments":$args}}"""
+                )
+            }
+            .bodyAsText()
+
+    private fun HttpRequestBuilder.mcpHeaders(secret: String, id: String?) {
+        bearer(secret)
+        header(HttpHeaders.Accept, "application/json, text/event-stream")
+        header("MCP-Protocol-Version", "2025-06-18")
+        contentType(ContentType.Application.Json)
+        if (id != null) header(SESSION_HEADER, id)
     }
 
     private companion object {

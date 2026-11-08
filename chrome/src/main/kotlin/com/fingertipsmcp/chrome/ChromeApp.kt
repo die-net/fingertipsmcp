@@ -7,12 +7,12 @@ import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.DesktopStyle
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.EventBus
-import com.fingertipsmcp.lease.ForegroundWatch
 import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.mcp.localMcp
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.server.Product
+import com.fingertipsmcp.server.ScreenshotService
 import com.fingertipsmcp.server.ServerServices
 import com.fingertipsmcp.server.StreamServices
 import com.fingertipsmcp.server.TokenStore
@@ -122,15 +122,16 @@ class ChromeApp(
             events = EventBus().events,
             lease = lease,
             tabs = tabs,
-            // Pages cannot bring another app forward on a desktop, so nothing is watched.
-            foreground =
-                ForegroundWatch(lease, scope, top = { null }, bringBack = {}, report = { _, _ -> }),
             product = Product.CHROME,
-            screenshots = shots::png,
+            // DevTools captures the tab showing, which needs nothing like the phone's helper.
+            screenshots = ScreenshotService(available = { true }, png = shots::png),
             streams =
                 StreamServices(
                     video = viewer.video,
+                    // The viewer captures the tab Chrome shows, picture and sound.
+                    videoRefusal = { null },
                     audio = viewer.audio,
+                    audioRefusal = { null },
                     viewerText = ::viewerText,
                     controls = viewer.controls,
                 ),

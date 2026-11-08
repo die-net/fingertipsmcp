@@ -6,6 +6,8 @@ import com.fingertipsmcp.model.BrowserReadRequest
 import com.fingertipsmcp.model.Capabilities
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.SessionArg
+import com.fingertipsmcp.model.openapi.ApiGroup
+import com.fingertipsmcp.server.FakeApi
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -26,9 +28,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class McpCatalogTest {
+    private val phone = FakeApi().services
+
     @Test
     fun `observe hides control tools`() {
-        val names = visibleMcpTools(setOf(Scope.OBSERVE), allOn()).map { it.name }
+        val names = phoneTools(setOf(Scope.OBSERVE), allOn()).map { it.name }
         assertTrue("device_info" in names)
         assertTrue("ui_snapshot" in names)
         assertTrue("screenshot" in names)
@@ -41,7 +45,7 @@ class McpCatalogTest {
 
     @Test
     fun `browser alone waits and shares`() {
-        val browser = visibleMcpTools(setOf(Scope.BROWSER), allOn()).map { it.name }
+        val browser = phoneTools(setOf(Scope.BROWSER), allOn()).map { it.name }
         val shared =
             listOf(
                 "wait_for",
@@ -57,15 +61,16 @@ class McpCatalogTest {
         assertFalse("device_info" in browser)
         assertFalse("screenshot" in browser)
         assertFalse("device_lock" in browser)
-        val stream = visibleMcpTools(setOf(Scope.STREAM), allOn()).map { it.name }
+        val stream = phoneTools(setOf(Scope.STREAM), allOn()).map { it.name }
         assertEquals(listOf("screen_release", "session_end", "session_start"), stream.sorted())
     }
 
     @Test
     fun `hides browser without cdp`() {
         val names =
-            visibleMcpTools(setOf(Scope.OBSERVE, Scope.BROWSER), allOn().copy(browserCdp = false))
-                .map { it.name }
+            phoneTools(setOf(Scope.OBSERVE, Scope.BROWSER), allOn().copy(browserCdp = false)).map {
+                it.name
+            }
         assertFalse(names.any { it.startsWith("browser_") })
     }
 
@@ -78,7 +83,7 @@ class McpCatalogTest {
                     logcatAll = false,
                     appsManage = false,
                 )
-        val names = visibleMcpTools(Scope.entries.toSet(), caps).map { it.name }
+        val names = phoneTools(Scope.entries.toSet(), caps).map { it.name }
         assertFalse("screenshot" in names)
         assertFalse("logcat_tail" in names)
         assertFalse("app_stop" in names)
@@ -88,11 +93,11 @@ class McpCatalogTest {
 
     @Test
     fun `keyboard show needs the tree`() {
-        val control = visibleMcpTools(setOf(Scope.CONTROL), allOn()).map { it.name }
+        val control = phoneTools(setOf(Scope.CONTROL), allOn()).map { it.name }
         assertTrue("keyboard_show" in control)
         assertTrue("keyboard_hide" in control)
         val noTree =
-            visibleMcpTools(setOf(Scope.CONTROL), allOn().copy(uiSnapshot = false)).map { it.name }
+            phoneTools(setOf(Scope.CONTROL), allOn().copy(uiSnapshot = false)).map { it.name }
         assertFalse("keyboard_show" in noTree)
         val show = MCP_TOOLS.first { it.name == "keyboard_show" }
         assertTrue(show.schema.properties!!.keys.containsAll(listOf("selector", "autoWake")))
@@ -100,8 +105,12 @@ class McpCatalogTest {
 
     @Test
     fun `resources need observe`() {
-        assertTrue(mcpResources(setOf(Scope.OBSERVE)).any { it.path.endsWith("capabilities") })
-        assertEquals(0, mcpResources(setOf(Scope.CONTROL)).size)
+        assertTrue(
+            mcpResources(setOf(Scope.OBSERVE), ApiGroup.entries.toSet()).any {
+                it.path.endsWith("capabilities")
+            }
+        )
+        assertEquals(0, mcpResources(setOf(Scope.CONTROL), ApiGroup.entries.toSet()).size)
     }
 
     @Test
@@ -179,10 +188,10 @@ class McpCatalogTest {
 
     @Test
     fun `unstable ids are noted`() {
-        val full = visibleMcpTools(setOf(Scope.CONTROL), allOn()).first { it.name == "tap" }
+        val full = phoneTools(setOf(Scope.CONTROL), allOn()).first { it.name == "tap" }
         assertFalse(full.description.contains("Reduced mode"))
         val reduced =
-            visibleMcpTools(setOf(Scope.CONTROL), allOn().copy(uiStableIds = false)).first {
+            phoneTools(setOf(Scope.CONTROL), allOn().copy(uiStableIds = false)).first {
                 it.name == "tap"
             }
         assertTrue(reduced.description.contains("node ids are not stable"))
@@ -191,7 +200,7 @@ class McpCatalogTest {
     /** Clients such as Legwork drop the `initialize` instructions, so the tools say it too. */
     @Test
     fun `tools say sharing is normal`() {
-        val tools = visibleMcpTools(Scope.entries.toSet(), allOn()).associateBy { it.name }
+        val tools = phoneTools(Scope.entries.toSet(), allOn()).associateBy { it.name }
         assertTrue(tools.getValue("device_info").description.contains("at the same time"))
         assertTrue(tools.getValue("browser_open").description.contains("start in the background"))
         assertTrue(
@@ -231,6 +240,10 @@ class McpCatalogTest {
             }
         assertTrue(failure.message.orEmpty().contains("bogus"))
     }
+
+    /** The tools a phone with every group lists. */
+    private fun phoneTools(scopes: Set<Scope>, capabilities: Capabilities) =
+        visibleMcpTools(scopes, phone, capabilities)
 
     private fun allOn() =
         Capabilities(
