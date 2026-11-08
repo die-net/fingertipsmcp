@@ -421,14 +421,16 @@ private fun fetchNote(url: String): String {
 }
 
 /**
- * The PDF that a frame at [frameUrl] shows, when it is Chrome's PDF viewer, which names the file in
- * its `url` parameter, as in `chrome-native://pdf/link?url=https%3A%2F%2F…`. Null for any other
- * page.
+ * The PDF that [frame] shows in Chrome's PDF viewer, or null for any other page. On a desktop the
+ * viewer stays at the file's own URL, as a document of type [PDF_TYPE]. On Android it has an
+ * address of its own that names the file in its `url` parameter, as in
+ * `chrome-native://pdf/link?url=https%3A%2F%2F…`.
  */
-internal fun viewedPdf(frameUrl: String?): String? {
+internal fun viewedPdf(frame: MainFrame): String? {
+    if (frame.mimeType == PDF_TYPE) return frame.url
     val uri =
         try {
-            URI(frameUrl ?: return null)
+            URI(frame.url ?: return null)
         } catch (e: URISyntaxException) {
             log.debug("Frame URL does not parse: ${e.reason}")
             return null
@@ -523,6 +525,7 @@ private data class Loaded(
     val detail: String? = null,
 )
 
+private const val PDF_TYPE = "application/pdf"
 private val log = LoggerFactory.getLogger("FingertipsPdf")
 
 /** What `fingertipsPdf.state` says of a document. */

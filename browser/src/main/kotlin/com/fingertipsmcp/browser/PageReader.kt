@@ -66,7 +66,7 @@ internal class PageReader(
         val (result, reloaded) =
             onPage(id) { cdp ->
                 val frame = mainFrame(cdp)
-                val url = viewedPdf(frame.url) ?: frame.url?.takeIf { pdf.made(id, frame) }
+                val url = viewedPdf(frame) ?: frame.url?.takeIf { pdf.made(id, frame) }
                 file = url
                 when {
                     url == null ->

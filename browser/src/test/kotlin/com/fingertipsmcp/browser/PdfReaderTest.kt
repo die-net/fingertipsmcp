@@ -42,11 +42,15 @@ class PdfReaderTest {
 
     @Test
     fun `finds the PDF a viewer shows`() {
-        assertEquals(URL, viewedPdf(VIEWER))
-        assertNull(viewedPdf(URL))
-        assertNull(viewedPdf("chrome-native://newtab/"))
-        assertNull(viewedPdf("chrome-native://pdf/link"))
-        assertNull(viewedPdf(null))
+        fun viewed(url: String?, type: String? = null) =
+            viewedPdf(MainFrame("F", url, mimeType = type))
+        assertEquals(URL, viewed(VIEWER))
+        assertEquals(URL, viewed(URL, "application/pdf"))
+        assertNull(viewed(URL))
+        assertNull(viewed(URL, "text/html"))
+        assertNull(viewed("chrome-native://newtab/"))
+        assertNull(viewed("chrome-native://pdf/link"))
+        assertNull(viewed(null))
     }
 
     @Test
@@ -487,6 +491,21 @@ class PdfReaderTest {
         val read = reader(page).read("t", BrowserReadRequest()).result
         assertEquals("pdf", read.extracted)
         assertEquals("Hello PDF", read.content)
+        assertFalse("Page.createIsolatedWorld" in page.methods())
+    }
+
+    @Test
+    fun `reads a PDF at its own URL`() = harness.virtual {
+        // A desktop Chrome's viewer keeps the file's URL, and its page has no text of its own.
+        val replies = Replies()
+        val frame = """"id":"F","url":"$URL","loaderId":"L0","mimeType":"application/pdf""""
+        replies.result("""{"frameTree":{"frame":{$frame}}}""")
+        replies.takeOver(loader = "L1", first = 2)
+        replies.loaded()
+        replies.value("true")
+        replies.value(EXTRACT)
+        val page = replies.socket()
+        assertEquals("pdf", reader(page).read("t", BrowserReadRequest()).result.extracted)
         assertFalse("Page.createIsolatedWorld" in page.methods())
     }
 

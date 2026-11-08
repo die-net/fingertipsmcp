@@ -90,6 +90,8 @@ Browser input defaults to `cdp`, which on a desktop is mouse and keyboard events
 
 One action runs at a time. `auto`, `cdp`, and `cdp-mouse` all mean this mouse and keyboard. `touch` is refused with 422 `unsupported`, since a desktop has no touch screen. OS-level input, such as Linux XTEST or uinput and macOS CGEvent, would sit behind the same seam (`DesktopEvents`); FingertipsMCP for Chrome does not have it yet. Incognito tabs are not available either (422 `unsupported`).
 
+`browser_read` and `browser_find` read a PDF as they do on the phone. Chrome's viewer holds no text, so FingertipsMCP for Chrome replaces the tab's page with an empty one at the same address and reads the file there with pdf.js. The window then shows that empty page instead of the PDF.
+
 ## Stealth
 
 How human the browser looks depends most on where it runs:
