@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// chrome-input-check checks the Chrome DevTools behavior that PhoneAPI's browser input relies on,
+// chrome-input-check checks the Chrome DevTools behavior that FingertipsMCP's browser input relies on,
 // straight against Chrome on the attached phone, so a Chrome update that changes it shows up.
 // It opens its own tabs on a page it serves itself through `adb reverse`, since a document Chrome
 // loaded from a server is held in a way about:blank and data: are not. It closes them, and puts the
@@ -18,8 +18,8 @@ const ANSWER_MS = 3_000;
 const DEADLINE_MS = 120_000;
 const hiddenOnly = process.argv.includes('--hidden-only');
 
-// The behavior PhoneAPI was written against (Chrome 109, 133, and 145). Chrome 91 has no hold on a
-// first paint, so the checks of dropped input differ there, which PhoneAPI handles.
+// The behavior FingertipsMCP was written against (Chrome 109, 133, and 145). Chrome 91 has no hold on a
+// first paint, so the checks of dropped input differ there, which FingertipsMCP handles.
 const EXPECTED = [
   ['touch while Chrome is hidden', 'no answer, not delivered'],
   ['mouse click on a page Chrome has not drawn', 'answered, not delivered'],
@@ -196,7 +196,7 @@ async function main(port, pageUrl, observed) {
     const textUp = answered(await mouse(page, 'mouseReleased', 0));
     observed.set('mouse click after inserted text', `${both(textDown, textUp)}, ${delivered(await hits(page), 'click')}`);
 
-    // What PhoneAPI does: ask for a screenshot, then press until one lands.
+    // What FingertipsMCP does: ask for a screenshot, then press until one lands.
     await screenshot(page);
     await until(async () => {
       await mouse(page, 'mousePressed', 1);

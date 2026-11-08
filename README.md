@@ -1,8 +1,8 @@
-# PhoneAPI
+# FingertipsMCP
 
-PhoneAPI lets an AI agent use your Android phone the way you would: read the screen, tap and type, run your apps, and browse in Chrome with your own logins (or the agent's own, if you prefer). Install the app, plug in a computer, and point an MCP client such as Claude Code or Cursor at it. Then ask for something concrete:
+FingertipsMCP lets an AI agent use your Android phone the way you would: read the screen, tap and type, run your apps, and browse in Chrome with your own logins (or the agent's own, if you prefer). Install the app, plug in a computer, and point an MCP client such as Claude Code or Cursor at it. Then ask for something concrete:
 
-> On the phone, use Chrome to open https://github.com/die-net/phoneapi/ and go to the Releases page.
+> On the phone, use Chrome to open https://github.com/die-net/fingertipsmcp/ and go to the Releases page.
 
 ## What it does
 
@@ -10,13 +10,13 @@ PhoneAPI lets an AI agent use your Android phone the way you would: read the scr
 
 **Keeps the agent's context small.** Every outline and read is capped and says what it left out. A read of a page that has not changed comes back as one line. Links come once each, without tracking parameters. One call can open a page, read it, and close it, or act, wait for the result, and show it. Password and one-time-code fields are masked in screen outlines.
 
-**Looks like a person on their own phone.** Taps and keys arrive as a real touchscreen, with slight variation in position and timing, and typing taps the keyboard's keys. Scripts that read a page run in an isolated world and leave nothing in the page. PhoneAPI doesn't change Chrome's user agent, viewport, or settings. Sites and apps that act differently under automation see a person, not a test harness.
+**Looks like a person on their own phone.** Taps and keys arrive as a real touchscreen, with slight variation in position and timing, and typing taps the keyboard's keys. Scripts that read a page run in an isolated world and leave nothing in the page. FingertipsMCP doesn't change Chrome's user agent, viewport, or settings. Sites and apps that act differently under automation see a person, not a test harness.
 
 **Shares the phone.** Several agents, scripts, and a person can use the phone at once. Each gets its own Chrome tabs, and those tabs work in the background while someone else has the screen. One client holds the screen at a time, the others wait their turn, and the screen is tidied between them: keyboard hidden, back to home, and locked again if it was locked. An agent can start separate sessions for subagents working in parallel. Incognito tabs keep a page away from the phone's accounts.
 
 **Lets you watch and step in.** A viewer in your desktop browser plays the phone's screen and sound. You can tap, type, and copy and paste between computer and phone, or take over when an agent hits a CAPTCHA or a login, then hand the screen back.
 
-**Stays on your cable.** The API is reachable only through ADB, over USB or Wireless Debugging. No network port opens on the phone. Each client gets its own token, which you can remove in the app. A token can be limited to some of what PhoneAPI does: reading the screen, acting on it, Chrome, the viewer, and managing tokens. So an agent can get Chrome without the rest of the phone, or a viewer only the screen.
+**Stays on your cable.** The API is reachable only through ADB, over USB or Wireless Debugging. No network port opens on the phone. Each client gets its own token, which you can remove in the app. A token can be limited to some of what FingertipsMCP does: reading the screen, acting on it, Chrome, the viewer, and managing tokens. So an agent can get Chrome without the rest of the phone, or a viewer only the screen.
 
 It also launches and stops apps, sends intents, wakes the phone and unlocks it with a stored PIN, reads and writes the clipboard, and waits for windows, screen elements, page loads, or network requests.
 
@@ -24,17 +24,17 @@ It also launches and stops apps, sends intents, wakes the phone and unlocks it w
 
 You need a phone running Android 10 or newer with USB debugging on, and `adb`, `jq`, and `curl` on your computer.
 
-1. Download the APK from [Releases](https://github.com/die-net/phoneapi/releases), and copy [`scripts/phoneapi`](scripts/phoneapi) onto your `PATH`.
+1. Download the APK from [Releases](https://github.com/die-net/fingertipsmcp/releases), and copy [`scripts/fingertips`](scripts/fingertips) onto your `PATH`.
 2. Install it, pair, and start it:
 
 ```sh
-adb install -r -g phoneapi-vX.Y.Z.apk
-phoneapi pair --name laptop
-phoneapi server
-phoneapi helper
+adb install -r -g fingertipsmcp-android-vX.Y.Z.apk
+fingertips pair --name laptop
+fingertips server
+fingertips helper
 ```
 
-3. Add the phone to your MCP client, with the port and token from `~/.config/phoneapi/pairing.json`. For Claude Code:
+3. Add the phone to your MCP client, with the port and token from `~/.config/fingertips/pairing.json`. For Claude Code:
 
 ```json
 {
@@ -52,7 +52,7 @@ phoneapi helper
 
 ## Limits
 
-- A computer has to reach the phone over ADB. Wireless Debugging, and restarting PhoneAPI's helper without a cable, need Android 11.
+- A computer has to reach the phone over ADB. Wireless Debugging, and restarting FingertipsMCP's helper without a cable, need Android 11.
 - Windows an app marks secure, such as many banking apps and Chrome's incognito tabs, show black in screenshots and the viewer.
 - It uses Android internals that OEM skins and new Android releases can change. It is sideloaded, not a Play Store app.
 - Apps that check device integrity can still notice USB debugging is on.

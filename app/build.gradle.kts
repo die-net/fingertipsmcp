@@ -1,9 +1,9 @@
 plugins {
-    id("phoneapi.android.application")
+    id("fingertips.android.application")
     alias(libs.plugins.kotlin.serialization)
 }
 
-val tagVersion: String? = providers.environmentVariable("PHONEAPI_VERSION").orNull
+val tagVersion: String? = providers.environmentVariable("FINGERTIPS_VERSION").orNull
 
 fun versionCodeOf(version: String): Int {
     val (major, minor, patch) =
@@ -14,22 +14,22 @@ fun versionCodeOf(version: String): Int {
 }
 
 android {
-    namespace = "net.die.phoneapi"
+    namespace = "com.fingertipsmcp"
 
     defaultConfig {
-        applicationId = providers.gradleProperty("phoneapi.applicationId").get()
+        applicationId = providers.gradleProperty("fingertips.applicationId").get()
         versionName = tagVersion?.removePrefix("v") ?: "0.0.0-dev"
         versionCode = tagVersion?.let(::versionCodeOf) ?: 1
     }
 
     signingConfigs {
         create("release") {
-            val storePath = providers.environmentVariable("PHONEAPI_KEYSTORE_PATH").orNull
+            val storePath = providers.environmentVariable("FINGERTIPS_KEYSTORE_PATH").orNull
             if (storePath != null) {
                 storeFile = file(storePath)
-                storePassword = providers.environmentVariable("PHONEAPI_KEYSTORE_PASSWORD").get()
-                keyAlias = providers.environmentVariable("PHONEAPI_KEY_ALIAS").get()
-                keyPassword = providers.environmentVariable("PHONEAPI_KEY_PASSWORD").get()
+                storePassword = providers.environmentVariable("FINGERTIPS_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("FINGERTIPS_KEY_ALIAS").get()
+                keyPassword = providers.environmentVariable("FINGERTIPS_KEY_PASSWORD").get()
             }
         }
     }
@@ -45,7 +45,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (providers.environmentVariable("PHONEAPI_KEYSTORE_PATH").isPresent) {
+            if (providers.environmentVariable("FINGERTIPS_KEYSTORE_PATH").isPresent) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

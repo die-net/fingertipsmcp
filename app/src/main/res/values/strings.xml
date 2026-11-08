@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PhoneAPI</string>
-    <string name="listener_title">PhoneAPI is running</string>
-    <string name="listener_text">You can turn this notification off. PhoneAPI keeps running.</string>
+    <string name="app_name">Fingertips</string>
+    <string name="listener_title">FingertipsMCP is running</string>
+    <string name="listener_text">You can turn this notification off. FingertipsMCP keeps running.</string>
 
-    <string name="intro">PhoneAPI lets a computer connected with USB debugging see this screen, send taps, and control Chrome.</string>
+    <string name="intro">FingertipsMCP lets a computer connected with USB debugging see this screen, send taps, and control Chrome.</string>
     <string name="helper_switch">Screen reading and taps</string>
     <string name="helper_running">On. The computer can see the screen and send taps.</string>
     <string name="helper_starting">Starting.</string>
@@ -16,7 +16,7 @@
     <string name="wireless_summary">Lets the phone start screen reading without a USB cable, and lets the computer reach Chrome.</string>
     <string name="wireless_state_on">On</string>
     <string name="wireless_state_off">Off</string>
-    <string name="wireless_needs_permission">%1$s. PhoneAPI needs a one-time adb grant to change this. Tap to open Developer options.</string>
+    <string name="wireless_needs_permission">%1$s. FingertipsMCP needs a one-time adb grant to change this. Tap to open Developer options.</string>
     <string name="wireless_setup">Not set up yet. Tap, open Wireless debugging, turn it on, and tap Pair device with pairing code. A notification takes the code.</string>
     <string name="wireless_dnd">Turn off Do Not Disturb, or it may hide the code notification.</string>
     <string name="wireless_needs_developer">Turn on Developer options first: in Settings, open About phone and tap Build number seven times.</string>

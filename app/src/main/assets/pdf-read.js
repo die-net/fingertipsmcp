@@ -1,12 +1,12 @@
 // Turns a PDF into blocks for browser_read and browser_find, in the same shape page-read.js gives.
-// PhoneAPI answers the tab's navigation to the PDF's URL with an empty page of its own, so this
+// FingertipsMCP answers the tab's navigation to the PDF's URL with an empty page of its own, so this
 // runs in that page's main world after pdf.js, with no site script beside it, and stays there as
-// `phoneapiPdf`, keeping the parsed file between calls until the tab navigates or closes. The page
+// `fingertipsPdf`, keeping the parsed file between calls until the tab navigates or closes. The page
 // has the PDF's origin, so it fetches the file as the site's own page would, from Chrome's cache
 // when opening the PDF put it there. pdf.js gives positioned runs of text; this joins them into
 // lines, then lines into headings, list items, paragraphs, and code by font size, spacing, and
-// font. Rendering, offsets, and searching happen in Kotlin. PhoneAPI wraps this in a strict
-// function, so only `phoneapiPdf` is global.
+// font. Rendering, offsets, and searching happen in Kotlin. FingertipsMCP wraps this in a strict
+// function, so only `fingertipsPdf` is global.
 
 const MAX_CHARS = 2000000;
 // A line counts as a heading when its font is this much larger than the body text's.
@@ -687,8 +687,8 @@ async function load(want, maxBytes) {
   return { ok: true };
 }
 
-// The load PhoneAPI started: its URL, the promise of its end, and its result once it has one.
-// PhoneAPI makes a new page for each load, so a page has at most one.
+// The load FingertipsMCP started: its URL, the promise of its end, and its result once it has one.
+// FingertipsMCP makes a new page for each load, so a page has at most one.
 let job = null;
 
 // Whether two URLs name one document, as the browser writes them and whatever their fragment.
@@ -700,7 +700,7 @@ function sameDocument(a, b) {
   }
 }
 
-globalThis.phoneapiPdf = {
+globalThis.fingertipsPdf = {
   // "parsed" when the document from `want` is parsed, "loading" while it is fetched or parsed,
   // and null otherwise.
   state(want) {

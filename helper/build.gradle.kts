@@ -1,10 +1,10 @@
 plugins {
-    id("phoneapi.android.library")
+    id("fingertips.android.library")
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
-    namespace = "net.die.phoneapi.helper"
+    namespace = "com.fingertipsmcp.helper"
     buildFeatures { aidl = true }
     // Tests build AccessibilityNodeInfo fakes, whose base class is android.jar's stub.
     testOptions.unitTests.isReturnDefaultValues = true

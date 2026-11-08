@@ -58,5 +58,5 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
-          name: phoneapi-debug
+          name: fingertipsmcp-android-debug
           path: app/build/outputs/apk/debug/*.apk
