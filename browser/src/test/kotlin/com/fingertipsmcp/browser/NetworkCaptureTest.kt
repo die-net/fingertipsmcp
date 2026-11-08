@@ -291,9 +291,10 @@ class NetworkCaptureTest {
         NetworkCapture(CoroutineScope(harness.clock), { link(page) })
 
     private fun link(page: DevtoolsSocket): PageLink {
-        val cdp = CdpSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
+        val cdp =
+            CdpSocketSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
         cdp.open("/devtools/page/t")
-        return PageLink(cdp, page)
+        return PageLink(SocketCdpSession(cdp, page))
     }
 
     private fun lines(vararg rows: String) = rows.joinToString("\n", postfix = "\n")

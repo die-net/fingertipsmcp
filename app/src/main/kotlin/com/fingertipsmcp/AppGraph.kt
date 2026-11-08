@@ -19,7 +19,7 @@ import com.fingertipsmcp.browser.DevtoolsSocket
 import com.fingertipsmcp.browser.FREEZER_ARGS
 import com.fingertipsmcp.browser.OPEN_PRIVATE_TAB
 import com.fingertipsmcp.browser.PageNodes
-import com.fingertipsmcp.browser.TabProbe
+import com.fingertipsmcp.browser.SocketEndpoints
 import com.fingertipsmcp.browser.USB_DEVTOOLS_SOCKET
 import com.fingertipsmcp.browser.UsbDevtools
 import com.fingertipsmcp.browser.freezerOn
@@ -234,6 +234,21 @@ class AppGraph(
             inFront = ::ownProcessInFront,
         )
     private val chromeDialog = ChromeDialog(state::refresh, tree::find, ioDispatcher)
+    /** Chrome's and WebViews' DevTools sockets, through the helper. */
+    @Suppress("MissingUseCall") // Each session closes the socket it opened.
+    private val devtools =
+        SocketEndpoints(
+            io = ioDispatcher,
+            listSockets = {
+                try {
+                    helper.require().listDevtoolsSockets()
+                } catch (e: RemoteException) {
+                    throw ApiException.helperDropped(e)
+                }
+            },
+            open = ::openDevtools,
+            devtoolsGap = DevtoolsPreconditions(context)::explain,
+        )
     val browser: BrowserService = browserService()
     // Cleanup runs only after a holder lets go, long after tabs exists.
     @Suppress("PropertyUsedBeforeDeclaration")
@@ -268,7 +283,7 @@ class AppGraph(
             bus = bus,
             io = ioDispatcher,
             browser = browser,
-            openDevtools = ::openDevtools,
+            devtools = devtools,
             lease = screenLease.state,
             // Unknown, with the screen dark or the helper down, counts as no dialog: the wait
             // then sets the page up as for any other.
@@ -430,20 +445,11 @@ class AppGraph(
         bus.emit(EventTypes.SCREEN_TAKEN, ScreenTakenData(session, pkg))
     }
 
-    @Suppress("MissingUseCall") // BrowserServiceImpl closes each socket it opens.
     private fun browserService(): BrowserService =
         BrowserServiceImpl(
-            io = ioDispatcher,
-            listSockets = {
-                try {
-                    helper.require().listDevtoolsSockets()
-                } catch (e: RemoteException) {
-                    throw ApiException.helperDropped(e)
-                }
-            },
-            open = { name -> openDevtools(name, DEVTOOLS_READ_MS) },
-            openProbe = { name -> openDevtools(name, TabProbe.PROBE_MS) },
-            openCapture = { name -> openDevtools(name, 0) },
+            devtools = devtools,
+            // Android freezes Chrome in the background and unloads its hidden tabs.
+            freezesTabs = true,
             contentBounds = { pkg -> tree.contentBounds(pkg.orEmpty()) },
             touchAt = { rect, humanize -> touch.tap(rect, humanize = humanize).asResult() },
             swipeAt = { from, to, spec, page -> touch.swipe(from, to, spec, page).asResult() },
@@ -459,7 +465,6 @@ class AppGraph(
             inFront = { pkg -> appInFront(pkg) },
             // Unknown counts as no dialog, so the call goes on as for any other timeout.
             pageDialog = { chromeDialog.shown() == true },
-            devtoolsGap = DevtoolsPreconditions(context)::explain,
             refreshHz = { deviceInfo.display().refreshRate },
             touchscreen = { touchBackend.touchscreen() },
             openPrivateTab = { pkg -> openPrivateTab(pkg) },
@@ -516,7 +521,6 @@ class AppGraph(
     }
 
     private companion object {
-        const val DEVTOOLS_READ_MS = 15_000L
         const val FOREGROUND_WAIT_MS = 5_000L
         /** How long HOME may take to reach the screen. */
         const val HOME_WAIT_MS = 3_000L

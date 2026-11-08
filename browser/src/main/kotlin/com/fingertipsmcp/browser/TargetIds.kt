@@ -40,8 +40,12 @@ private fun acceptable(url: String): Boolean {
 
 private const val MAX_URL = 2_000
 
-/** Whether [e] is DevTools refusing a connection to a target because it has closed. */
-internal fun tabGone(e: ApiException): Boolean = (e.cause as? WebSocketRefused)?.targetGone == true
+/**
+ * Whether [e] is DevTools refusing a connection to a target because it has closed: a refused
+ * WebSocket on Android, or a target the desktop browser no longer lists.
+ */
+internal fun tabGone(e: ApiException): Boolean =
+    (e.cause as? WebSocketRefused)?.targetGone == true || e.cause is TargetMissing
 
 /**
  * Whether Chrome refuses [reconnect], a new connection to a tab whose session dropped, because the

@@ -604,7 +604,7 @@ class PdfReaderTest {
     /** Runs [block] on a session to [page]. */
     private suspend fun <T> session(page: StallingSocket, block: suspend (CdpSession) -> T): T =
         try {
-            CdpSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
+            CdpSocketSession(page.input, page.output, harness.clock) { BrowserServiceTest.KEY }
                 .use { cdp ->
                     cdp.open("/devtools/page/t")
                     block(cdp)

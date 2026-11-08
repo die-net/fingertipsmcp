@@ -5,27 +5,31 @@ import com.fingertipsmcp.model.DevtoolsSocketInfo
 import kotlinx.coroutines.delay
 
 /**
- * Whether [sockets] lacks Chrome's, so Chrome is not running. False when they cannot be listed,
- * since opening the tab then reports why.
+ * Whether [sockets] lacks [tabs], the browser's own, so the browser is not running. False when they
+ * cannot be listed, since opening the tab then reports why.
  */
-internal suspend fun noChromeSocket(sockets: suspend () -> List<DevtoolsSocketInfo>): Boolean =
+internal suspend fun noChromeSocket(
+    tabs: String,
+    sockets: suspend () -> List<DevtoolsSocketInfo>,
+): Boolean =
     try {
-        sockets().none { it.name == CHROME_SOCKET }
+        sockets().none { it.name == tabs }
     } catch (_: ApiException) {
         false
     }
 
 /**
- * Chrome's DevTools socket from [sockets], starting Chrome with [start] first when it is not
- * running, as tapping its icon would. Chrome opens the socket a moment after it starts. [gap] says
- * why there is still none after [CHROME_START_POLLS] polls.
+ * The browser's endpoint [tabs] from [sockets], starting the browser with [start] first when it is
+ * not running, as tapping Chrome's icon would. Chrome opens the socket a moment after it starts.
+ * [gap] says why there is still none after [CHROME_START_POLLS] polls.
  */
 internal suspend fun startedChrome(
+    tabs: String,
     sockets: suspend () -> List<DevtoolsSocketInfo>,
     start: suspend () -> Unit,
     gap: () -> String,
 ): DevtoolsSocketInfo {
-    suspend fun chrome() = sockets().firstOrNull { it.name == CHROME_SOCKET }
+    suspend fun chrome() = sockets().firstOrNull { it.name == tabs }
     chrome()?.let {
         return it
     }

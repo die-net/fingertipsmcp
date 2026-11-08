@@ -27,7 +27,7 @@ class TimerWatchTest {
                 started.incrementAndGet()
                 val page = harness.socket(harness.switched() + replies())
                 try {
-                    CdpSession(page.input, page.output, clock) { BrowserServiceTest.KEY }
+                    CdpSocketSession(page.input, page.output, clock) { BrowserServiceTest.KEY }
                         .use { cdp ->
                             cdp.open("/devtools/page/t")
                             block(cdp)

@@ -1,19 +1,19 @@
 package com.fingertipsmcp.wait
 
-import com.fingertipsmcp.browser.CHROME_SOCKET
 import com.fingertipsmcp.browser.CdpSession
 import com.fingertipsmcp.browser.DEVTOOLS_CLOSED
-import com.fingertipsmcp.browser.DevtoolsSocket
+import com.fingertipsmcp.browser.DevtoolsEndpoints
 import com.fingertipsmcp.browser.FrameTreeResult
-import com.fingertipsmcp.browser.WebSocketRefused
 import com.fingertipsmcp.browser.decodeCdp
 import com.fingertipsmcp.browser.documentNode
 import com.fingertipsmcp.browser.dropped
 import com.fingertipsmcp.browser.evaluateInFrame
 import com.fingertipsmcp.browser.firstMatch
 import com.fingertipsmcp.browser.parseBrowserTargetId
+import com.fingertipsmcp.browser.refused
 import com.fingertipsmcp.browser.rejected
 import com.fingertipsmcp.browser.tabClosed
+import com.fingertipsmcp.browser.tabGone
 import com.fingertipsmcp.browser.withNodeIds
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.model.ApiException
@@ -58,8 +58,9 @@ import kotlinx.serialization.json.put
  */
 class BrowserWatch(
     private val browser: BrowserService,
-    private val io: CoroutineDispatcher,
-    private val openDevtools: suspend (String, Long) -> DevtoolsSocket,
+    /** Where set-up runs. */
+    io: CoroutineDispatcher,
+    private val devtools: DevtoolsEndpoints,
     /** Monotonic milliseconds. */
     private val now: () -> Long = ::monotonicMs,
     /** Whether Chrome shows a dialog from a page at this host, such as `example.com:8080`. */
@@ -225,13 +226,15 @@ class BrowserWatch(
         // Until the server answers, a connection is held or shows a blank page that seems loaded.
         browser.awaitAnswer(id)
         val (socketName, chromeId) = parseBrowserTargetId(id)
-        val devtools = openSocket(socketName)
-        val session = hold(CdpSession(devtools.input, devtools.output, io))
+        val session =
+            try {
+                hold(devtools.openPage(socketName, chromeId, readTimeout()) { hold(it) })
+            } catch (e: ApiException) {
+                throw if (tabGone(e)) tabClosed(id) else e
+            }
         val page = PageSession(id, PageModel(now()), session)
         try {
-            connectPage(page, chromeId, conditions)
-        } catch (e: WebSocketRefused) {
-            throw if (e.targetGone) tabClosed(id) else e
+            connectPage(page, conditions)
         } catch (e: ApiException) {
             throw if (e.dropped && hasClosed(socketName, chromeId)) tabClosed(id) else e
         }
@@ -249,38 +252,21 @@ class BrowserWatch(
      * Whether Chrome refuses a new connection to the tab [chromeId], as for one that closed. A
      * session dropping says only that something ended it.
      */
-    @Suppress("MissingUseCall") // The watch closes every socket it opened.
-    private suspend fun hasClosed(socketName: String, chromeId: String): Boolean =
-        try {
-            val devtools = openSocket(socketName)
-            CdpSession(devtools.input, devtools.output, io).use {
-                it.open("/devtools/page/$chromeId")
-            }
-            false
-        } catch (e: WebSocketRefused) {
-            e.targetGone
-        } catch (_: IOException) {
-            false
-        } catch (_: ApiException) {
-            false
-        }
+    private suspend fun hasClosed(socketName: String, chromeId: String): Boolean = refused {
+        devtools.openPage(socketName, chromeId, readTimeout()) { hold(it) }.close()
+    }
 
-    @Suppress("MissingUseCall") // The watch closes every socket it opened.
-    private suspend fun connectPage(
-        page: PageSession,
-        chromeId: String,
-        conditions: List<WaitCondition>,
-    ) {
+    @Suppress("MissingUseCall") // The watch closes every session and listener it opened.
+    private suspend fun connectPage(page: PageSession, conditions: List<WaitCondition>) {
         val id = page.id
         val session = page.cdp
         val model = page.model
-        // Before the reader starts, since a listener hears only what comes after it.
+        // Before any domain is enabled, since a listener hears only what comes after it.
         hold(
             session.listen { event ->
                 if (model.apply(event.method, event.params, now())) signals.tryEmit(Unit)
             }
         )
-        session.open("/devtools/page/$chromeId")
         val onThisPage = conditions.filter { onPage(it, id) }
         val domains = domainsFor(onThisPage)
         val lifecycle = onThisPage.any { it is WaitCondition.BrowserLifecycle }
@@ -318,27 +304,24 @@ class BrowserWatch(
         return dialogFrom(if (uri.port < 0) host else "$host:${uri.port}")
     }
 
-    @Suppress("MissingUseCall") // The watch closes every socket it opened.
+    @Suppress("MissingUseCall") // The watch closes every session and listener it opened.
     private suspend fun openBrowser() {
-        val devtools = openSocket(CHROME_SOCKET)
-        val session = hold(CdpSession(devtools.input, devtools.output, io))
+        val session = hold(devtools.openBrowser(devtools.tabs, readTimeout()) { hold(it) })
         hold(
             session.listen { event ->
                 targets.apply(event.method, event.params)
                 signals.tryEmit(Unit)
             }
         )
-        session.open("/devtools/browser")
         session.call("Target.setDiscoverTargets", buildJsonObject { put("discover", true) })
     }
 
     /**
-     * The watch closes the socket when the wait ends, which ends a handshake. The socket's own
-     * timeout comes after that, for a socket that opens too late to reach the watch.
+     * The read timeout for a session the watch opens. The watch closes what a session opens on when
+     * the wait ends, which ends a handshake. The socket's own timeout comes after that, for a
+     * socket that opens too late to reach the watch.
      */
-    @Suppress("MissingUseCall") // Closed with the rest of the watch.
-    private suspend fun openSocket(name: String): DevtoolsSocket =
-        hold(openDevtools(name, left() + SOCKET_SLACK_MS))
+    private fun readTimeout(): Long = left() + SOCKET_SLACK_MS
 
     /** The page [condition] is on, or null when the wait ran out of time before reaching it. */
     private fun session(condition: WaitCondition): PageSession? =

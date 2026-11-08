@@ -2,9 +2,7 @@ package com.fingertipsmcp.browser
 
 import com.fingertipsmcp.model.ApiException
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -15,12 +13,7 @@ import kotlinx.serialization.json.contentOrNull
  * hidden tabs under memory pressure, leaving them listed with no page to run script. Android can
  * freeze all of Chrome, and then nothing answers.
  */
-class TabProbe(
-    private val io: CoroutineContext,
-    /** Opens a DevTools socket that gives up reading after about [PROBE_MS]. */
-    private val open: suspend (String) -> DevtoolsSocket,
-    private val websocketKey: () -> String,
-) {
+class TabProbe(private val devtools: DevtoolsEndpoints) {
     /** Whether [socket] is Chrome's and its browser endpoint does not answer. */
     suspend fun frozen(socket: String): Boolean = socket == CHROME_SOCKET && browserSilent(socket)
 
@@ -32,15 +25,8 @@ class TabProbe(
      */
     private suspend fun browserSilent(socket: String): Boolean =
         try {
-            withContext(io) {
-                open(socket).use { devtools ->
-                    devtools.withStreams { input, output ->
-                        CdpSession(input, output, io, websocketKey).use { cdp ->
-                            cdp.open("/devtools/browser")
-                            withTimeoutOrNull(PROBE_MS) { cdp.call("Browser.getVersion") } == null
-                        }
-                    }
-                }
+            devtools.openBrowser(socket, PROBE_MS).use { cdp ->
+                withTimeoutOrNull(PROBE_MS) { cdp.call("Browser.getVersion") } == null
             }
         } catch (e: ApiException) {
             e.error == "cdp_timeout"
