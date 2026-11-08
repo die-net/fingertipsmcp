@@ -152,7 +152,11 @@ internal suspend fun evaluateInWorld(
     )
 }
 
-private fun evalResult(payload: JsonObject): EvalResult {
+/**
+ * What a `Runtime.evaluate` or `Runtime.callFunctionOn` reply holds: the value, or the first line
+ * of the exception the script threw. A reply with neither has no value and no exception.
+ */
+fun evalResult(payload: JsonObject): EvalResult {
     val parsed = payload.decodeCdp<EvalPayload>() ?: return EvalResult()
     val details = parsed.exceptionDetails
     if (details != null) return EvalResult(exception = exceptionMessage(details))

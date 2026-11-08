@@ -5,6 +5,7 @@ import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.OpenCdpSession
 import com.fingertipsmcp.browser.ViewerPageInput
 import com.fingertipsmcp.browser.decodeCdp
+import com.fingertipsmcp.browser.evalResult
 import com.fingertipsmcp.browser.pagePixelRatio
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.ApiJson
@@ -53,9 +54,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
@@ -342,18 +344,15 @@ class ChromeViewer(
      */
     @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun windowType(ext: Loaded, window: Long?): String? {
+        val failed = "The viewer extension did not say what type the window is"
         val reply =
             offscreenSession(ext)
-                .call("Runtime.evaluate", evaluation("fingertipsViewer.window(${window ?: ""})"))
-                .decodeCdp<EvalReply>()
-                ?.result
-                ?.value
-                ?.decodeCdp<WindowType>()
+                .evaluate("fingertipsViewer.window(${window ?: ""})", failed)
+                .decodeCdp<WindowType>()
         if (reply == null || reply.error != null) {
             throw ApiException.unavailable(
                 "capture_failed",
-                "The viewer extension did not say what type the window is: " +
-                    (reply?.error ?: "no answer"),
+                "$failed: ${reply?.error ?: "no answer"}",
             )
         }
         return reply.type
@@ -418,13 +417,15 @@ class ChromeViewer(
         name(Captured(pageId, id, display))
         var started = false
         try {
-            val result =
-                document.call("Runtime.evaluate", evaluation("fingertipsViewer.capture($options)"))
-            val outcome = result.decodeCdp<EvalReply>()?.result?.value?.decodeCdp<CaptureOutcome>()
+            val failed = "Chrome did not capture the tab"
+            val outcome =
+                document
+                    .evaluate("fingertipsViewer.capture($options)", failed)
+                    .decodeCdp<CaptureOutcome>()
             if (outcome?.ok != true) {
                 throw ApiException.unavailable(
                     "capture_failed",
-                    "Chrome did not capture the tab: ${outcome?.error ?: "no answer"}",
+                    "$failed: ${outcome?.error ?: "no answer"}",
                 )
             }
             started = true
@@ -442,7 +443,11 @@ class ChromeViewer(
         }
     }
 
-    /** The offscreen document's session, with the binding frames come back through. */
+    /**
+     * The offscreen document's session, with the binding frames come back through, once the
+     * document's script has run. Chrome names the document's URL while it is still loading, before
+     * `offscreen.js` has made `fingertipsViewer`, so a call sent then finds nothing to call.
+     */
     @Suppress("MissingUseCall") // Closed when the capture stops or the browser goes.
     private suspend fun offscreenSession(ext: Loaded): OpenCdpSession {
         document
@@ -463,9 +468,45 @@ class ChromeViewer(
             val called = event.params.decodeCdp<BindingCalled>() ?: return@listen
             if (called.name == BINDING) received(called.payload)
         }
-        session.call("Runtime.addBinding", buildJsonObject { put("name", BINDING) })
+        var ready = false
+        try {
+            session.call("Runtime.addBinding", buildJsonObject { put("name", BINDING) })
+            awaitScript(session)
+            ready = true
+        } finally {
+            if (!ready) session.close()
+        }
         document = session
         return session
+    }
+
+    /**
+     * Returns once the offscreen document's script has run, which it does before the document's
+     * `DOMContentLoaded`, since it is a classic script in the document's head. A document that
+     * finished loading without making `fingertipsViewer`, or that is still loading at the deadline,
+     * fails.
+     */
+    private suspend fun awaitScript(session: OpenCdpSession) {
+        val failed = "The viewer extension's document did not start"
+        val started =
+            withTimeoutOrNull(DOCUMENT_READY_MS) { session.evaluate(DOCUMENT_READY, failed) }
+                ?: throw ApiException.unavailable("capture_failed", "$failed in time")
+        if (started.decodeCdp<Boolean>() != true) {
+            throw ApiException.unavailable("capture_failed", "$failed: its script did not finish")
+        }
+    }
+
+    /**
+     * The value [expression] gives in the offscreen document on this session. When the script
+     * throws, or the reply holds no value, it fails with [failed] and what went wrong.
+     */
+    private suspend fun OpenCdpSession.evaluate(expression: String, failed: String): JsonElement {
+        val result = evalResult(call("Runtime.evaluate", evaluation(expression)))
+        return result.value
+            ?: throw ApiException.unavailable(
+                "capture_failed",
+                "$failed: ${result.exception ?: "no answer"}",
+            )
     }
 
     /**
@@ -747,10 +788,6 @@ class ChromeViewer(
 
     @Serializable private data class BindingCalled(val name: String, val payload: String)
 
-    @Serializable private data class EvalReply(val result: EvalValue? = null)
-
-    @Serializable private data class EvalValue(val value: JsonObject? = null)
-
     @Serializable
     private data class CaptureOutcome(val ok: Boolean? = null, val error: String? = null)
 
@@ -791,8 +828,21 @@ class ChromeViewer(
         const val FOCUS_NOTICE =
             "Chrome has a popup in front, which the viewer can't capture, so it shows another tab."
         const val NANOS_PER_MS = 1_000_000L
+        /** How long the offscreen document's script has to run once Chrome names the document. */
+        const val DOCUMENT_READY_MS = 5_000L
     }
 }
+
+/**
+ * Resolves to whether the offscreen document's script made `fingertipsViewer`, once the script has
+ * run: at once when the document has parsed, or at its `DOMContentLoaded`.
+ */
+internal const val DOCUMENT_READY =
+    "new Promise((resolve) => {" +
+        " const ready = () => resolve(typeof globalThis.fingertipsViewer === 'object');" +
+        " if (document.readyState !== 'loading') ready();" +
+        " else document.addEventListener('DOMContentLoaded', ready, { once: true });" +
+        " })"
 
 /**
  * The size to capture a tab [cssWidth] by [cssHeight] CSS pixels at: half its device pixels, as the
