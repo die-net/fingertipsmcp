@@ -103,7 +103,8 @@ internal class TabEvents(private val cdp: CdpSession) {
     /**
      * Opens a tab on [url] and returns the id Chrome lists it under, closing it if that can't be
      * had, since no caller has its id yet and an unowned tab would stay open for good. With
-     * [background], a desktop Chrome keeps the tab hidden; Chrome on Android ignores it.
+     * [background], Chrome is asked to keep the tab hidden, which
+     * [DevtoolsEndpoints.backgroundStaysHidden] says whether it does.
      */
     suspend fun newTab(url: String, background: Boolean = false): String {
         val given =

@@ -1,6 +1,7 @@
 package com.fingertipsmcp.tabs
 
-import com.fingertipsmcp.core.BrowserService
+import com.fingertipsmcp.browser.CHROME_SOCKET
+import com.fingertipsmcp.core.BaseBrowser
 import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.BrowserCaptureResult
@@ -36,8 +37,16 @@ internal class MemoryStore : TabStore {
     }
 }
 
-/** Chrome as [Tabs] sees it: its tabs, which one shows, and each call made. */
-internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : BrowserService {
+/**
+ * Chrome as [Tabs] sees it: its tabs, which one shows, and each call made. Its tabs are listed
+ * under [socket]. With [backgroundStaysHidden], a tab opened in the background does not show, as on
+ * a desktop; without it, Chrome shows a new tab while it is in front, as on Android.
+ */
+internal class RecordingBrowser(
+    private val socket: String = CHROME_SOCKET,
+    override val backgroundStaysHidden: Boolean = false,
+    private val chromeInFront: () -> Boolean,
+) : BaseBrowser {
     val open = mutableListOf<BrowserTarget>()
     val closed = mutableListOf<String>()
     /** The tabs in Chrome's incognito profile. */
@@ -52,7 +61,7 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
     fun add(
         name: String,
         opener: String? = null,
-        socket: String = "chrome_devtools_remote",
+        socket: String = this.socket,
         pkg: String = "com.android.chrome",
         url: String? = null,
     ): String {
@@ -147,29 +156,44 @@ internal class RecordingBrowser(private val chromeInFront: () -> Boolean) : Brow
         url: String,
         capture: Boolean,
         incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = open(url, capture, incognito, background = false, created)
+
+    override suspend fun openInBackground(
+        url: String,
+        capture: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = open(url, capture, incognito = false, background = true, created)
+
+    private suspend fun open(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
         background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
         opening?.await()
         if (background) backgrounded += url
         if (capture) captures += "new" to true
-        val tab = newTab(url, incognito, created)
+        val hidden = background && backgroundStaysHidden
+        val tab = newTab(url, incognito, hidden, created)
         whileOpening(tab.id)
         if (!saves) return tab
         open.removeAll { it.id == tab.id }
-        return newTab(url, incognito, created).copy(savedPdf = true)
+        return newTab(url, incognito, hidden, created).copy(savedPdf = true)
     }
 
     /** A tab as Chrome makes one, closed again when [created] fails or the call is cancelled. */
     private suspend fun newTab(
         url: String,
         incognito: Boolean,
+        hidden: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
         val id = add("t${next++}")
         if (incognito) this.incognito += id
         open[open.lastIndex] = open.last().copy(url = url)
-        if (chromeInFront()) shown = id
+        if (chromeInFront() && !hidden) shown = id
         whenCreating()
         val tab = open.last()
         var done = false

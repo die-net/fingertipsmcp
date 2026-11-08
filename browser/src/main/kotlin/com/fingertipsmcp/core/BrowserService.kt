@@ -30,9 +30,9 @@ interface BrowserService {
      * than shows is put in a tab of FingertipsMCP's own, with `savedPdf` set, and any other
      * download fails with `download_saved`. With [capture], the tab records the JSON responses its
      * page fetches from the start of its load, as [capture] does. With [incognito], the tab is in
-     * Chrome's incognito profile, which brings Chrome forward, so the caller holds the screen. With
-     * [background], a desktop Chrome leaves the tab hidden from its first load, and the tab showing
-     * stays showing. Chrome on Android ignores it.
+     * Chrome's incognito profile, which brings Chrome forward, so the caller holds the screen.
+     * Whether the tab shows is not the caller's to say: the owner of the screen's tabs decides, and
+     * opens a hidden one through [BaseBrowser.openInBackground].
      *
      * [created] runs with each tab's id as soon as Chrome has made it, before the wait, for what
      * must not wait for the page, such as owning the tab. A failure in it closes the tab and fails
@@ -43,7 +43,6 @@ interface BrowserService {
         url: String,
         capture: Boolean = false,
         incognito: Boolean = false,
-        background: Boolean = false,
         created: suspend (String) -> Unit = {},
     ): BrowserTarget
 
@@ -131,4 +130,27 @@ interface BrowserService {
      * list. Stopping one that is not recording does nothing.
      */
     suspend fun capture(id: String, on: Boolean): BrowserCaptureResult
+}
+
+/**
+ * The browser itself, under the views that decide which tab may show. One owner of the screen's
+ * tabs decides that, so only it takes this type and opens a tab in the background.
+ */
+interface BaseBrowser : BrowserService {
+    /**
+     * Whether a tab [openInBackground] opens stays hidden until something brings it forward, so the
+     * open changes nothing on screen. A desktop Chrome keeps it hidden. Chrome on Android selects a
+     * new tab itself while it is in front, whatever it is asked, so there this is false.
+     */
+    val backgroundStaysHidden: Boolean
+
+    /**
+     * Opens a tab as [openTab] does, but asks Chrome to leave it hidden from its first load, with
+     * the tab showing still showing. [backgroundStaysHidden] says whether Chrome does.
+     */
+    suspend fun openInBackground(
+        url: String,
+        capture: Boolean = false,
+        created: suspend (String) -> Unit = {},
+    ): BrowserTarget
 }

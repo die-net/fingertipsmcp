@@ -4,6 +4,7 @@ import com.fingertipsmcp.lease.Holder
 import com.fingertipsmcp.model.BrowserReadRequest
 import com.fingertipsmcp.model.BrowserReadResult
 import com.fingertipsmcp.model.Scope
+import com.fingertipsmcp.server.BLANK_ID
 import com.fingertipsmcp.server.FAILING_SELECTOR
 import com.fingertipsmcp.server.FakeApi
 import com.fingertipsmcp.server.FakeBrowser
@@ -164,7 +165,8 @@ class McpLeaseTest {
             assertTrue(mine.contains("isError\":false"), mine)
             assertEquals(setOf("chrome_devtools_remote~t"), api.tabStore.ids)
             http.delete("/mcp") { headers(first) }
-            assertEquals(emptySet<String>(), api.tabStore.ids)
+            // It was Chrome's last tab, so only the placeholder opened in its place is left.
+            assertEquals(setOf(BLANK_ID), api.tabStore.ids)
         }
     }
 

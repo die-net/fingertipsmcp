@@ -19,6 +19,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 internal class TimerWatch(
     private val scope: CoroutineScope,
+    /** The endpoint whose tabs [watch] checks, [DevtoolsEndpoints.tabs]. */
+    private val tabs: String,
     /** Runs a block on the tab's DevTools connection. */
     private val onPage: suspend (String, suspend (CdpSession) -> Unit) -> Unit,
     /** The time in ms, on the clock [scope]'s waits run on. */
@@ -54,11 +56,11 @@ internal class TimerWatch(
     }
 
     /**
-     * Starts a check on [id], a Chrome tab, unless one is under way or has found its timers
-     * stopped. Other browsers' tabs are not checked, as for input.
+     * Starts a check on [id], a tab of [tabs], unless one is under way or has found its timers
+     * stopped. Other endpoints' pages, such as WebViews, are not checked, as for input.
      */
     fun watch(id: String) {
-        if (parseBrowserTargetId(id).first == CHROME_SOCKET && !states.containsKey(id)) arm(id)
+        if (parseBrowserTargetId(id).first == tabs && !states.containsKey(id)) arm(id)
     }
 
     /** Whether [id]'s last check shows its timers stopped: overdue, or never fired. */

@@ -4,6 +4,7 @@ import com.fingertipsmcp.browser.CHROME_PACKAGE
 import com.fingertipsmcp.browser.CHROME_SOCKET
 import com.fingertipsmcp.browser.FRONT_MS
 import com.fingertipsmcp.browser.parseBrowserTargetId
+import com.fingertipsmcp.core.BaseBrowser
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.core.IntentStart
 import com.fingertipsmcp.core.WaitService
@@ -37,10 +38,11 @@ interface TabStore {
  * unowned. REST and the raw CDP socket can use any tab a live session does not own.
  *
  * Whenever Chrome is in front, it shows the screen holder's tab or an `about:blank` placeholder no
- * one owns, never another session's page.
+ * one owns, never another session's page. The placeholder also keeps Chrome from closing its last
+ * tab, which on a desktop would close its last window.
  */
 class Tabs(
-    private val base: BrowserService,
+    private val base: BaseBrowser,
     private val lease: ScreenLease,
     /**
      * Whether the app in this package is in front. A desktop browser counts as always in front: a
@@ -66,6 +68,10 @@ class Tabs(
      */
     @Volatile private var live: (Holder.Session) -> Boolean = { false }
     private val mutex = Mutex()
+    /**
+     * Held while the placeholder is checked or opened, and while a tab closes, so two closes of
+     * Chrome's last two tabs cannot both see the other and leave Chrome with none.
+     */
     private val placeholderMutex = Mutex()
     /**
      * Held from closing the incognito tabs no session owns until the new incognito tab has an
@@ -232,8 +238,12 @@ class Tabs(
         created: suspend (String) -> Unit = {},
     ): BrowserTarget {
         sweep()
+        // Only the screen holder's tab may show, so any other opens in the background, from its
+        // first load. Where Chrome keeps it hidden, the open changes nothing on screen.
+        val background = !incognito && !lease.holds(holder)
+        val hidden = background && base.backgroundStaysHidden
         // Chrome on Android switches to a new tab while it is in front, whatever is asked of it.
-        if (personHolds() && chromeInFront()) throw lease.personHasScreen()
+        if (!hidden && personHolds() && chromeInFront()) throw lease.personHasScreen()
         if (atLimit(holder)) {
             forgetClosed()
             if (atLimit(holder)) {
@@ -252,7 +262,7 @@ class Tabs(
         val placing: suspend (String) -> Unit = { id ->
             made += id
             own(holder, id)
-            place(holder, id)
+            place(holder, id, hidden)
             created(id)
         }
         try {
@@ -262,15 +272,10 @@ class Tabs(
                         freshIncognito(holder)
                         base.openTab(url, capture, incognito = true, created = placing)
                     }
+                } else if (background) {
+                    base.openInBackground(url, capture, created = placing)
                 } else {
-                    // Only the screen holder's tab may show. A desktop Chrome opens any other
-                    // hidden, so its page never starts loading on screen.
-                    base.openTab(
-                        url,
-                        capture,
-                        background = !lease.holds(holder),
-                        created = placing,
-                    )
+                    base.openTab(url, capture, created = placing)
                 }
             kept = tab.id
             return if (lease.holds(holder)) tab else tab.copy(tookScreen = false)
@@ -287,19 +292,20 @@ class Tabs(
     }
 
     /**
-     * Leaves the new tab [id] where [holder] may have it. Chrome switches to a new tab while it is
-     * in front, which must not show this session's page to whoever holds the screen, and may do so
-     * again after this, as [watchSelection] says. While it is in the background there is nothing to
-     * fix. A failure means Chrome may be showing the tab, so [BrowserService.openTab] closes it. A
-     * person who took the screen during the open gets that too: what they had on screen is not
-     * known, and closing the tab takes it off their screen.
+     * Leaves the new tab [id] where [holder] may have it. A tab Chrome kept [hidden] changed
+     * nothing on screen, so there is nothing to fix. Otherwise Chrome switches to a new tab while
+     * it is in front, which must not show this session's page to whoever holds the screen, and may
+     * do so again after this, as [watchSelection] says. While it is in the background there is
+     * nothing to fix. A failure means Chrome may be showing the tab, so [BrowserService.openTab]
+     * closes it. A person who took the screen during the open gets that too: what they had on
+     * screen is not known, and closing the tab takes it off their screen.
      */
-    private suspend fun place(holder: Holder.Session, id: String) {
+    private suspend fun place(holder: Holder.Session, id: String, hidden: Boolean) {
         if (lease.holds(holder)) {
             fronts[holder] = id
             return
         }
-        if (!chromeInFront()) return
+        if (hidden || !chromeInFront()) return
         val switched = !personHolds() && putBack()
         // A person can take the screen while that runs.
         if (switched && !personHolds()) {
@@ -494,7 +500,7 @@ class Tabs(
     /** Chrome's tabs now, or null when Chrome is not answering. */
     private suspend fun chromeTabs(): List<BrowserTarget>? =
         try {
-            base.targets().filter { it.socket == CHROME_SOCKET }
+            base.targets().filter { it.socket == chrome }
         } catch (_: ApiException) {
             null
         }
@@ -651,12 +657,30 @@ class Tabs(
 
     /** The placeholder, opened again if it was closed. */
     private suspend fun placeholderTab(): String = placeholderMutex.withLock {
+        placeholderIn(base.targets())
+    }
+
+    /** With [placeholderMutex] held: the placeholder, opened again if [open] does not have it. */
+    private suspend fun placeholderIn(open: List<BrowserTarget>): String {
         val id = placeholder
-        if (id != null && base.targets().any { it.id == id }) return@withLock id
+        if (id != null && open.any { it.id == id }) return id
         val tab = base.openTab(BLANK)
         placeholder = tab.id
         mutex.withLock { saveOpened() }
-        tab.id
+        return tab.id
+    }
+
+    /**
+     * Closes the tab [id]. When it is Chrome's last, the placeholder opens first, as a person opens
+     * a new tab before closing their last one: Chrome on Linux exits when its last window closes,
+     * which ends its logins, and on macOS it would sit with no window. Every close goes through
+     * here, so the check and the close are one step for each.
+     */
+    internal suspend fun closeTab(id: String): ActionResult = placeholderMutex.withLock {
+        val open = base.targets()
+        val pages = open.filter { it.socket == chrome }
+        if (pages.isNotEmpty() && pages.all { it.id == id }) placeholderIn(open)
+        base.closeTab(id)
     }
 
     /**
@@ -775,7 +799,7 @@ class Tabs(
 
     private suspend fun closeQuietly(id: String) {
         try {
-            base.closeTab(id)
+            closeTab(id)
         } catch (_: ApiException) {
             // Already gone, or Chrome is not answering; the startup sweep tries again.
         }

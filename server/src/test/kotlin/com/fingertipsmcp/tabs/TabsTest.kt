@@ -421,6 +421,8 @@ class TabsTest {
     @Test
     fun `ending closes opened tabs`() = runTest {
         val tabs = tabs()
+        // A person's tab, so the session's is not Chrome's last.
+        browser.add("persons")
         val tab = tabs.browserFor(a).openTab("https://example.com/")
         tabs.finish(a)
         assertEquals(listOf(tab.id), browser.closed)
@@ -484,6 +486,7 @@ class TabsTest {
 
     @Test
     fun `sweep closes leftovers`() = runTest {
+        browser.add("persons")
         val left = browser.add("left")
         store.ids = setOf(left, "chrome_devtools_remote~gone")
         val tabs = tabs()

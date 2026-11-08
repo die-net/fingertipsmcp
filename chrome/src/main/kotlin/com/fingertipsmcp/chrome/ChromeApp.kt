@@ -69,12 +69,10 @@ class ChromeApp(
         )
     private val device = HostDevice(supervisor, version)
     private val browser =
-        LastTab(
-            BrowserServiceImpl(
-                devtools = devtools,
-                desktopInput = DesktopStyle.forHost(),
-                scope = scope,
-            )
+        BrowserServiceImpl(
+            devtools = devtools,
+            desktopInput = DesktopStyle.forHost(),
+            scope = scope,
         )
     // Cleanup runs only after a holder lets go, long after tabs exists.
     @Suppress("PropertyUsedBeforeDeclaration")

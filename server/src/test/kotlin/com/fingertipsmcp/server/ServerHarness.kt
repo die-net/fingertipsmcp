@@ -2,6 +2,7 @@ package com.fingertipsmcp.server
 
 import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.core.AppsService
+import com.fingertipsmcp.core.BaseBrowser
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.core.ClipImage
 import com.fingertipsmcp.core.ClipboardService
@@ -518,7 +519,7 @@ private class FakeApps(private val intentApp: () -> String?) : AppsService {
 internal const val FAILING_SELECTOR = "#fails"
 
 /** A browser with one tab, which [BrowserService.openTab] opens and reads and finds answer. */
-internal open class FakeBrowser : BrowserService {
+internal open class FakeBrowser : BaseBrowser {
     private val tab =
         BrowserTarget(
             id = "chrome_devtools_remote~t",
@@ -531,18 +532,31 @@ internal open class FakeBrowser : BrowserService {
 
     override suspend fun chromeStopped() = stopped
 
+    /** The blank tab FingertipsMCP opens before closing Chrome's last, with an id of its own. */
+    private var blank: BrowserTarget? = null
+
     // Chrome has the tab, so a session can claim it without opening it first.
-    override suspend fun targets(): List<BrowserTarget> = listOf(tab)
+    override suspend fun targets(): List<BrowserTarget> = listOfNotNull(tab, blank)
+
+    // Like Chrome on Android, so a session without the screen opens a tab that may show.
+    override val backgroundStaysHidden = false
+
+    override suspend fun openInBackground(
+        url: String,
+        capture: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = openTab(url, capture, created = created)
 
     override suspend fun openTab(
         url: String,
         capture: Boolean,
         incognito: Boolean,
-        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
-        created(tab.id)
-        return tab
+        val opened = if (url == BLANK_URL) tab.copy(id = BLANK_ID, url = url) else tab
+        if (url == BLANK_URL) blank = opened
+        created(opened.id)
+        return opened
     }
 
     override suspend fun navigate(id: String, url: String) =
@@ -563,7 +577,10 @@ internal open class FakeBrowser : BrowserService {
     override suspend fun capture(id: String, on: Boolean) =
         BrowserCaptureResult(capturing = on, responses = if (on) 2 else 0)
 
-    override suspend fun closeTab(id: String) = acted()
+    override suspend fun closeTab(id: String): ActionResult {
+        if (id == blank?.id) blank = null
+        return acted()
+    }
 
     override suspend fun activate(id: String) = Unit
 
@@ -630,3 +647,7 @@ internal class MemoryTabStore : TabStore {
         this.ids = ids
     }
 }
+
+/** The URL of the placeholder tab FingertipsMCP opens, and the id [FakeBrowser] gives it. */
+internal const val BLANK_URL = "about:blank"
+internal const val BLANK_ID = "chrome_devtools_remote~blank"

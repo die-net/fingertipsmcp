@@ -133,7 +133,7 @@ Authenticated errors are JSON:
 | 409 | `intent_failed` | Android could not start the intent for another reason, or did not finish in time; the message says which |
 | 409 | `stop_failed` / `clear_failed` | `am force-stop` or `pm clear` failed; the message has its output |
 | 409 | `screen_busy` | Someone else held the screen for the whole 60 s wait |
-| 409 | `screen_taken` | A person in the viewer took the screen from this session, or has Chrome in front and the call would change what they see: opening a tab, or navigating, closing, or sending input or script to the tab on screen |
+| 409 | `screen_taken` | A person in the viewer took the screen from this session, or has Chrome in front and the call would change what they see: opening a tab on the phone, or navigating, closing, or sending input or script to the tab on screen |
 | 409 | `download_saved` | The URL a tab opened on was a download, which Chrome saved rather than opened, so there is no page. A PDF is read in a tab of FingertipsMCP's own instead, except in an incognito tab, which would need the phone's logins to leave its profile |
 | 409 | `tab_limit` | A session has 4 tabs it opened, or all sessions 8 |
 | 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so FingertipsMCP could not check which tab Chrome shows; a new tab from `browser_open` is closed |
@@ -392,7 +392,8 @@ Full request and response schemas live in OpenAPI and under `api-model` (`Device
 | `text` with `cdp` | `Input.insertText` | Key by key, `minDelayMs`..`maxDelayMs` apart; emoji and other keyless text inserted |
 | `incognito` on open | Chrome's incognito shortcut | **422** `unsupported` |
 | `tookScreen` on open | Whether Chrome switched to the new tab on screen | False. A session without the screen opens the tab hidden; the holder's tab shows |
-| Screen release | Hides the keyboard, goes home, may lock | Shows a blank placeholder tab; no note for the next holder |
+| Open while a person has the viewer | **409** `screen_taken` while Chrome is in front | Opens the tab hidden |
+| Screen release | Hides the keyboard, goes home, may lock | Shows a blank placeholder tab, a step that cannot fail, so the next holder gets no cleanup note |
 | `wait` | All conditions | `browser.*` only; `snapshot` is **400** |
 | `screenshot` | Device screen | `Page.captureScreenshot` of the tab that is showing |
 | Events | Includes `logcat` | No `logcat`; asking for it refuses the upgrade |

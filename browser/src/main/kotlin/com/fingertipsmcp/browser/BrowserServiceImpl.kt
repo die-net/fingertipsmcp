@@ -1,6 +1,6 @@
 package com.fingertipsmcp.browser
 
-import com.fingertipsmcp.core.BrowserService
+import com.fingertipsmcp.core.BaseBrowser
 import com.fingertipsmcp.core.holdsStill
 import com.fingertipsmcp.core.settled
 import com.fingertipsmcp.input.SwipeSpec
@@ -111,7 +111,7 @@ class BrowserServiceImpl(
     },
     /** Where background timer checks and network captures run. Null runs neither. */
     scope: CoroutineScope? = null,
-) : BrowserService {
+) : BaseBrowser {
     private val axTrees = newAxCache()
     private val probe = if (freezesTabs) TabProbe(devtools) else null
     private val privateTabs =
@@ -129,6 +129,7 @@ class BrowserServiceImpl(
         if (freezesTabs && scope != null) {
             TimerWatch(
                 scope,
+                devtools.tabs,
                 { id, block ->
                     val (socket, chromeId) = parseBrowserTargetId(id)
                     usePage(socket, chromeId) { cdp -> block(cdp) }
@@ -238,7 +239,22 @@ class BrowserServiceImpl(
             SocketList.Failed(e)
         }
 
+    override val backgroundStaysHidden: Boolean = devtools.backgroundStaysHidden
+
     override suspend fun openTab(
+        url: String,
+        capture: Boolean,
+        incognito: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = open(url, capture, incognito, background = false, created)
+
+    override suspend fun openInBackground(
+        url: String,
+        capture: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget = open(url, capture, incognito = false, background = true, created)
+
+    private suspend fun open(
         url: String,
         capture: Boolean,
         incognito: Boolean,

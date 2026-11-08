@@ -21,6 +21,8 @@ class ConnectionEndpoints(
 
     override val tabsPackage: String? = null
 
+    override val backgroundStaysHidden: Boolean = true
+
     override fun gap(gap: BrowserGap): String = missing
 
     override suspend fun endpoints(): List<DevtoolsSocketInfo> {
