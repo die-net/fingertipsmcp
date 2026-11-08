@@ -21,13 +21,15 @@ flowchart LR
 
 | Piece | Role |
 | --- | --- |
-| **`app/`** | Settings UI, `ListenerService`, Ktor REST/WebSocket/MCP on an abstract local socket, token store, CDP orchestration, encoders, viewer assets |
+| **`app/`** | Android: settings UI, `ListenerService`, the abstract-socket engine, helper client, adb DevTools sockets, touch and key injection, encoders, viewer assets. `AppGraph` wires the shared modules |
+| **`browser/`** | JVM: DevTools sessions, `BrowserServiceImpl`, page reading (`page-read.js` and the other page scripts, Readability, pdf.js), the humanizer, browser waits |
+| **`server/`** | JVM: Ktor REST/WebSocket routes, bearer auth, token store, MCP and sessions, the screen lease, tab ownership |
 | **`helper/`** | Separate `app_process` as shell UID: UiAutomation snapshots, motion/key injection, screencap, display mirror, DevTools socket relay, logcat |
 | **`api-model/`** | Shared `@Serializable` DTOs; same types drive MCP tool schemas and `GET /v1/openapi.json` |
 | **`scripts/fingertips`** | Production client (pair, server, helper, papi, session) |
 | **`scripts/fingertips-dev`** | Repo wrapper: debug package, `.dev/pairing.json`, `setup` |
 
-The app is plain Kotlin: `AppGraph` is the composition root. Ktor and MCP sit on a `ServerServices` boundary so routes can be tested with fakes.
+The app is plain Kotlin: `AppGraph` is the composition root. Ktor and MCP sit on a `ServerServices` boundary so routes can be tested with fakes. `browser/` and `server/` are plain JVM modules with no Android types, so code that does not need a phone can run elsewhere; `app/` converts helper and Android types at its edge, and sends their slf4j logs to logcat.
 
 ## Transport: abstract socket + ADB only
 

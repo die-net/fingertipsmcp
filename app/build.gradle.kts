@@ -66,19 +66,6 @@ android {
     }
 }
 
-// PageScriptsTest runs the page scripts' tests under node, reading the scripts and their tests from
-// these directories, which are not on the test classpath.
-tasks.withType<Test>().configureEach {
-    inputs
-        .dir("src/main/assets")
-        .withPropertyName("pageScripts")
-        .withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs
-        .dir("src/test/js")
-        .withPropertyName("pageScriptTests")
-        .withPathSensitivity(PathSensitivity.RELATIVE)
-}
-
 dependencies {
     constraints {
         // activity 1.13 still requests core-ktx 1.18. Those Kotlin extensions now live in core
@@ -86,6 +73,9 @@ dependencies {
         implementation(libs.androidx.core.ktx)
     }
     implementation(project(":api-model"))
+    implementation(project(":browser"))
+    implementation(project(":server"))
+    implementation(libs.slf4j.api)
     implementation(project(":helper"))
 
     implementation(libs.androidx.core)
@@ -99,25 +89,16 @@ dependencies {
     runtimeOnly(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.core)
-    implementation(libs.kotlinx.io.core)
 
     implementation(libs.ktor.server.core)
-    implementation(libs.ktor.http)
     implementation(libs.ktor.io)
-    implementation(libs.ktor.utils)
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.events)
     implementation(libs.ktor.http.cio)
     implementation(libs.jspecify)
     implementation(libs.ktor.server.websockets)
-    implementation(libs.ktor.server.sse)
     implementation(libs.ktor.websockets)
-    implementation(libs.ktor.server.content.negotiation)
-    implementation(libs.ktor.server.status.pages)
-    implementation(libs.ktor.serialization)
     implementation(libs.ktor.serialization.json)
-    implementation(libs.mcp.server)
-    implementation(libs.mcp.core)
 
     implementation(libs.kadb)
     // AdbStream.source and AdbStream.sink are Okio types.
@@ -126,8 +107,5 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.jupiter.engine)
     testRuntimeOnly(libs.junit.platform.launcher)
-    testImplementation(libs.ktor.server.test.host)
-    testImplementation(libs.ktor.client.core)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.mcp.client)
 }

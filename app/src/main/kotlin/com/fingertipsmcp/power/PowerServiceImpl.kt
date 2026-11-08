@@ -9,8 +9,8 @@ import com.fingertipsmcp.core.EventBus
 import com.fingertipsmcp.core.PowerService
 import com.fingertipsmcp.core.SettingsStore
 import com.fingertipsmcp.core.awaitDeviceState
+import com.fingertipsmcp.core.failureMessage
 import com.fingertipsmcp.helperclient.HelperShell
-import com.fingertipsmcp.helperclient.failureMessage
 import com.fingertipsmcp.input.GESTURE_CANCELLED
 import com.fingertipsmcp.input.SwipeSpec
 import com.fingertipsmcp.input.TouchInput

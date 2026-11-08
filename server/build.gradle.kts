@@ -1,0 +1,35 @@
+plugins {
+    id("fingertips.jvm.library")
+    alias(libs.plugins.kotlin.serialization)
+}
+
+dependencies {
+    api(project(":api-model"))
+    api(project(":browser"))
+    api(libs.kotlinx.coroutines.core)
+    api(libs.ktor.server.core)
+    api(libs.ktor.server.websockets)
+    api(libs.kotlinx.io.core)
+    api(libs.ktor.io)
+    api(libs.mcp.core)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.mcp.server)
+    implementation(libs.kotlinx.serialization.core)
+    implementation(libs.ktor.http)
+    implementation(libs.ktor.utils)
+    implementation(libs.ktor.websockets)
+    implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.sse)
+    implementation(libs.ktor.serialization)
+    implementation(libs.slf4j.api)
+
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.jupiter.engine)
+    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(libs.ktor.server.cio)
+    testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.core)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mcp.client)
+}

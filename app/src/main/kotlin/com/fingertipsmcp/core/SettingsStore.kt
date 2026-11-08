@@ -5,7 +5,6 @@ import androidx.core.util.AtomicFile
 import java.io.File
 import java.io.IOException
 import java.security.SecureRandom
-import java.util.Base64
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,12 +63,6 @@ class SettingsStore(private val dir: File) {
         const val EPHEMERAL_MIN = 20_000
         const val EPHEMERAL_MAX = 60_000
     }
-}
-
-fun randomToken(random: SecureRandom, bytes: Int): String {
-    val buf = ByteArray(bytes)
-    random.nextBytes(buf)
-    return Base64.getUrlEncoder().withoutPadding().encodeToString(buf)
 }
 
 internal fun AtomicFile.readUtf8(): String? {
