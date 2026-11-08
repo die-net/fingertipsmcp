@@ -8,6 +8,7 @@ permissions:
   contents: write
   id-token: write
   attestations: write
+  packages: write
 
 jobs:
   release:
@@ -30,30 +31,91 @@ jobs:
           test -n "$KEYSTORE_BASE64" || { echo "FINGERTIPS_KEYSTORE_BASE64 secret is not set"; exit 1; }
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
-      - name: Build signed release APK
+      - name: Build signed release APK and fingertipsmcp-chrome.jar
         env:
           FINGERTIPS_VERSION: ${{ github.ref_name }}
           FINGERTIPS_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           FINGERTIPS_KEYSTORE_PASSWORD: ${{ secrets.PHONEAPI_KEYSTORE_PASSWORD }}
           FINGERTIPS_KEY_ALIAS: ${{ secrets.PHONEAPI_KEY_ALIAS }}
           FINGERTIPS_KEY_PASSWORD: ${{ secrets.PHONEAPI_KEY_PASSWORD }}
-        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleRelease buildHealth
+        run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test :chrome:test assembleRelease :chrome:fatJar buildHealth
 
       - name: Collect artifacts
         run: |
           mkdir dist
           cp app/build/outputs/apk/release/app-release.apk "dist/fingertipsmcp-android-${GITHUB_REF_NAME}.apk"
-          cd dist && sha256sum *.apk > SHA256SUMS
+          cp chrome/build/dist/fingertipsmcp-chrome.jar "dist/fingertipsmcp-chrome-${GITHUB_REF_NAME}.jar"
+          cd dist && sha256sum *.apk *.jar > SHA256SUMS
 
       # Attestations on a private repository need GitHub Enterprise Cloud.
       - uses: actions/attest-build-provenance@v4
         if: ${{ !github.event.repository.private }}
         with:
-          subject-path: dist/*.apk
+          subject-path: |
+            dist/*.apk
+            dist/*.jar
 
       - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.apk
+            dist/*.jar
             dist/SHA256SUMS
           generate_release_notes: true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fingertipsmcp-chrome-jar
+          path: chrome/build/dist/fingertipsmcp-chrome.jar
+
+  image:
+    # ghcr.io/die-net/fingertipsmcp-chrome: Google Chrome on Xvfb, for amd64 and arm64. The jar is the same on
+    # both; arm64 builds under QEMU.
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: fingertipsmcp-chrome-jar
+          path: chrome/build/dist
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: chrome
+          file: chrome/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - uses: actions/attest-build-provenance@v4
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

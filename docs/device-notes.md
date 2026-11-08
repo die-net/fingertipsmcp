@@ -967,6 +967,7 @@ On 2026-11-07, in desktop Chrome 156 made to look like a phone, MDN's HTTP page 
 
 ### Still to check
 
+- That an APK reads the page scripts and pdf.js from the `browser` module's jar resources, where they used to be assets, and that slf4j reaches logcat under the `Fingertips` tags, in debug and release builds. Since the move to shared modules, this has only had unit tests and `assembleDebug`.
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
 

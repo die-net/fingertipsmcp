@@ -30,6 +30,7 @@ import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.SerializationException
 import org.slf4j.LoggerFactory
 
@@ -41,20 +42,7 @@ import org.slf4j.LoggerFactory
  */
 fun Application.fingertipsModule(
     services: ServerServices,
-    sessions: McpSessions =
-        McpSessions(
-                services.tokens,
-                scope = this,
-                onEnd = {
-                    services.lease.forget(Holder.Session(it))
-                    services.tabs.end(Holder.Session(it))
-                    services.foreground.forget(Holder.Session(it))
-                },
-                holdsScreen = { services.lease.holds(Holder.Session(it)) },
-                tabCount = { services.tabs.count(Holder.Session(it)) },
-                tookScreen = { services.foreground.count(Holder.Session(it)) },
-            )
-            .also { it.start() },
+    sessions: McpSessions = mcpSessions(services, this),
     mcpDnsRebindingProtection: Boolean = false,
 ) {
     install(ContentNegotiation) { register(ContentType.Application.Json, PhoneJsonConverter) }
@@ -103,3 +91,22 @@ fun Application.fingertipsModule(
 private fun Throwable.rootMessage(): String? = generateSequence(this) { it.cause }.last().message
 
 private val log = LoggerFactory.getLogger("FingertipsServer")
+
+/**
+ * The MCP and REST sessions for [services], started: a session that ends lets go of the screen and
+ * closes its tabs. One server, HTTP or stdio, shares one set.
+ */
+fun mcpSessions(services: ServerServices, scope: CoroutineScope): McpSessions =
+    McpSessions(
+            services.tokens,
+            scope = scope,
+            onEnd = {
+                services.lease.forget(Holder.Session(it))
+                services.tabs.end(Holder.Session(it))
+                services.foreground.forget(Holder.Session(it))
+            },
+            holdsScreen = { services.lease.holds(Holder.Session(it)) },
+            tabCount = { services.tabs.count(Holder.Session(it)) },
+            tookScreen = { services.foreground.count(Holder.Session(it)) },
+        )
+        .also { it.start() }

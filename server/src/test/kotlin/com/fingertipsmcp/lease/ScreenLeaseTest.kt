@@ -68,6 +68,28 @@ class ScreenLeaseTest {
     }
 
     @Test
+    fun `nothing to clean hands on`() = runTest {
+        // A desktop browser's screen has no keyboard, home screen, or lock to put back.
+        val lease =
+            ScreenLease(
+                scope = backgroundScope,
+                cleanup = null,
+                lockedNow = { false },
+                now = { testScheduler.currentTime },
+            )
+        lease.withScreen(a) {}
+        val waiting = async { lease.withScreen(b) { "b ran" } }
+        runCurrent()
+        lease.release(a)
+        val got = waiting.await()
+        assertEquals("b ran", got.value)
+        assertTrue(got.notes.isEmpty(), got.notes.toString())
+        assertTrue(lease.holds(b))
+        lease.release(b)
+        assertTrue(lease.withScreen(c) {}.notes.isEmpty())
+    }
+
+    @Test
     fun `between calls waits its turn`() = runTest {
         val lease = lease()
         val going = CompletableDeferred<Unit>()

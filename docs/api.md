@@ -10,6 +10,8 @@ That document is generated from the same Kotlin types as the handlers and MCP to
 
 Install, pairing, and the helper lifecycle are in [setup.md](setup.md). Design background is in [architecture.md](architecture.md).
 
+[FingertipsMCP for Chrome](chrome.md), the desktop build, serves the same API for the groups it has: device info, tokens, events, sessions and the screen lease, wait (browser conditions only), the browser routes, and screenshots of the showing tab. Routes, MCP tools, and its OpenAPI document leave out the rest. Its MCP server is named `fingertips-chrome` and its resources are `fingertips-chrome://…`. [FingertipsMCP for Chrome differences](#fingertipsmcp-for-chrome-differences) lists what behaves differently.
+
 ## Authentication
 
 | Mechanism | Where |
@@ -18,7 +20,7 @@ Install, pairing, and the helper lifecycle are in [setup.md](setup.md). Design b
 | Cookie `fingertips` | Set by `GET /viewer?access_token=`. Accepted only on `GET /viewer` and WebSocket upgrades, which is what the viewer page uses |
 | `?access_token=<token>` | Only that viewer URL (it redirects and drops the query) and WebSocket upgrades |
 
-Missing or unknown tokens get an **empty HTTP 404** (no JSON body). Authenticated calls that lack a required scope get **403** `forbidden`.
+Missing or unknown tokens get an **empty HTTP 404** (no JSON body). So does a route whose feature group the server does not have. Authenticated calls that lack a required scope get **403** `forbidden`.
 
 Scopes on a token:
 
@@ -143,7 +145,7 @@ Authenticated errors are JSON:
 | 409 | `clipboard_unreadable` | The helper could not read the clipboard's image from the app that copied it |
 | 413 | `too_large` | A clipboard image over 20 MB, sent or on the clipboard, or a PDF over 20 MB to read |
 | 422 | `unsupported_char` | Text the on-screen keyboard cannot type; use `mode` `setText` or `keyevent` |
-| 422 | `unsupported` | An action this Android release lacks, such as the IME enter action before Android 11 |
+| 422 | `unsupported` | An action this Android release or product lacks, such as the IME enter action before Android 11, or touch input and incognito tabs on FingertipsMCP for Chrome |
 | 428 | `session_required` | A REST call that needs a session came without `Mcp-Session-Id`; start one with `POST /v1/sessions` |
 | 429 | `too_many_sessions` | `initialize` or `POST /v1/sessions` past 16 sessions for the token or 32 in all |
 | 500 | `internal` | Unexpected failure |
@@ -373,3 +375,23 @@ When node ids are not stable, tool descriptions say so. Streams and token admin 
 | Node `action` | `click`, `longClick`, `focus`, `clearFocus`, `select`, `setText`, `scrollForward`, `scrollBackward`, `expand`, `collapse`, `dismiss`, `showOnScreen`, `imeEnter`, plus other platform / app-listed names. `imeEnter` needs Android 11. |
 
 Full request and response schemas live in OpenAPI and under `api-model` (`DeviceInfo`, `UiSnapshot`, `TapRequest`, `WaitRequest`, `BrowserTarget`, `ApiError`, …).
+
+## FingertipsMCP for Chrome differences
+
+| | FingertipsMCP for Android | FingertipsMCP for Chrome |
+| --- | --- | --- |
+| Feature groups | All | Core, browser, screenshots |
+| Browser `input` | `auto` resolves per session and kind | `auto`, `cdp`, and `cdp-mouse` are mouse and keyboard events, humanized; `touch` is **422** `unsupported` |
+| What takes the screen | Touch, and `cdp` pointer input | Every browser input: there is one mouse and keyboard |
+| `swipe` | Touch drag | Mouse wheel in notches; a swipe up scrolls down the page |
+| `gesture` | Several fingers | One path is a mouse drag; more is **422** `unsupported` |
+| `text` with `cdp` | `Input.insertText` | Key by key, `minDelayMs`..`maxDelayMs` apart; emoji and other keyless text inserted |
+| `incognito` on open | Chrome's incognito shortcut | **422** `unsupported` |
+| `tookScreen` on open | Whether Chrome switched to the new tab on screen | False |
+| Screen release | Hides the keyboard, goes home, may lock | Nothing to clean up; no note for the next holder |
+| `wait` | All conditions | `browser.*` only; `snapshot` is **400** |
+| `screenshot` | Device screen | `Page.captureScreenshot` of the tab that is showing |
+| Events | Includes `logcat` | No `logcat`; asking for it refuses the upgrade |
+| `device_info` | Phone | OS in `manufacturer`/`release`, Chrome in `model`, screen from Chrome; `helper` is `running` while Chrome is up |
+| Target ids | `chrome_devtools_remote~<id>` | `chrome~<id>` |
+| MCP `Host` and `Origin` | Not checked | A loopback `Host` only, and no `Origin` |

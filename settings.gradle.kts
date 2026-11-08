@@ -19,4 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "fingertipsmcp"
 
-include(":app", ":helper", ":api-model", ":browser", ":server")
+include(":app", ":helper", ":api-model", ":browser", ":server", ":chrome")

@@ -204,7 +204,8 @@ internal suspend fun waitFor(
 
 internal suspend fun sessionStart(services: ServerServices): CallToolResult = runTool {
     val id = checkNotNull(services.sessions).start()
-    "session=$id\nPass session=$id on every phone call for this task, reads included. A call " +
+    val calls = if (services.phone != null) "phone call" else "call"
+    "session=$id\nPass session=$id on every $calls for this task, reads included. A call " +
         "without it acts as you, and tabs opened without it are yours, not the task's. End it " +
         "with session_end when the task is done."
 }

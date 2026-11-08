@@ -76,10 +76,13 @@ data class Screened<T>(val value: T, val notes: List<String>)
  * A call that needs the screen only while it runs, such as opening an incognito tab, asks
  * [withScreen] to give it back. A session that did not have the screen before the call then lets it
  * go with cleanup when the call ends, unless another of its screen calls is still running.
+ *
+ * A screen with nothing to clean up, such as a desktop browser's, has no [cleanup]. Letting it go
+ * then hands it on as it is, and the next holder gets no note about it.
  */
 class ScreenLease(
     private val scope: CoroutineScope,
-    private val cleanup: suspend (lock: Boolean) -> List<String>,
+    private val cleanup: (suspend (lock: Boolean) -> List<String>)?,
     private val lockedNow: () -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
     private val ready: suspend () -> List<String> = { emptyList() },
@@ -320,7 +323,7 @@ class ScreenLease(
         }
         _state.value = LeaseState()
         val note = if (holder is Holder.Viewer) LEFT_BY_PERSON else left
-        val clean = cleanup && note == null
+        val clean = cleanup && note == null && this.cleanup != null
         if (note != null) forNext = note
         if (!clean) {
             grantNext()
@@ -441,7 +444,7 @@ class ScreenLease(
 
     private suspend fun runCleanup(lock: Boolean): List<String> =
         try {
-            cleanup(lock)
+            cleanup?.invoke(lock).orEmpty()
         } catch (e: CancellationException) {
             throw e
         } catch (

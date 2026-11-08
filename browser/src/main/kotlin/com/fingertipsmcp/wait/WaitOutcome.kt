@@ -1,5 +1,7 @@
 package com.fingertipsmcp.wait
 
+import com.fingertipsmcp.model.ApiException
+import com.fingertipsmcp.model.WaitRequest
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -64,3 +66,42 @@ private const val DEBOUNCE_MS = 40L
 
 private fun earliest(a: Long?, b: Long?): Long? =
     if (a == null || b == null) a ?: b else minOf(a, b)
+
+/** The checks every wait makes: how many conditions, and its time limits. */
+fun validateWait(request: WaitRequest) {
+    val count = request.all.size + request.any.size
+    if (count == 0) throw ApiException.badRequest("Pass at least one condition in all or any")
+    if (count > MAX_CONDITIONS) {
+        throw ApiException.badRequest("At most $MAX_CONDITIONS conditions per wait")
+    }
+    if (request.timeoutMs !in 0..MAX_TIMEOUT_MS) {
+        throw ApiException.badRequest("timeoutMs must be 0..$MAX_TIMEOUT_MS")
+    }
+    if (request.settleMs !in 0..MAX_SETTLE_MS) {
+        throw ApiException.badRequest("settleMs must be 0..$MAX_SETTLE_MS")
+    }
+}
+
+/**
+ * Holds a matched result back until nothing has changed for [settleMs], or [deadline] passes, in
+ * [now]'s time. [lastChangeMs] says when something last changed, and [changes] when it does again.
+ */
+suspend fun settle(
+    settleMs: Long,
+    deadline: Long,
+    changes: ReceiveChannel<Unit>,
+    now: () -> Long,
+    lastChangeMs: () -> Long,
+) {
+    if (settleMs <= 0) return
+    while (true) {
+        val at = now()
+        val quietAt = lastChangeMs() + settleMs
+        if (at >= quietAt || at >= deadline) return
+        withTimeoutOrNull((minOf(quietAt, deadline) - at).coerceAtLeast(1)) { changes.receive() }
+    }
+}
+
+private const val MAX_CONDITIONS = 16
+private const val MAX_TIMEOUT_MS = 300_000L
+private const val MAX_SETTLE_MS = 30_000L

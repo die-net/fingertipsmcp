@@ -126,7 +126,7 @@ Full route reference: [api.md](api.md).
 Same suite CI runs on pull requests:
 
 ```sh
-./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test assembleDebug buildHealth --continue
+./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test :chrome:test assembleDebug :chrome:fatJar buildHealth --continue
 ```
 
 Useful pieces on their own:
@@ -136,10 +136,23 @@ Useful pieces on their own:
 ./gradlew spotlessCheck
 ./gradlew detektMain detektTest
 ./gradlew lint
-./gradlew testDebugUnitTest :api-model:test :browser:test :server:test
+./gradlew testDebugUnitTest :api-model:test :browser:test :server:test :chrome:test
 ```
 
-Release tags also build a signed release APK (`assembleRelease`) after those checks.
+Release tags also build a signed release APK (`assembleRelease`) after those checks, attach `fingertipsmcp-chrome-vX.Y.Z.jar` to the release, and push the `ghcr.io/die-net/fingertipsmcp-chrome` image for amd64 and arm64.
+
+## FingertipsMCP for Chrome
+
+The desktop build needs only a JDK 21 and Chrome.
+
+```sh
+./gradlew :chrome:fatJar               # chrome/build/dist/fingertipsmcp-chrome.jar
+./gradlew :chrome:run --args="--help"
+java -jar chrome/build/dist/fingertipsmcp-chrome.jar token create
+java -jar chrome/build/dist/fingertipsmcp-chrome.jar
+```
+
+To keep a development run away from your own files, point `XDG_CONFIG_HOME` and `XDG_DATA_HOME` at a scratch directory and pass `--profile` with a scratch Chrome profile, or `--attach 9222` to drive a Chrome you started with `--remote-debugging-port=9222` and its own `--user-data-dir`. Calls work with `PAPI_PAIRING=<config>/fingertips-chrome/pairing.json scripts/fingertips papi …`. See [chrome.md](chrome.md).
 
 ## Which Chrome to test
 
