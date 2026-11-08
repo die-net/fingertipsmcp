@@ -1148,13 +1148,20 @@ Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on a scratch
 - Clicking a button in the captured tab through the viewer, which ran `window.open(url, name, "popup,width=500,height=400")`, showed the notice within 3 s, and capture stayed on the opener with no crash. A page loaded while the popup was open got the notice on connect, both when another viewer kept capture running and when it was the only viewer and capture started again, 1 of 1 each.
 - Closing the popup with `POST /v1/browser/targets/{id}/close`, while Chrome was not the active app, fired neither `tabs.onActivated` nor `windows.onFocusChanged`, so the notice stayed, 1 of 1. With the worker also listening to `windows.onRemoved`, the same close cleared it, 1 of 1.
 - A `cdp` tap on the opener's tab with the popup open ran `follow`, but `chrome.windows.getLastFocused` still gave the popup, and the notice stayed. Whether the opener's window came to the front was not seen.
-- The first viewer after a new extension version loaded failed once, 74 ms after the load, with "The viewer extension did not say what type the window is: no answer", which the window check before this change could hit too. The page's reconnect 10 s later worked.
+- The first viewer after a new extension version loaded failed once, 74 ms after the load, with "The viewer extension did not say what type the window is: no answer", which the window check before this change could hit too. The page's reconnect 10 s later worked. [The offscreen document's script](#the-offscreen-documents-script) has the cause.
+
+### The offscreen document's script
+
+Checked on 2026-11-08 with Chrome 156.0.8078.80 on macOS, windowed, on scratch profiles, through the jar, with a WebSocket client as the viewer. Each try started a server on a profile that held the last try's version, with a jar whose `offscreen.js` differed by a comment, so the first viewer loaded a new version:
+
+- Chrome names the offscreen document, in the `Target.targetInfoChanged` that gives its URL, while the document is still loading. A probe that attached when the URL came, 53 to 63 ms after `Extensions.loadUnpacked` answered, read `document.readyState` as `loading` 5 of 5 times, with no `fingertipsViewer` 4 of 5 times. A `fingertipsViewer.window(1)` sent next threw `ReferenceError: fingertipsViewer is not defined` 1 of 5 times. That reply has `exceptionDetails` and no `result.value`, which the viewer read as "no answer".
+- The script ran 1 to 3 ms after Chrome named the document. The viewer attached and waited for `Runtime.addBinding` before its first call, and that was long enough: with the window check moved to just after the load, the document was complete by the check 27 of 27 times, and 6 of 6 on a fresh profile. With `addBinding` sent without waiting for its answer, the first window check failed with "no answer" 1 of 10 times, the failure under [The popup notice](#the-popup-notice).
+- With the viewer waiting for the document's `DOMContentLoaded` before its first call, and `addBinding` still sent without waiting, 15 of 15 first viewers captured. 9 attached while the document was loading, 1 of those before `fingertipsViewer` existed, and each wait took 1 to 2 ms. Built as it ships, 8 of 8 first viewers after a new version captured at once.
 
 ### Still to check for the viewer
 
 - Linux, headless Chrome, and the Docker image with the viewer.
 - The popup notice when a person clicks the opener's window with the popup still open: it should clear.
-- Why the first window check after a new extension version loads can get no answer, and whether the offscreen document's script had run yet.
 - A capture whose first copy failed has Chrome turning down every refresh retry for the rest of its life, not only before the first frame. When the tab's last repaint in a burst comes within a frame period of the one before, Chrome normally sends it later as a refresh, and in such a capture it may never come, so the viewer shows the frame before it until the tab repaints again. Not seen yet.
 - A tab brought forward right after the first viewer connects, whose switch capture sometimes doesn't follow: the viewer keeps the placeholder. It was seen in the first round of several runs, before and after the first-frame fix, and its cause is not known.
 - Whether a tab in an installed web app's window (`chrome.windows` type `app`) has the action, which FingertipsMCP passes over as it does a popup's.

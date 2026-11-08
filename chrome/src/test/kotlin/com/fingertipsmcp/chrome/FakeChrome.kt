@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -26,6 +27,10 @@ import kotlinx.serialization.json.putJsonObject
  * a key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does. Each page is
  * in a window of [windows], and running the extension's action on a tab in a window that is not
  * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does.
+ *
+ * Chrome names the document while it is still loading, so with [scriptRan] false its script has not
+ * run yet: a call into `fingertipsViewer` throws the `ReferenceError` Chrome 156 gave, and
+ * [DOCUMENT_READY] is answered once [runScript] runs it, as at the document's `DOMContentLoaded`.
  */
 internal class FakeChrome : CdpTransport {
     private val out = Channel<String>(Channel.UNLIMITED)
@@ -46,6 +51,12 @@ internal class FakeChrome : CdpTransport {
     /** Whether Chrome crashed, which closed DevTools. */
     var crashed = false
     var captureError: String? = null
+    /** Whether the offscreen document's script has run. */
+    var scriptRan = true
+    /** What a call into `fingertipsViewer` throws, as a script that fails does, or null. */
+    var throws: String? = null
+    /** Replies to [DOCUMENT_READY] held until the script runs, by command id and session. */
+    private val awaitingScript = ArrayList<Pair<Int, String?>>()
     /** Whether the offscreen document has opened, which it does when the extension loads. */
     private var documentOpen = false
     /** The target types discovery reports, null for every type, once it is on. */
@@ -68,7 +79,16 @@ internal class FakeChrome : CdpTransport {
         val method = message.getValue("method").jsonPrimitive.content
         val params = message["params"]?.jsonObject ?: JsonObject(emptyMap())
         val session = message["sessionId"]?.jsonPrimitive?.content
-        val result = answer(method, params, session)
+        val expression = params["expression"]?.jsonPrimitive?.content
+        if (method == "Runtime.evaluate" && expression == DOCUMENT_READY && !scriptRan) {
+            evaluated += expression
+            awaitingScript += id to session
+            return
+        }
+        reply(id, session, answer(method, params, session))
+    }
+
+    private fun reply(id: Int, session: String?, result: JsonElement) {
         out.trySend(
             buildJsonObject {
                 put("id", id)
@@ -77,6 +97,13 @@ internal class FakeChrome : CdpTransport {
             }
                 .toString()
         )
+    }
+
+    /** The offscreen document's script runs, and its `DOMContentLoaded` follows. */
+    fun runScript() {
+        scriptRan = true
+        awaitingScript.forEach { (id, session) -> reply(id, session, value(JsonPrimitive(true))) }
+        awaitingScript.clear()
     }
 
     private fun answer(method: String, params: JsonObject, session: String?): JsonElement =
@@ -150,6 +177,11 @@ internal class FakeChrome : CdpTransport {
 
     private fun evaluate(expression: String): JsonElement {
         evaluated += expression
+        if (expression == DOCUMENT_READY) return value(JsonPrimitive(true))
+        if (!scriptRan) return thrown(NOT_DEFINED)
+        throws?.let {
+            return thrown(it)
+        }
         if (expression.startsWith("fingertipsViewer.window(")) {
             val id = expression.substringAfter("(").substringBefore(")").toIntOrNull() ?: focused
             return buildJsonObject {
@@ -175,6 +207,29 @@ internal class FakeChrome : CdpTransport {
                     if (error != null) put("error", error) else put("ok", true)
                 }
             }
+        }
+    }
+
+    private fun value(value: JsonElement) = buildJsonObject {
+        putJsonObject("result") {
+            put("type", "boolean")
+            put("value", value)
+        }
+    }
+
+    /** The reply to a script that threw [description], as Chrome 156 gives it. */
+    private fun thrown(description: String) = buildJsonObject {
+        val error = buildJsonObject {
+            put("type", "object")
+            put("subtype", "error")
+            put("className", description.substringBefore(":"))
+            put("description", "$description\n    at <anonymous>:1:1")
+        }
+        put("result", error)
+        putJsonObject("exceptionDetails") {
+            put("exceptionId", 1)
+            put("text", "Uncaught")
+            put("exception", error)
         }
     }
 
@@ -286,6 +341,7 @@ internal class FakeChrome : CdpTransport {
         const val DOCUMENT = "DOC"
         const val DOCUMENT_URL = "chrome-extension://ext/offscreen.html"
         const val ACTIVE_STREAM = "Cannot capture a tab with an active stream."
+        const val NOT_DEFINED = "ReferenceError: fingertipsViewer is not defined"
         const val KEY = 2
         const val DELTA = 3
     }

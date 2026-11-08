@@ -20,6 +20,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -261,6 +262,64 @@ class ChromeViewerTest {
         withViewer(this, { windowOf["PAGE"] = OTHER_WINDOW }) { chrome, viewer ->
             assertThrows<ApiException> { viewer.watchVideo(SPEC) {} }
             assertFalse(chrome.crashed)
+            assertEquals(0, chrome.capture)
+        }
+    }
+
+    /**
+     * Chrome names the extension's document while it is still loading, as Chrome 156 did right
+     * after a new version of the extension loaded. The first viewer waits for the document's
+     * script, rather than failing because there is no `fingertipsViewer` to call yet.
+     */
+    @Test
+    fun `first viewer waits for script`() = runTest {
+        withViewer(this, { scriptRan = false }) { chrome, viewer ->
+            var joined: VideoViewer? = null
+            var failure: ApiException? = null
+            backgroundScope.launch {
+                try {
+                    viewer.watchVideo(SPEC) {
+                        joined = it
+                        awaitCancellation()
+                    }
+                } catch (e: ApiException) {
+                    failure = e
+                }
+            }
+            runCurrent()
+            assertNull(failure?.message)
+            assertNull(joined)
+            assertEquals(0, chrome.capture)
+            chrome.runScript()
+            runCurrent()
+            assertNull(failure?.message)
+            assertNotNull(joined)
+            assertEquals(1, chrome.capture)
+        }
+    }
+
+    /**
+     * A document whose script never runs fails the viewer at the deadline, and leaves nothing
+     * behind: once it runs, the next viewer captures.
+     */
+    @Test
+    fun `unstarted document times out`() = runTest {
+        withViewer(this, { scriptRan = false }) { chrome, viewer ->
+            val failure = assertThrows<ApiException> { viewer.watchVideo(SPEC) {} }
+            assertTrue(failure.message.orEmpty().contains("did not start in time"), failure.message)
+            assertEquals(0, chrome.capture)
+            chrome.runScript()
+            watch(viewer)
+            assertEquals(1, chrome.capture)
+        }
+    }
+
+    /** A call into the document that throws fails with what the script threw. */
+    @Test
+    fun `document's exception is named`() = runTest {
+        withViewer(this, { throws = "TypeError: boom" }) { chrome, viewer ->
+            val failure = assertThrows<ApiException> { viewer.watchVideo(SPEC) {} }
+            assertTrue(failure.message.orEmpty().contains("TypeError: boom"), failure.message)
             assertEquals(0, chrome.capture)
         }
     }
