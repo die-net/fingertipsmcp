@@ -145,6 +145,14 @@ interface BaseBrowser : BrowserService {
     val backgroundStaysHidden: Boolean
 
     /**
+     * The tabs of the browser that opens them, as [targets] lists them, without any WebView's
+     * pages. It asks only that browser, so a WebView that does not answer cannot hold it up. Empty
+     * while the browser is not running but something else is debuggable. Fails as [targets] does
+     * when nothing is, or when the browser does not answer.
+     */
+    suspend fun tabTargets(): List<BrowserTarget>
+
+    /**
      * Opens a tab as [openTab] does, but asks Chrome to leave it hidden from its first load, with
      * the tab showing still showing. [backgroundStaysHidden] says whether Chrome does.
      */

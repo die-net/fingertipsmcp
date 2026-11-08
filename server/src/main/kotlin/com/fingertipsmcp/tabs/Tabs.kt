@@ -383,7 +383,7 @@ class Tabs(
      */
     internal suspend fun afterInput(holder: Holder.Session) {
         if (lease.holds(holder) || !chromeInFront()) return
-        val popup = adoptPopups(base.targets())
+        val popup = adoptPopups(base.tabTargets())
         if (!putBack()) {
             throw ApiException(
                 409,
@@ -500,7 +500,7 @@ class Tabs(
     /** Chrome's tabs now, or null when Chrome is not answering. */
     private suspend fun chromeTabs(): List<BrowserTarget>? =
         try {
-            base.targets().filter { it.socket == chrome }
+            base.tabTargets()
         } catch (_: ApiException) {
             null
         }
@@ -596,7 +596,7 @@ class Tabs(
         val front = if (holder is Holder.Session) fronts[holder] else leftShowing
         if (front != null && base.showing(front) == true) return null
         // A popup a page opened on its own, since the last listing, is its opener's too.
-        adoptPopups(base.targets())
+        adoptPopups(base.tabTargets())
         val others = owners.filterValues { it.holder != holder }.keys
         // A tab that does not answer may be the one on screen.
         if (others.all { base.showing(it) == false }) return null
@@ -657,7 +657,7 @@ class Tabs(
 
     /** The placeholder, opened again if it was closed. */
     private suspend fun placeholderTab(): String = placeholderMutex.withLock {
-        placeholderIn(base.targets())
+        placeholderIn(base.tabTargets())
     }
 
     /** With [placeholderMutex] held: the placeholder, opened again if [open] does not have it. */
@@ -677,9 +677,8 @@ class Tabs(
      * here, so the check and the close are one step for each.
      */
     internal suspend fun closeTab(id: String): ActionResult = placeholderMutex.withLock {
-        val open = base.targets()
-        val pages = open.filter { it.socket == chrome }
-        if (pages.isNotEmpty() && pages.all { it.id == id }) placeholderIn(open)
+        val open = base.tabTargets()
+        if (open.isNotEmpty() && open.all { it.id == id }) placeholderIn(open)
         base.closeTab(id)
     }
 
@@ -725,7 +724,7 @@ class Tabs(
      */
     private suspend fun requireExists(id: String, socket: String) {
         if (socket != chrome || owners.containsKey(id)) return
-        if (base.targets().none { it.id == id }) throw missing(id)
+        if (base.tabTargets().none { it.id == id }) throw missing(id)
     }
 
     /** Calls that take no session: any tab a live session does not own. */

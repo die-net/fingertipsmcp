@@ -187,16 +187,25 @@ class BrowserServiceImpl(
     private fun newAxCache(): AxTreeCache = AxTreeCache(axTreeCap)
 
     override suspend fun targets(): List<BrowserTarget> {
-        val sockets = devtools.endpoints()
-        if (sockets.isEmpty()) {
-            throw ApiException.unavailable("browser_unavailable", devtools.gap(BrowserGap.NONE))
-        }
-        val found = queryTargets(sockets)
+        val found = queryTargets(debuggable())
         val live = found.map { it.id }.toSet()
         axTrees.retain(live)
         unanswered.retain(live)
         return found
     }
+
+    // Only targets() prunes the caches, since this list leaves out every WebView's pages.
+    override suspend fun tabTargets(): List<BrowserTarget> {
+        val chrome = debuggable().firstOrNull { it.name == devtools.tabs } ?: return emptyList()
+        // Chrome's own failure fails the listing, as in queryTargets.
+        return devtools.targets(chrome)
+    }
+
+    /** Every endpoint that is up, failing with `browser_unavailable` when there is none. */
+    private suspend fun debuggable(): List<DevtoolsSocketInfo> =
+        devtools.endpoints().ifEmpty {
+            throw ApiException.unavailable("browser_unavailable", devtools.gap(BrowserGap.NONE))
+        }
 
     /**
      * Every socket's targets. A failure of Chrome's own fails the listing with its own error, since
