@@ -18,8 +18,11 @@ sealed interface Command {
     data object Version : Command
 }
 
+/**
+ * The command line's serve options. A listen option left out is null, and `settings.json` fills it.
+ */
 data class ServeOptions(
-    val host: String = "127.0.0.1",
+    val host: String? = null,
     val port: Int? = null,
     val unixSocket: String? = null,
     val stdio: Boolean = false,
@@ -31,6 +34,13 @@ data class ServeOptions(
     /** Leave Chrome's automation marker on: `navigator.webdriver` true. */
     val showAutomation: Boolean = false,
 )
+
+/** Where `serve` listens: TCP at [Tcp.host] and [Tcp.port], or the Unix socket at [Unix.path]. */
+sealed interface Listen {
+    data class Tcp(val host: String, val port: Int) : Listen
+
+    data class Unix(val path: String) : Listen
+}
 
 class UsageException(message: String, cause: Throwable? = null) :
     IllegalArgumentException(message, cause)
@@ -47,8 +57,10 @@ val USAGE: String =
             "",
             "Options:",
             "  --host ADDR          Listen address, default 127.0.0.1. Keep it on loopback.",
-            "  --port N             TCP port. Default: one picked at random on first run and kept.",
+            "  --port N             TCP port. Default: one picked at random on first run.",
             "  --unix PATH          Listen on a Unix socket instead of TCP.",
+            "                       --host, --port, and --unix are kept in settings.json for the",
+            "                       next run, and token create writes pairing.json from them.",
             "  --stdio              MCP over stdio for one client. No HTTP listener.",
             "  --chrome PATH        Browser to run. Default: Google Chrome where it is installed,",
             "                       or FINGERTIPS_CHROME. Chromium is used, with a warning, when",
@@ -125,10 +137,40 @@ private fun parseServe(args: List<String>): ServeOptions {
                 ?: chromeOption(options, arg, queue)
                 ?: throw UsageException("Unknown option '$arg'")
     }
-    if (options.unixSocket != null && options.port != null) {
-        throw UsageException("Pass --port or --unix, not both")
-    }
+    refuseIgnored(options)
     return options
+}
+
+/** Refuses options that another one given with them would make do nothing. */
+private fun refuseIgnored(options: ServeOptions) {
+    val tcp = listOfNotNull(options.host?.let { "--host" }, options.port?.let { "--port" })
+    if (options.stdio) {
+        val listen = tcp + listOfNotNull(options.unixSocket?.let { "--unix" })
+        if (listen.isNotEmpty()) {
+            throw UsageException(
+                "--stdio does not listen. Leave out ${listen.joinToString(" and ")}."
+            )
+        }
+    }
+    if (options.unixSocket != null && tcp.isNotEmpty()) {
+        throw UsageException("Pass ${tcp.joinToString(" and ")} or --unix, not both")
+    }
+    if (options.attach != null) {
+        val launch =
+            listOfNotNull(
+                options.chrome?.let { "--chrome" },
+                options.profile?.let { "--profile" },
+                "--headless".takeIf { options.headless },
+                "--chrome-arg".takeIf { options.chromeArgs.isNotEmpty() },
+                "--show-automation".takeIf { options.showAutomation },
+            )
+        if (launch.isNotEmpty()) {
+            throw UsageException(
+                "--attach uses a Chrome that is already running. Leave out " +
+                    "${launch.joinToString(", ")}."
+            )
+        }
+    }
 }
 
 /** Where and how to serve, or null when [arg] is not one of those options. */
@@ -187,7 +229,11 @@ internal fun parseScopes(value: String): Set<Scope> {
     return scopes
 }
 
-/** What a client needs by default: read, act, and drive the browser, but not manage tokens. */
+/**
+ * What a client needs by default: read, act, and drive the browser, but not manage tokens. A
+ * `--stdio` client gets these too, since the MCP client that started the process is paired by
+ * starting it.
+ */
 internal val DEFAULT_SCOPES = setOf(Scope.OBSERVE, Scope.CONTROL, Scope.BROWSER)
 
 private const val MAX_PORT = 65_535

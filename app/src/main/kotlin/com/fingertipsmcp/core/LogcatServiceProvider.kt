@@ -47,7 +47,8 @@ private class LogcatLoggers : ILoggerFactory {
 }
 
 private class LogcatLogger(loggerName: String) : LegacyAbstractLogger() {
-    private val tag = loggerName.substringAfterLast('.').take(MAX_TAG).ifEmpty { "slf4j" }
+    // Android 8 dropped the 23-character limit on tags, and minSdk is 29.
+    private val tag = loggerName.substringAfterLast('.').ifEmpty { "slf4j" }
     private val ours = loggerName.startsWith(OWN_PREFIX)
 
     init {
@@ -95,7 +96,6 @@ private class LogcatLogger(loggerName: String) : LegacyAbstractLogger() {
         }
 
     private companion object {
-        const val MAX_TAG = 23
         const val OWN_PREFIX = "Fingertips"
     }
 }

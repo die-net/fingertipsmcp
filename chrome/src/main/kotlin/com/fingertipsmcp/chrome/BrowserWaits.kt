@@ -9,23 +9,18 @@ import com.fingertipsmcp.model.WaitRequest
 import com.fingertipsmcp.model.WaitResult
 import com.fingertipsmcp.wait.BrowserWatch
 import com.fingertipsmcp.wait.ConditionWatcher
-import com.fingertipsmcp.wait.awaitConditions
 import com.fingertipsmcp.wait.isBrowserCondition
 import com.fingertipsmcp.wait.monotonicMs
 import com.fingertipsmcp.wait.requireWaitAccess
-import com.fingertipsmcp.wait.settle
+import com.fingertipsmcp.wait.runWait
 import com.fingertipsmcp.wait.validateBrowser
 import com.fingertipsmcp.wait.validateWait
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 /**
  * `POST /v1/wait` and `wait_for` with browser conditions only: there is no phone UI tree on a
- * desktop. The loop is the one Android's waits use. Settling waits for the pages to stop reporting
- * changes.
+ * desktop. The loop is the one Android's waits use, [runWait]. Settling waits for the pages to stop
+ * reporting changes.
  */
 class BrowserWaits(
     private val browser: BrowserService,
@@ -54,36 +49,26 @@ class BrowserWaits(
         val all = request.all.map { condition -> ConditionWatcher { watch.check(condition) } }
         val any = request.any.map { condition -> ConditionWatcher { watch.check(condition) } }
         val started = clock()
-        val deadline = started + request.timeoutMs
-        val lastChange = AtomicLong(started)
-        return coroutineScope {
-            val changes = Channel<Unit>(Channel.CONFLATED)
+        val outcome =
             try {
                 watch.open(conditions, request.timeoutMs)
-                val pump = launch {
-                    watch.changes.collect {
-                        lastChange.set(clock())
-                        changes.trySend(Unit)
-                    }
-                }
-                try {
-                    val outcome = awaitConditions(all, any, deadline, changes, clock)
-                    if (outcome.matched) {
-                        settle(request.settleMs, deadline, changes, clock) { lastChange.get() }
-                    }
-                    WaitResult(
-                        matched = outcome.matched,
-                        timedOut = !outcome.matched,
-                        elapsedMs = clock() - started,
-                        matchedAll = outcome.matchedAll,
-                        matchedAny = outcome.matchedAny,
-                    )
-                } finally {
-                    pump.cancel()
-                }
+                runWait(
+                    all,
+                    any,
+                    watch.changes,
+                    deadline = started + request.timeoutMs,
+                    settleMs = request.settleMs,
+                    now = clock,
+                )
             } finally {
                 watch.close()
             }
-        }
+        return WaitResult(
+            matched = outcome.matched,
+            timedOut = !outcome.matched,
+            elapsedMs = clock() - started,
+            matchedAll = outcome.matchedAll,
+            matchedAny = outcome.matchedAny,
+        )
     }
 }

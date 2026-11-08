@@ -17,7 +17,7 @@ class Screenshotter(
     private val helperPng: suspend () -> ByteArray?,
 ) {
     suspend fun png(scale: Float = 1f): ByteArray {
-        if (scale !in MIN_SCALE..1f) throw ApiException.badRequest("scale must be $MIN_SCALE..1")
+        ScreenshotScale.require(scale)
         val bytes =
             try {
                 helperPng()
@@ -70,7 +70,6 @@ class Screenshotter(
     private companion object {
         const val TAG = "FingertipsScreenshot"
         val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47)
-        const val MIN_SCALE = 0.05f
         const val PNG_QUALITY = 100
     }
 }

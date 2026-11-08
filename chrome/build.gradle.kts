@@ -1,6 +1,3 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     id("fingertips.jvm.library")
     alias(libs.plugins.kotlin.serialization)
@@ -10,16 +7,6 @@ plugins {
 val tagVersion: String? = providers.environmentVariable("FINGERTIPS_VERSION").orNull
 
 version = tagVersion?.removePrefix("v") ?: "0.0.0-dev"
-
-// The jar is run directly with Java 21, the JRE in the image.
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
-tasks.withType<KotlinCompile>().configureEach {
-    compilerOptions { jvmTarget.set(JvmTarget.JVM_21) }
-}
 
 application {
     mainClass.set("com.fingertipsmcp.chrome.MainKt")
@@ -42,6 +29,7 @@ dependencies {
     implementation(libs.slf4j.api)
     runtimeOnly(libs.slf4j.simple)
 
+    testImplementation(testFixtures(project(":browser")))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)

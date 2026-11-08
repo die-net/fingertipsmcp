@@ -1,0 +1,4 @@
+# The image needs only the jar and the entrypoint; see docker/Dockerfile.
+*
+!build/dist/fingertipsmcp-chrome.jar
+!docker/entrypoint.sh

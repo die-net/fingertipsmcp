@@ -6,6 +6,7 @@ import com.fingertipsmcp.browser.decodeCdp
 import com.fingertipsmcp.browser.evaluateIn
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.BrowserService
+import com.fingertipsmcp.core.ScreenshotScale
 import com.fingertipsmcp.model.ApiException
 import java.util.Base64
 import kotlinx.serialization.Serializable
@@ -24,9 +25,7 @@ class TabScreenshots(
     private val devtools: DevtoolsEndpoints,
 ) {
     suspend fun png(scale: Float): ByteArray {
-        if (scale !in MIN_SCALE..MAX_SCALE) {
-            throw ApiException.badRequest("scale must be $MIN_SCALE to $MAX_SCALE")
-        }
+        ScreenshotScale.require(scale)
         val pages = browser.targets().filter { it.type == "page" }
         if (pages.isEmpty()) throw ApiException.unavailable("browser_unavailable", "No tab is open")
         for (page in pages) {
@@ -79,9 +78,4 @@ class TabScreenshots(
     )
 
     @Serializable private data class Captured(val data: String? = null)
-
-    private companion object {
-        const val MIN_SCALE = 0.1f
-        const val MAX_SCALE = 1f
-    }
 }

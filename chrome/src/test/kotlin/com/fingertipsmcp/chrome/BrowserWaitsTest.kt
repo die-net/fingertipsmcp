@@ -1,12 +1,11 @@
 package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.ConnectionEndpoints
-import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.model.ApiException
 import com.fingertipsmcp.model.Scope
 import com.fingertipsmcp.model.WaitCondition
 import com.fingertipsmcp.model.WaitRequest
-import java.lang.reflect.Proxy
+import com.fingertipsmcp.wait.TabBrowser
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,14 +15,9 @@ import org.junit.jupiter.api.Test
 class BrowserWaitsTest {
     private val waits =
         BrowserWaits(
-            browser =
-                Proxy.newProxyInstance(
-                    BrowserService::class.java.classLoader,
-                    arrayOf(BrowserService::class.java),
-                ) { _, _, _ ->
-                    error("not called")
-                } as BrowserService,
-            devtools = ConnectionEndpoints(connection = { error("not called") }),
+            browser = TabBrowser(),
+            // Both refusals come before the wait opens a page.
+            devtools = ConnectionEndpoints(connection = { error("A refused wait opens no page") }),
             io = StandardTestDispatcher(),
         )
 

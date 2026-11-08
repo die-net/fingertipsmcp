@@ -93,6 +93,30 @@ class OptionsTest {
     }
 
     @Test
+    fun `rejects options made moot`() {
+        listOf(
+                listOf("--unix", "/tmp/d.sock", "--port", "1"),
+                listOf("--port", "1", "--unix", "/tmp/d.sock"),
+                listOf("--unix", "/tmp/d.sock", "--host", "127.0.0.1"),
+                listOf("--stdio", "--port", "1"),
+                listOf("--stdio", "--unix", "/tmp/d.sock"),
+                listOf("--host", "::1", "--stdio"),
+                listOf("--attach", "9222", "--chrome", "/opt/chrome"),
+                listOf("--profile", "/tmp/p", "--attach", "9222"),
+                listOf("--attach", "9222", "--headless"),
+                listOf("--attach", "9222", "--chrome-arg", "--lang=fr"),
+                listOf("--attach", "9222", "--show-automation"),
+            )
+            .forEach { args ->
+                assertThrows(UsageException::class.java, { parseCommand(args) }, "$args")
+            }
+        val attach = parseCommand(listOf("--attach", "9222", "--port", "4100")) as Command.Serve
+        assertEquals("9222", attach.options.attach)
+        val stdio = parseCommand(listOf("--stdio", "--profile", "/tmp/p")) as Command.Serve
+        assertEquals("/tmp/p", stdio.options.profile)
+    }
+
+    @Test
     fun `follows xdg`() {
         val home = File("/home/u")
         val linux = ChromePaths(env = emptyMap(), home = home, osName = "Linux")

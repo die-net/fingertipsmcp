@@ -23,9 +23,10 @@ import com.fingertipsmcp.model.EvalResult
 
 /**
  * A browser with one Chrome tab, for a wait to look up, whose server has answered. A wait uses
- * nothing else, so every other call fails the test that made it.
+ * nothing else, so every other call fails the test that made it. A test overrides what it needs. It
+ * is a test fixture, so the `chrome` module's tests can use it too.
  */
-internal open class TabBrowser : BrowserService {
+open class TabBrowser : BrowserService {
     override suspend fun targets(): List<BrowserTarget> =
         listOf(BrowserTarget(id = "$CHROME_SOCKET~t", type = "page", socket = CHROME_SOCKET))
 

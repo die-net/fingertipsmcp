@@ -27,11 +27,11 @@ PAPI_PAIRING=~/.config/fingertips-chrome/pairing.json fingertips papi GET /v1/br
 PAPI_PAIRING=~/.config/fingertips-chrome/pairing.json fingertips papi POST /v1/browser/tabs '{"url":"https://example.com/"}'
 ```
 
-The second command starts Chrome with its own profile in `~/.local/share/fingertips-chrome/chrome-profile` (`~/Library/Application Support/fingertips-chrome/chrome-profile` on macOS, or `$XDG_DATA_HOME/fingertips-chrome`), opens one blank window, and listens on `127.0.0.1` at a port picked once and kept in `settings.json`. If Chrome exits, the next call starts it again; see [Windows](#windows). Stopping FingertipsMCP for Chrome closes Chrome.
+The second command starts Chrome with its own profile in `~/.local/share/fingertips-chrome/chrome-profile` (`~/Library/Application Support/fingertips-chrome/chrome-profile` on macOS, or `$XDG_DATA_HOME/fingertips-chrome`), opens one blank window, and listens on `127.0.0.1` at a port picked once and kept in `settings.json`. `--host`, `--port`, and `--unix` replace what `settings.json` holds, so the next run listens there too, and `token create` writes `pairing.json` with that address. A server on every address (`0.0.0.0`) is paired at `127.0.0.1`. `pairing.json` cannot name a Unix socket, so `token create` refuses to write one for a `--unix` server; pass `--no-pairing` and give the client the socket and token yourself. If Chrome exits, the next call starts it again; see [Windows](#windows). Stopping FingertipsMCP for Chrome closes Chrome.
 
 `papi` starts a REST session for itself, as with the phone. A client of its own calls `POST /v1/sessions` and sends the id in `Mcp-Session-Id`; see [sharing.md](sharing.md).
 
-Tokens default to the `observe`, `control`, and `browser` scopes. `--scopes` takes others (`admin` manages tokens over the API), and `--no-pairing` prints the token instead of writing the file. `java -jar fingertipsmcp-chrome.jar token list` and `token revoke ID` manage them.
+Tokens default to the `observe`, `control`, and `browser` scopes. `--scopes` takes others (`admin` manages tokens over the API), and `--no-pairing` prints the token instead of writing the file. `java -jar fingertipsmcp-chrome.jar token list` and `token revoke ID` manage them. They work while the server runs: a new token is accepted and a revoked one refused from the next request, with no restart. Each change reads `tokens.json` again and writes it while holding a lock on `tokens.json.lock`, so the server and the command never lose each other's changes.
 
 ## MCP
 
@@ -86,16 +86,18 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 
 | Option | |
 | --- | --- |
-| `--host ADDR` | Listen address. Default `127.0.0.1`. A non-loopback address is logged as a warning. |
-| `--port N` | TCP port. Default: from `settings.json`. |
-| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. |
-| `--stdio` | MCP over stdin and stdout. Logs go to stderr. |
+| `--host ADDR` | Listen address. Default: from `settings.json`, first `127.0.0.1`. A non-loopback address is logged as a warning. Kept in `settings.json`. |
+| `--port N` | TCP port. Default: from `settings.json`, first one picked at random. Kept in `settings.json`. |
+| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. Kept in `settings.json` until `--host` or `--port` switches back to TCP. It refuses a path where a server answers or that is not a socket, replaces a socket file no server holds, and removes its socket when it stops. |
+| `--stdio` | MCP over stdin and stdout. Logs go to stderr. Refuses `--host`, `--port`, and `--unix`. |
 | `--chrome PATH` | Browser binary. Also `FINGERTIPS_CHROME`. |
 | `--profile DIR` | Chrome user data directory. |
 | `--headless` | Chrome `--headless=new`. |
 | `--show-automation` | Leave `navigator.webdriver` true; see [Stealth](#stealth). |
 | `--chrome-arg ARG` | One more Chrome flag. Repeatable. |
-| `--attach PORT\|URL` | Development: use a Chrome already started with `--remote-debugging-port`. |
+| `--attach PORT\|URL` | Development: use a Chrome already started with `--remote-debugging-port`. Refuses `--chrome`, `--profile`, `--headless`, `--chrome-arg`, and `--show-automation`, which only apply to a Chrome it starts. |
+
+`--unix` with `--host` or `--port` is refused too.
 
 ## How it drives Chrome
 
@@ -175,8 +177,9 @@ docker build -f chrome/docker/Dockerfile -t fingertipsmcp-chrome chrome
 
 | Path | |
 | --- | --- |
-| `~/.config/fingertips-chrome/settings.json` | The TCP port |
+| `~/.config/fingertips-chrome/settings.json` | Where the server listens: TCP port and address, or Unix socket. A file that does not parse is replaced, with a new port, and a warning is logged |
 | `~/.config/fingertips-chrome/tokens.json` | Token hashes |
+| `~/.config/fingertips-chrome/tokens.json.lock` | Held while `tokens.json` is changed |
 | `~/.config/fingertips-chrome/pairing.json` | Address and token for clients (mode 0600) |
 | `~/.local/share/fingertips-chrome/chrome-profile` | Chrome's profile |
 | `~/.local/share/fingertips-chrome/chrome.log` | Chrome's own output |

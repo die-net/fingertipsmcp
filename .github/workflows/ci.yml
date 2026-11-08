@@ -31,6 +31,34 @@ jobs:
       - name: Check, lint, test, build
         run: ./gradlew spotlessCheck detektMain detektTest lint testDebugUnitTest :api-model:test :browser:test :server:test :chrome:test assembleDebug :chrome:fatJar buildHealth --continue
 
+      # Runs the fat jar, so a broken merge of its dependencies' service files fails here. --attach to
+      # a closed port starts no Chrome, and the server still listens and answers without a token.
+      - name: Run the fingertips-chrome jar
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/fingertips-config
+          XDG_DATA_HOME: ${{ runner.temp }}/fingertips-data
+        run: |
+          jar=chrome/build/dist/fingertipsmcp-chrome.jar
+          java -jar "$jar" --version
+          java -jar "$jar" --attach 9 --port 47199 2> "$RUNNER_TEMP/serve.log" &
+          pid=$!
+          i=0
+          until curl -s -o /dev/null http://127.0.0.1:47199/v1/device; do
+            i=$((i + 1))
+            if [ "$i" -ge 150 ]; then
+              echo "fingertips-chrome did not answer within 30 s"
+              cat "$RUNNER_TEMP/serve.log"
+              exit 1
+            fi
+            sleep 0.2
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:47199/v1/device)
+          kill "$pid"
+          cat "$RUNNER_TEMP/serve.log"
+          test "$code" = 404
+          # slf4j warns on stderr when the jar lost its provider's service file.
+          if grep -q 'SLF4J' "$RUNNER_TEMP/serve.log"; then exit 1; fi
+
       # Code scanning on a private repository needs GitHub Code Security.
       - name: Upload detekt SARIF
         if: always() && !github.event.repository.private && hashFiles('build/reports/detekt/merge.sarif') != ''
