@@ -74,7 +74,8 @@ interface RunningBrowser : Closeable {
  * `--disable-blink-features=AutomationControlled`, the one Blink switch fingertips-chrome passes.
  * Chrome answers that switch with an "unsupported command-line flag" bar on the tab it opens at
  * launch, so a windowed Chrome starts with `--no-startup-window` and fingertips-chrome opens the
- * first window itself. That also means Chrome restores no session at launch.
+ * first window itself. That also means Chrome restores no session at launch. Neither the start nor
+ * that window brings Chrome in front of the person's other apps ([openFirstWindow]).
  */
 class ChromeLauncher(
     private val binary: BrowserBinary,
@@ -189,17 +190,6 @@ class ChromeLauncher(
             throw LaunchException("Could not run ${binary.path}: ${e.message.orEmpty()}", e)
         }
 
-    /** The window a person would see when Chrome opens: one blank tab. */
-    private suspend fun openFirstWindow(connection: CdpBrowserConnection) {
-        connection.root.call(
-            "Target.createTarget",
-            buildJsonObject {
-                put("url", "about:blank")
-                put("newWindow", true)
-            },
-        )
-    }
-
     private class LaunchedChrome(
         override val connection: CdpBrowserConnection,
         private val process: Process,
@@ -241,6 +231,23 @@ class ChromeLauncher(
         const val PIPE_SHIM = "exec 3<&0 4>&1 0</dev/null 1>&2; exec \"$@\""
         const val CLOSE_MS = 3_000L
     }
+}
+
+/**
+ * Opens the window a person would see when Chrome opens: one blank tab. It opens with `background`,
+ * which keeps Chrome behind whichever app is in front, where without it Chrome comes in front. The
+ * window still shows on screen, unfocused, and its tab reads `visible` and draws as any tab in a
+ * window that is not in front does.
+ */
+internal suspend fun openFirstWindow(connection: CdpBrowserConnection) {
+    connection.root.call(
+        "Target.createTarget",
+        buildJsonObject {
+            put("url", "about:blank")
+            put("newWindow", true)
+            put("background", true)
+        },
+    )
 }
 
 /**

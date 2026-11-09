@@ -71,11 +71,16 @@ internal suspend fun requireShowing(cdp: CdpSession) {
 /**
  * Selects the tab, then waits for its text to hold still. Chrome coming forward can select another
  * tab after this one, so the tab has to still be showing at the end, or this tries again, up to
- * [attempts] times. True when it held.
+ * [attempts] times. True when it held. [select] selects the tab as [selectTab]'s does, with
+ * `Page.bringToFront` when it did not.
  */
-internal suspend fun bringForward(cdp: CdpSession, attempts: Int): Boolean {
+internal suspend fun bringForward(
+    cdp: CdpSession,
+    attempts: Int,
+    select: suspend () -> Boolean,
+): Boolean {
     repeat(attempts) {
-        cdp.call("Page.bringToFront")
+        if (!select()) cdp.call("Page.bringToFront")
         if (settled(FRONT_MS) { tabShowing(cdp) }) {
             awaitTextStill(cdp)
             if (tabShowing(cdp)) return true

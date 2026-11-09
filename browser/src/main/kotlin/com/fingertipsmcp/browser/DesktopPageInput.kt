@@ -50,12 +50,14 @@ data class DesktopStyle(
 
 /**
  * Desktop browser input, timed and shaped like a hand on a mouse and keyboard. `cdp` sends mouse
- * and keyboard events over DevTools, never touch. Each action first brings the tab to the front if
- * it is hidden, as a person switches tabs to use one, and fails with `not_visible` if Chrome does
- * not. The mouse and keyboard are [pointer]'s, shared with the viewer: each move starts where the
- * pointer was left, and only one action runs at a time, the tab switch included. Elements are
- * scrolled into view with the wheel rather than jumped to. `cdp-mouse` is the same as `cdp` here;
- * `touch` needs a touch screen, which a desktop does not have.
+ * and keyboard events over DevTools, never touch. Each action first selects the tab if it is
+ * hidden, as a person switches tabs to use one, and fails with `not_visible` if Chrome does not.
+ * [select] selects it without bringing Chrome in front of the person's other apps; when it can't,
+ * `Page.bringToFront` does, which brings Chrome in front too. The mouse and keyboard are
+ * [pointer]'s, shared with the viewer: each move starts where the pointer was left, and only one
+ * action runs at a time, the tab switch included. Elements are scrolled into view with the wheel
+ * rather than jumped to. `cdp-mouse` is the same as `cdp` here; `touch` needs a touch screen, which
+ * a desktop does not have.
  */
 internal class DesktopPageInput(
     /**
@@ -66,6 +68,11 @@ internal class DesktopPageInput(
     random: Random = Random.Default,
     /** Monotonic milliseconds, which input plans are timed against. */
     private val now: () -> Long = ::monotonicMs,
+    /**
+     * Makes a tab, by its browser target id, the one its window shows without bringing Chrome in
+     * front, and says whether it did.
+     */
+    private val select: suspend (String) -> Boolean = { false },
 ) : PageInputs {
     private val hand = Humanizer(random)
     private val random = random
@@ -88,7 +95,7 @@ internal class DesktopPageInput(
         request: BrowserTapRequest,
     ): ActionResult {
         requireMouse(request.input)
-        return act(cdp) { events ->
+        return act(cdp, id) { events ->
             val revealed = reveal(cdp, id, events, wanted, request.humanize)
             val at = click(events, revealed.box, request.humanize)
             ActionResult(
@@ -111,7 +118,7 @@ internal class DesktopPageInput(
         pkg: String?,
         request: BrowserSwipeRequest,
     ): ActionResult =
-        act(cdp) { events ->
+        act(cdp, id) { events ->
             val metrics = cdp.call("Page.getLayoutMetrics")
             val view = viewportBox(metrics)
             val (from, to) = swipeEnds(cdp, id, request, metrics)
@@ -145,10 +152,11 @@ internal class DesktopPageInput(
 
     override suspend fun gesture(
         cdp: CdpSession,
+        id: String,
         pkg: String?,
         request: BrowserGestureRequest,
     ): ActionResult =
-        act(cdp) { events ->
+        act(cdp, id) { events ->
             val path = request.pointers.single()
             val start = path.first()
             val first = Point(start.x, start.y)
@@ -171,11 +179,12 @@ internal class DesktopPageInput(
 
     override suspend fun key(
         cdp: CdpSession,
+        id: String,
         pkg: String?,
         request: BrowserKeyRequest,
         pageKey: DomKey?,
     ): ActionResult =
-        act(cdp) { events ->
+        act(cdp, id) { events ->
             val key = pageKey ?: domKey(request.key, request.metaState)
             val modifiers = CdpModifier.fromMetaState(request.metaState)
             val held = modifiers.toList()
@@ -205,7 +214,7 @@ internal class DesktopPageInput(
         request: BrowserTextRequest,
         focus: TapTarget?,
     ): ActionResult =
-        act(cdp) { events ->
+        act(cdp, id) { events ->
             val points = ArrayList<Point>()
             var note: String? = null
             if (focus != null) {
@@ -226,15 +235,18 @@ internal class DesktopPageInput(
         }
 
     /**
-     * Runs [block] as the only action on the mouse and keyboard, once this tab is the one Chrome
-     * shows, with events for the page that move [pointer].
+     * Runs [block] as the only action on the mouse and keyboard, once the tab [id] is the one
+     * Chrome shows, with events for the page that move [pointer].
      */
-    private suspend fun <T> act(cdp: CdpSession, block: suspend (DesktopEvents) -> T): T =
-        pointer.act {
-            if (!tabShowing(cdp)) selectTab(cdp)
-            val ratio = dipScale(cdp.call("Page.getLayoutMetrics"))
-            block(pointer.tracked(CdpDesktopEvents(cdp, devicePixelRatio = ratio)))
-        }
+    private suspend fun <T> act(
+        cdp: CdpSession,
+        id: String,
+        block: suspend (DesktopEvents) -> T,
+    ): T = pointer.act {
+        if (!tabShowing(cdp)) selectTab(cdp) { select(id) }
+        val ratio = dipScale(cdp.call("Page.getLayoutMetrics"))
+        block(pointer.tracked(CdpDesktopEvents(cdp, devicePixelRatio = ratio)))
+    }
 
     /** Select all, then Backspace: Ctrl+A here, Command+A with Chrome's command on macOS. */
     private suspend fun clearField(events: DesktopEvents, maxGapMs: Long) {

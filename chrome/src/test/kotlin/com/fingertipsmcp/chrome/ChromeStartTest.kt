@@ -1,5 +1,6 @@
 package com.fingertipsmcp.chrome
 
+import com.fingertipsmcp.browser.CdpBrowserConnection
 import java.io.File
 import java.io.InputStream
 import java.net.InetAddress
@@ -17,10 +18,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -133,6 +137,24 @@ class ChromeStartTest {
             assertFalse(process.isAlive, "Chrome kept running after its launch failed")
         } finally {
             process.destroyForcibly()
+        }
+    }
+
+    /**
+     * The first window opens with `background`, since `Target.createTarget` without it brings
+     * Chrome in front of whichever app the person is using.
+     */
+    @Test
+    fun `first window opens hidden`() = runTest {
+        FakeChrome().use { chrome ->
+            CdpBrowserConnection(chrome, StandardTestDispatcher(testScheduler)).use { connection ->
+                connection.start()
+                openFirstWindow(connection)
+                val (method, params) = chrome.commands.single()
+                assertEquals("Target.createTarget", method)
+                assertEquals(true, params["newWindow"]?.jsonPrimitive?.boolean)
+                assertEquals(true, params["background"]?.jsonPrimitive?.boolean)
+            }
         }
     }
 

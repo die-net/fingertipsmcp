@@ -1,9 +1,12 @@
 package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.CdpBrowserConnection
+import com.fingertipsmcp.browser.DESKTOP_ENDPOINT
 import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.OpenCdpSession
+import com.fingertipsmcp.browser.TabSelector
 import com.fingertipsmcp.browser.ViewerPageInput
+import com.fingertipsmcp.browser.browserTargetId
 import com.fingertipsmcp.browser.decodeCdp
 import com.fingertipsmcp.browser.evalResult
 import com.fingertipsmcp.browser.hasCommand
@@ -60,6 +63,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
@@ -68,16 +72,21 @@ import org.slf4j.LoggerFactory
  * The viewer for a desktop Chrome: the tab Chrome shows, as H.264 video and Opus audio, and a
  * person's mouse and keyboard on it.
  *
- * A small extension, loaded when the first viewer connects, does the capture: FingertipsMCP runs
- * its action on the showing tab with `Extensions.triggerAction`, which lets `tabCapture` capture
- * that tab with no picker or banner, and its offscreen document encodes with WebCodecs and hands
- * frames back through a DevTools binding. Capture follows the tab Chrome shows, as the screen
- * holder or a person switches tabs, and stops when the last viewer leaves. Frames reach viewers as
- * the phone's do, through [VideoViewers].
+ * A small extension, loaded when the first viewer connects or the first tab is selected ([select]),
+ * does the capture: FingertipsMCP runs its action on the showing tab with
+ * `Extensions.triggerAction`, which lets `tabCapture` capture that tab with no picker or banner,
+ * and its offscreen document encodes with WebCodecs and hands frames back through a DevTools
+ * binding. Capture follows the tab Chrome shows, as the screen holder or a person switches tabs,
+ * and stops when the last viewer leaves. Frames reach viewers as the phone's do, through
+ * [VideoViewers].
  *
  * When the extension's capture stops and no other takes its place, or Chrome goes away, every
  * viewer is closed with the reason, as the phone's stream closes them when its pipeline fails, and
  * a viewer that reconnects starts a new capture.
+ *
+ * The same extension selects tabs for the browser service, with `chrome.tabs.update`, which leaves
+ * whichever app is in front there, and says which tab Chrome shows ([TabSelector]). Every way
+ * DevTools has to select a tab brings Chrome in front of the person's other apps.
  */
 class ChromeViewer(
     private val connection: suspend () -> CdpBrowserConnection,
@@ -92,7 +101,7 @@ class ChromeViewer(
     private val pointer: DesktopPointer,
     /** Monotonic milliseconds. */
     private val now: () -> Long = { System.nanoTime() / NANOS_PER_MS },
-) {
+) : TabSelector {
     private val gate = Mutex()
     private val videoViewers = VideoViewers(::requestKeyFrame, now)
     private val audioViewers = CopyOnWriteArrayList<AudioQueue>()
@@ -116,6 +125,11 @@ class ChromeViewer(
     private var pruned = false
     /** What [controls] tells viewer pages of the picture, set as capture follows the tabs. */
     private val notice = MutableStateFlow<String?>(null)
+    /**
+     * The connection to a Chrome that would not load the extension, so [select] and [showing] stop
+     * asking.
+     */
+    private var refusedBy: CdpBrowserConnection? = null
 
     /** The extension loaded into one browser connection, and what it knows of its targets. */
     private data class Loaded(
@@ -202,6 +216,72 @@ class ChromeViewer(
         }
     }
 
+    /**
+     * Makes [id], a browser target id, the active tab in its window through the extension, loading
+     * it first if this browser lacks it. Chrome stays behind whichever app is in front, and the
+     * page reads `visible` once its renderer hears, a little after this returns, unless its window
+     * is behind another app's or minimized. True when the extension selected the tab. False when it
+     * could not: on a Chrome whose DevTools can't load the extension, Chrome 125 to 148, which is
+     * logged once per Chrome, or when the extension failed. The caller then selects the tab over
+     * DevTools, which brings Chrome in front.
+     */
+    override suspend fun select(id: String): Boolean {
+        val (_, chromeId) = parseBrowserTargetId(id)
+        return onExtension(false) { ext ->
+            val failed = "The viewer extension did not select the tab"
+            val reply =
+                offscreenSession(ext)
+                    .evaluate("fingertipsViewer.select(${JsonPrimitive(chromeId)})", failed)
+                    .decodeCdp<Selected>()
+            if (reply?.ok != true) log.debug("{}: {}", failed, reply?.error ?: "no answer")
+            reply?.ok == true
+        }
+    }
+
+    /**
+     * The browser target id of the active tab of the normal window Chrome focused last, as the
+     * extension's worker reads it from Chrome, loading the extension as [select] does. Null when
+     * Chrome has no normal window, or the extension can't say, as on Chrome 125 to 148.
+     */
+    override suspend fun showing(): String? =
+        onExtension(null) { ext ->
+            shownIds(ext).firstOrNull()?.let { browserTargetId(DESKTOP_ENDPOINT, it) }
+        }
+
+    /**
+     * Runs [block] on the extension, under [gate], loading it if this browser lacks it. [unknown]
+     * when this Chrome won't load it or the extension fails, since the caller then asks DevTools.
+     */
+    private suspend fun <T> onExtension(unknown: T, block: suspend (Loaded) -> T): T =
+        gate.withLock {
+            try {
+                val ext = loadToSelect() ?: return@withLock unknown
+                block(ext)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException) {
+                log.debug("The viewer extension did not answer: {}", e.message)
+                unknown
+            }
+        }
+
+    /**
+     * With [gate] held: the extension, loaded if this browser lacks it, or null on a Chrome that
+     * won't load it, which is asked only once.
+     */
+    private suspend fun loadToSelect(): Loaded? {
+        val browserConnection = connection()
+        if (refusedBy === browserConnection) return null
+        return try {
+            load()
+        } catch (e: ApiException) {
+            if (e.error != UNSUPPORTED) throw e
+            refusedBy = browserConnection
+            log.debug("Selecting tabs over DevTools: {}", e.message)
+            null
+        }
+    }
+
     /** Removes a viewer with [remove], and stops capturing when none is left. */
     private suspend fun leave(remove: suspend () -> Unit) {
         gate.withLock {
@@ -268,7 +348,8 @@ class ChromeViewer(
      * Refuses the viewer on a Chrome whose DevTools can't load the extension or run its action,
      * before anything is written or loaded. Chrome 125 has neither command, and
      * `Extensions.triggerAction` first came in Chrome 146, so Chrome 126 to 145 would load an
-     * extension that can capture nothing.
+     * extension that can capture nothing. [select] needs only the load, but takes the same check,
+     * so one extension, loaded once, serves both.
      */
     private suspend fun requireExtensionCommands(connection: CdpBrowserConnection) {
         val missing = EXTENSION_COMMANDS.firstOrNull { !connection.root.hasCommand(it) } ?: return
@@ -339,22 +420,29 @@ class ChromeViewer(
      * Chromium's main branch checks and refuses. With no normal window open, the captured tab
      * stays, if it is still open.
      */
-    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun showingTab(ext: Loaded): String? {
+        val ids = shownIds(ext)
+        val pages = browser.targets().filter { it.type == "page" }.map { it.id }
+        return pages.firstOrNull { parseBrowserTargetId(it).second in ids }
+            ?: captured?.pageId?.takeIf { it in pages }
+    }
+
+    /**
+     * The DevTools target ids of the active tab of the normal window Chrome focused last, as the
+     * extension's worker reads them, empty when Chrome has no normal window.
+     */
+    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
+    private suspend fun shownIds(ext: Loaded): List<String> {
         val failed = "The viewer extension did not say which tab Chrome shows"
         val reply =
             offscreenSession(ext)
                 .evaluate("fingertipsViewer.showing()", failed)
                 .decodeCdp<ShowingTab>()
-        val ids =
-            reply?.ids
-                ?: throw ApiException.unavailable(
-                    "capture_failed",
-                    "$failed: ${reply?.error ?: "no answer"}",
-                )
-        val pages = browser.targets().filter { it.type == "page" }.map { it.id }
-        return pages.firstOrNull { parseBrowserTargetId(it).second in ids }
-            ?: captured?.pageId?.takeIf { it in pages }
+        return reply?.ids
+            ?: throw ApiException.unavailable(
+                "capture_failed",
+                "$failed: ${reply?.error ?: "no answer"}",
+            )
     }
 
     /**
@@ -820,6 +908,9 @@ class ChromeViewer(
 
     @Serializable private data class BindingCalled(val name: String, val payload: String)
 
+    /** The extension's answer to a selection: ok, or why it did not select the tab. */
+    @Serializable private data class Selected(val ok: Boolean? = null, val error: String? = null)
+
     @Serializable
     private data class CaptureOutcome(val ok: Boolean? = null, val error: String? = null)
 
@@ -904,11 +995,14 @@ private fun evaluation(expression: String) = buildJsonObject {
     put("returnByValue", true)
 }
 
+/** The error code of [unsupported]. */
+private const val UNSUPPORTED = "unsupported"
+
 /** The viewer can't run on this Chrome, for [reason]. */
 private fun unsupported(reason: String, cause: Throwable? = null) =
     ApiException(
         422,
-        "unsupported",
+        UNSUPPORTED,
         "The viewer needs Chrome $VIEWER_CHROME or later. $reason",
         cause = cause,
     )

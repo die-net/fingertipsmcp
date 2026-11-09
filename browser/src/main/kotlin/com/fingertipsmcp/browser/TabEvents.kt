@@ -123,6 +123,14 @@ internal class TabEvents(private val cdp: CdpSession) {
     }
 
     /**
+     * Makes the tab [id] the one its window shows, with `Target.activateTarget`, which on a desktop
+     * also brings Chrome in front of other apps.
+     */
+    suspend fun activate(id: String) {
+        cdp.call("Target.activateTarget", buildJsonObject { put("targetId", id) })
+    }
+
+    /**
      * The id `Target.getTargets` lists a new tab under, on a Chrome that answered `createTarget`
      * with the Android tab's number, as Chrome 91 and 109 do. Everything that compares ids, from
      * who owns a tab to the startup sweep, needs one id per tab. Chrome announces no link between

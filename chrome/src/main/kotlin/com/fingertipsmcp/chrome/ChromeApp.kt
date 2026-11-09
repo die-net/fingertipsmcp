@@ -5,6 +5,7 @@ import com.fingertipsmcp.browser.ConnectionEndpoints
 import com.fingertipsmcp.browser.DESKTOP_ENDPOINT
 import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.browser.DesktopStyle
+import com.fingertipsmcp.browser.TabSelector
 import com.fingertipsmcp.browser.parseBrowserTargetId
 import com.fingertipsmcp.core.EventBus
 import com.fingertipsmcp.lease.ScreenLease
@@ -71,11 +72,26 @@ class ChromeApp(
     private val device = HostDevice(supervisor, version)
     /** Chrome's one mouse and keyboard, which the agent's input and the viewer's share. */
     private val pointer = DesktopPointer(DesktopStyle.forHost())
-    private val browser =
+    // The viewer lists the browser's tabs, and the browser selects tabs through the viewer's
+    // extension, so one of the two reaches the other later. The browser does: it selects a tab
+    // only for a request, after both exist. Headless Chrome has no app to bring in front, so it
+    // gets no selector, and whether --headless=new loads an extension is not known.
+    @Suppress("PropertyUsedBeforeDeclaration")
+    private val browser: BrowserServiceImpl =
         BrowserServiceImpl(
             devtools = devtools,
             desktopInput = pointer,
             scope = scope,
+            selector =
+                if (options.headless) {
+                    null
+                } else {
+                    object : TabSelector {
+                        override suspend fun select(id: String): Boolean = viewer.select(id)
+
+                        override suspend fun showing(): String? = viewer.showing()
+                    }
+                },
         )
     // Cleanup runs only after a holder lets go, long after tabs exists.
     @Suppress("PropertyUsedBeforeDeclaration")
@@ -100,7 +116,7 @@ class ChromeApp(
         )
     private val shots = TabScreenshots(browser, devtools)
     @Suppress("MissingUseCall") // The supervisor owns the browser connection.
-    private val viewer =
+    private val viewer: ChromeViewer =
         ChromeViewer(
             connection = { supervisor.connection() },
             browser = browser,
