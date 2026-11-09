@@ -165,7 +165,10 @@ To keep a development run away from your own files, point `XDG_CONFIG_HOME` and 
 FingertipsMCP is tested back to the oldest Chrome the bundled pdf.js supports, since PDF reads need it. pdf.js 6.4.299 needs Chrome 125, as the `Chrome >=` line in its `gulpfile.mjs` says. A pdf.js update can raise that, so check the line and update this section with it.
 
 - Chrome 125 and newer are supported. The phone's Chrome and the newest emulator get the full checks, and repeated runs when a failure is intermittent.
+- FingertipsMCP for Chrome's viewer needs Chrome 149 or later, so it is tested back to 149. On an older Chrome, check only that it refuses.
 - Older Chrome is not supported. It gets only a quick happy-path look, without PDFs, to see if anything is obviously broken with an easy fix. A few tries are enough, and a failure that shows up only there is not a release blocker.
+
+Chrome for Testing publishes old desktop builds: `npx @puppeteer/browsers install chrome@125 --path DIR` installs the last 125 build, which `--chrome` then names. On macOS, give it `--chrome-arg --use-mock-keychain`, or it waits at start on a keychain prompt for its Safe Storage key and never answers. Google Chrome itself doesn't need that.
 
 Test a fix on the current Chrome first, with the sequence that failed. Run other Chrome versions only when the code differs by version.
 

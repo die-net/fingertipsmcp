@@ -12,10 +12,12 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -23,9 +25,14 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 
-/** A start cancelled while it waits for Chrome's first answer leaves nothing behind. */
+/**
+ * A start that fails or is cancelled while it waits for Chrome's first answer leaves nothing
+ * behind.
+ */
+@OptIn(ExperimentalCoroutinesApi::class) // runCurrent starts the launch on the virtual clock.
 @Suppress("InjectDispatcher") // A real process and real sockets need a real IO dispatcher.
 class ChromeStartTest {
     @Test
@@ -75,6 +82,55 @@ class ChromeStartTest {
                 process.onExit().completeOnTimeout(process, EXIT_LIMIT_S, TimeUnit.SECONDS).join()
             }
             assertFalse(process.isAlive, "Chrome kept running after its launch was cancelled")
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    /**
+     * A Chrome that never answers and ignores SIGTERM, as Chrome for Testing 125 does while its
+     * main thread waits on a macOS keychain prompt. The launch gives up on it and kills it, so it
+     * doesn't hold the profile. The launch runs on the virtual clock, so its DevTools timeout and
+     * its wait for the exit pass at once.
+     */
+    @Test
+    fun `stuck Chrome is killed`(@TempDir dir: File) = runTest {
+        val started = File(dir, "started")
+        assertEquals(0, ProcessBuilder("mkfifo", started.path).start().waitFor())
+        val chrome =
+            File(dir, "chrome").apply {
+                writeText(
+                    listOf(
+                            "#!/bin/sh",
+                            "trap '' TERM",
+                            "echo $$ > '${started.path}'",
+                            "exec sleep 600",
+                        )
+                        .joinToString("\n")
+                )
+                setExecutable(true)
+            }
+        val launcher =
+            ChromeLauncher(
+                BrowserBinary(chrome, chromium = false),
+                profile = File(dir, "profile"),
+                headless = true,
+                extraArgs = emptyList(),
+                logFile = File(dir, "chrome.log"),
+                io = Dispatchers.IO,
+            )
+        val launch = async { assertThrows<LaunchException> { launcher.start().stop() } }
+        runCurrent()
+        // Read on the test's thread, so the virtual clock waits until the fake ignores SIGTERM.
+        val pid = started.readText().trim().toLong()
+        val process = ProcessHandle.of(pid).orElseThrow()
+        try {
+            launch.await()
+            // Waits for the exit itself. The limit only ends a run where the process was left.
+            runInterruptible(Dispatchers.IO) {
+                process.onExit().completeOnTimeout(process, EXIT_LIMIT_S, TimeUnit.SECONDS).join()
+            }
+            assertFalse(process.isAlive, "Chrome kept running after its launch failed")
         } finally {
             process.destroyForcibly()
         }

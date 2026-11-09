@@ -32,6 +32,28 @@ internal class CdpRejected(val code: Int?, message: String) : Exception(message)
 /** The JSON-RPC code Chrome gives a command it could not carry out, for any reason. */
 internal const val SERVER_ERROR = -32_000
 
+/** The JSON-RPC code Chrome gives a command its DevTools does not have. */
+private const val METHOD_NOT_FOUND = -32_601
+
+/**
+ * Whether Chrome's DevTools has [method], for a command that only some Chrome releases have. It
+ * sends [method] with no parameters, so it suits only a command with a required one: a Chrome that
+ * has the command refuses the parameters and does nothing, and one that lacks it says it is not
+ * found. A failure that is not Chrome's answer, such as a closed connection, is thrown.
+ */
+suspend fun CdpSession.hasCommand(method: String): Boolean =
+    try {
+        call(method)
+        true
+    } catch (e: ApiException) {
+        val refusal = e.rejected ?: throw e
+        refusal.code != METHOD_NOT_FOUND
+    }
+
+/** Whether Chrome refused the command behind this error, rather than the connection failing. */
+val ApiException.refusedByChrome: Boolean
+    get() = rejected != null
+
 /** What Chrome said when it refused the command behind this error, or null when it did not. */
 internal val ApiException.rejected: CdpRejected?
     get() = cause as? CdpRejected

@@ -7,7 +7,7 @@ It runs as a single jar (`fingertipsmcp-chrome-vX.Y.Z.jar`, Java 21). Docker is 
 ## Requirements
 
 - Java 21 (for example Temurin)
-- Google Chrome, stable channel, where its installer puts it. Chromium works as a fallback with a cost; see [Chromium](#chromium).
+- Google Chrome, stable channel, where its installer puts it. Chromium works as a fallback with a cost; see [Chromium](#chromium). FingertipsMCP is tested back to Chrome 125, and the [viewer](#viewer) needs Chrome 149 or later.
 - Linux on x86-64 or ARM64, or macOS. Google ships Chrome for ARM64 Linux through the same apt repository, so a Raspberry Pi 4 or 5 on 64-bit Raspberry Pi OS can run `google-chrome-stable`. Raspberry Pi OS's own browser is Chromium.
 - curl and jq if you want `fingertips papi` to call it
 
@@ -67,7 +67,7 @@ Background means background here too, so a workflow that only works while its ta
 
 ## Viewer
 
-`GET /viewer` serves the same WebCodecs page as the phone's, to a token with the `stream` scope, and the `control` scope too to use the tab. It shows the tab Chrome shows, with its sound, and takes the mouse and keyboard. The `fingertips-chrome://viewer` MCP resource gives its address. It needs HTTP on a TCP port, so `--unix` and `--stdio` have no viewer.
+`GET /viewer` serves the same WebCodecs page as the phone's, to a token with the `stream` scope, and the `control` scope too to use the tab. It shows the tab Chrome shows, with its sound, and takes the mouse and keyboard. The `fingertips-chrome://viewer` MCP resource gives its address. It needs HTTP on a TCP port, so `--unix` and `--stdio` have no viewer. It needs Chrome 149 or later, the first that loads an unpacked extension over the pipe and runs its action without a debugging flag. On an older Chrome the video and audio sockets close with that reason, and nothing is written to the profile.
 
 When the first viewer connects, FingertipsMCP for Chrome writes a small extension to the Chrome profile's directory and loads it with `Extensions.loadUnpacked`. It runs the extension's action on the tab Chrome shows (`Extensions.triggerAction`), which lets `chrome.tabCapture` capture that tab with no picker and no "sharing this tab" banner. The extension's offscreen document encodes H.264 with WebCodecs, at half the tab's device pixels and no more than `maxSize`, and Opus for its sound. It hands the frames back through a DevTools binding on the same pipe, so it opens no connection and holds no token. Capture follows the tab Chrome shows, as the screen holder or a person switches tabs, and stops when the last viewer leaves.
 
@@ -139,6 +139,7 @@ FingertipsMCP for Chrome keeps Chrome with a window open:
 
 - Closing the last tab through the API first opens a blank tab, as a person opens a new tab before closing their last one. Chrome on Linux exits when its last window closes, which would end session cookies and logins.
 - On macOS, Chrome keeps running when a person closes its last window. Opening a tab then opens a window again.
+- A Chrome that does not answer within 15 s of starting, as when macOS holds it on a keychain prompt, is stopped, and killed if it is still running 5 s later, so it does not keep the profile. That call fails, and the next starts Chrome again.
 - If Chrome exits anyway, for example when a person closes its last window on Linux or quits it, the next call starts it again with a fresh blank window. `device_info` reports `model` as `Chrome (not running)` until then. A call that gives up while Chrome starts, such as a client that hangs up, leaves the start to finish, and the next call uses that Chrome.
 
 ### ARM
