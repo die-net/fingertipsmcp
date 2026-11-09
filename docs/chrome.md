@@ -154,10 +154,11 @@ When Google Chrome is not installed, as on a stock Raspberry Pi OS, FingertipsMC
 The image `ghcr.io/die-net/fingertipsmcp-chrome` is Debian with Google Chrome, Java 21, Xvfb, and a desktop font set (Liberation, DejaVu, Noto including CJK and color emoji), for `linux/amd64` and `linux/arm64`.
 
 ```sh
+curl -fsSLO https://raw.githubusercontent.com/die-net/fingertipsmcp/main/chrome/docker/seccomp.json
 docker volume create fingertips-chrome-config
 docker volume create fingertips-chrome-data
-docker run --rm -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome ghcr.io/die-net/fingertipsmcp-chrome token create
-docker run -d --name fingertips-chrome --shm-size=1g \
+docker run --rm -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome ghcr.io/die-net/fingertipsmcp-chrome token create --scopes observe,control,browser,stream
+docker run -d --name fingertips-chrome --shm-size=1g --security-opt seccomp=seccomp.json \
   -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome \
   -v fingertips-chrome-data:/home/fingertips/.local/share/fingertips-chrome \
   -p 127.0.0.1:47100:47100 \
@@ -165,7 +166,9 @@ docker run -d --name fingertips-chrome --shm-size=1g \
 docker run --rm -v fingertips-chrome-config:/c alpine cat /c/pairing.json > ~/fingertips-chrome-pairing.json
 ```
 
-The container listens on port 47100 (`FINGERTIPS_PORT`) on all of its interfaces; publish it on the host's loopback only, as above. `FINGERTIPS_SCREEN` sets the Xvfb screen (default `1920x1080x24`), and `TZ` the time zone. Passing `DISPLAY` and the X socket uses that display instead of Xvfb. Chrome runs as an unprivileged user with its sandbox. If it fails to start because the container blocks the user namespaces its sandbox needs, allow them (for example a seccomp profile that permits `clone` with namespace flags) rather than turning the sandbox off. `--shm-size` keeps large pages from crashing the renderer.
+The container listens on port 47100 (`FINGERTIPS_PORT`) on all of its interfaces; publish it on the host's loopback only, as above. `FINGERTIPS_SCREEN` sets the Xvfb screen (default `1920x1080x24`), and `TZ` the time zone. Passing `DISPLAY` and the X socket uses that display instead of Xvfb. The `stream` scope is for the [viewer](#viewer); leave it out of a token that only needs to drive tabs. `--shm-size` keeps large pages from crashing the renderer.
+
+Chrome runs as an unprivileged user with its sandbox, which needs to make namespaces. Docker's default seccomp profile refuses that without `CAP_SYS_ADMIN`, and Chrome then exits at start with "Failed to move to new namespace". `chrome/docker/seccomp.json` is Docker's default profile with one rule added that allows `clone` and `unshare`, so pass it with `--security-opt seccomp=`. `--cap-add SYS_ADMIN` also works, but it gives every setuid program in the container that capability. Don't turn the sandbox off with `--no-sandbox`: a page that escapes the renderer would then run as the container's user.
 
 To build the image from a checkout:
 
@@ -173,6 +176,8 @@ To build the image from a checkout:
 ./gradlew :chrome:fatJar
 docker build -f chrome/docker/Dockerfile -t fingertipsmcp-chrome chrome
 ```
+
+CI and the release build it from `docker-bake.hcl` at the repository root, which names the same Dockerfile.
 
 ## Files
 

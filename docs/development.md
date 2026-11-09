@@ -141,6 +141,12 @@ Useful pieces on their own:
 
 Release tags also build a signed release APK (`assembleRelease`) after those checks, attach `fingertipsmcp-chrome-vX.Y.Z.jar` to the release, and push the `ghcr.io/die-net/fingertipsmcp-chrome` image for amd64 and arm64.
 
+CI also runs the fat jar, then builds the Docker image from `docker-bake.hcl`, the definition the release pushes, on an amd64 runner and on GitHub's arm64 runner. On each it runs the container as [chrome.md](chrome.md#docker) says to, and `chrome/docker/smoke-test.mjs` checks it: `GET /v1/device` answers, a session opens `https://example.com/` and reads it, `GET /v1/screenshot` is a PNG, closing every tab leaves Chrome running, and a video viewer gets a header and a frame within 5 s. The job then checks the container's log for a single Chrome start, and prints that log and Chrome's. The release builds arm64 under QEMU, which CI does not. The smoke test closes every tab it lists, so to check a container yourself, start a fresh one the same way and pass its pairing file:
+
+```sh
+node chrome/docker/smoke-test.mjs ~/fingertips-chrome-pairing.json
+```
+
 ## FingertipsMCP for Chrome
 
 The desktop build needs only a JDK 21 and Chrome.

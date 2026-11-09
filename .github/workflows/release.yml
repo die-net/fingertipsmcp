@@ -103,19 +103,20 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      # docker-bake.hcl is the build CI tests; the metadata adds the tags and labels.
       - id: push
-        uses: docker/build-push-action@v6
+        uses: docker/bake-action@v7
         with:
-          context: chrome
-          file: chrome/docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          source: .
+          files: |
+            ./docker-bake.hcl
+            ${{ steps.meta.outputs.bake-file }}
+          targets: fingertipsmcp-chrome
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
 
       - uses: actions/attest-build-provenance@v4
         if: ${{ !github.event.repository.private }}
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ fromJSON(steps.push.outputs.metadata)['fingertipsmcp-chrome']['containerimage.digest'] }}
           push-to-registry: true
