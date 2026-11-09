@@ -32,7 +32,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Chrome refuses its sandbox as root, and --no-sandbox is a tell, so run as a user.
-RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin fingertips
+# The volumes' mount points exist here, owned by that user, so a new named volume takes their owner.
+# Docker makes a mount point the image lacks, and its parents, owned by root, which the user can't write.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin fingertips \
+    && install -d -o fingertips -g fingertips \
+        /home/fingertips/.config \
+        /home/fingertips/.config/fingertips-chrome \
+        /home/fingertips/.local \
+        /home/fingertips/.local/share \
+        /home/fingertips/.local/share/fingertips-chrome
 
 COPY build/dist/fingertipsmcp-chrome.jar /opt/fingertips-chrome/fingertipsmcp-chrome.jar
 COPY docker/entrypoint.sh /usr/local/bin/fingertips-chrome-entrypoint

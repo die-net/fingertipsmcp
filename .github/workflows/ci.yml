@@ -94,3 +94,69 @@ jobs:
         with:
           name: fingertips-chrome
           path: chrome/build/dist/fingertipsmcp-chrome.jar
+
+  image:
+    # Builds the Docker image from the definition the release pushes, and runs it as docs/chrome.md says a
+    # person would. arm64 runs on GitHub's arm64 runner rather than under QEMU.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: fingertips-chrome
+          path: chrome/build/dist
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/bake-action@v7
+        with:
+          source: .
+          targets: fingertipsmcp-chrome
+          load: true
+          set: |
+            fingertipsmcp-chrome.platform=${{ matrix.platform }}
+            fingertipsmcp-chrome.tags=fingertipsmcp-chrome:ci
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Run the image
+        run: |
+          image=fingertipsmcp-chrome:ci
+          docker image ls "$image"
+          docker run --rm --entrypoint google-chrome "$image" --version
+          docker volume create fingertips-chrome-config
+          docker volume create fingertips-chrome-data
+          docker run --rm -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome "$image" \
+            token create --scopes observe,control,browser,stream
+          docker run -d --name fingertips-chrome --shm-size=1g \
+            --security-opt seccomp=chrome/docker/seccomp.json \
+            -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome \
+            -v fingertips-chrome-data:/home/fingertips/.local/share/fingertips-chrome \
+            -p 127.0.0.1:47100:47100 \
+            "$image"
+          docker run --rm -v fingertips-chrome-config:/c alpine cat /c/pairing.json > "$RUNNER_TEMP/pairing.json"
+          node chrome/docker/smoke-test.mjs "$RUNNER_TEMP/pairing.json"
+          # One Chrome for the whole run: closing its last tab did not make it exit and start again.
+          docker logs fingertips-chrome > "$RUNNER_TEMP/container.log" 2>&1
+          test "$(grep -c 'Started Chrome' "$RUNNER_TEMP/container.log")" = 1
+          ! grep -q 'The browser exited' "$RUNNER_TEMP/container.log"
+
+      - name: Container and Chrome logs
+        if: always()
+        run: |
+          docker ps -a --filter name=fingertips-chrome
+          docker logs fingertips-chrome || true
+          docker run --rm -v fingertips-chrome-data:/d alpine cat /d/chrome.log || true
