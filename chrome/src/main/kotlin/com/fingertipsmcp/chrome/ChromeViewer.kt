@@ -300,8 +300,9 @@ class ChromeViewer(
      */
     private fun writeExtension(): File {
         val files = EXTENSION_FILES.associateWith { name ->
-            checkNotNull(ChromeViewer::class.java.getResourceAsStream("viewer/$name")) {
-                    "viewer/$name is missing from the jar"
+            val path = "com/fingertipsmcp/chrome/viewer/$name"
+            checkNotNull(ChromeViewer::class.java.classLoader.getResourceAsStream(path)) {
+                    "$path is missing from the jar"
                 }
                 .use { it.readBytes() }
         }
