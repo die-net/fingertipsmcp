@@ -39,8 +39,8 @@ public data class CreateTokenRequest(
 @Serializable public data class CreatedToken(val info: TokenInfo, val token: String)
 
 /**
- * What a client needs after `CREATE_TOKEN` over ADB. [host] is `127.0.0.1` once `adb forward` is
- * installed; [port] is the local TCP port that reaches the abstract socket.
+ * What a client needs after minting a token over ADB with `fingertips pair`. [host] is `127.0.0.1`
+ * once `adb forward` is installed; [port] is the local TCP port that reaches the abstract socket.
  */
 @Serializable
 public data class PairingInfo(

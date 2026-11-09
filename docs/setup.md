@@ -35,7 +35,7 @@ Open FingertipsMCP on the phone (its launcher icon says Fingertips) for screen r
 
 ### Pairing
 
-A paired computer holds its own bearer token. Mint one with `fingertips pair`. The shell user is already trusted, so no approval on the phone is needed:
+A paired computer holds its own bearer token. Mint one with `fingertips pair`. The shell user is already trusted, so no approval on the phone is needed. It reads the token from the app with `adb shell content read`, so the token reaches only adb's output and the pairing file, never the phone's log:
 
 ```sh
 fingertips pair --name laptop

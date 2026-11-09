@@ -49,9 +49,7 @@ command:pair() {
     needs jq
 
     local PKG="$FINGERTIPS_PKG"
-    local RECEIVER="$PKG/com.fingertipsmcp.ShellCommandReceiver"
-    local name scopes="" out json port error
-    local -a extras
+    local name scopes="" uri errfile out err json port error
     name="$(hostname -s 2>/dev/null || hostname)"
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -66,29 +64,35 @@ command:pair() {
             *) die "unknown arg $1" ;;
         esac
     done
-    # adb shell joins arguments into one remote command line, so keep the name shell-safe.
+    # The name goes into a URI and a remote command line, so keep it to characters safe in both.
     name="${name//[^A-Za-z0-9._-]/-}"
-    extras=(--es name "$name")
+    uri="content://$PKG.pairing/token?name=$name"
     if [[ -n $scopes ]]; then
         [[ $scopes =~ ^[A-Za-z,]+$ ]] \
             || die "--scopes takes names separated by commas, such as observe,control"
-        extras+=(--es scopes "$scopes")
+        uri+="&scopes=$scopes"
     fi
 
-    out="$(adb shell am broadcast -n "$RECEIVER" -a com.fingertipsmcp.CREATE_TOKEN "${extras[@]}" | tr -d '\r')" \
-        || die "CREATE_TOKEN failed: adb could not reach the phone."
-    # am prints the receiver's result as text, with its data in quotes: the pairing JSON on result
-    # 0 and a message on result 1. Only that line is read as text; the JSON goes to jq.
-    json="$(sed -n 's/.*result=0, data="\(.*\)"$/\1/p' <<<"$out")"
-    if [[ -z $json ]]; then
-        error="$(sed -n 's/.*result=1, data="\(.*\)"$/\1/p' <<<"$out")"
-        [[ -z $error ]] || die "CREATE_TOKEN failed: $error"
-        die "CREATE_TOKEN failed. Is FingertipsMCP installed as $PKG?"
+    # Each read mints a token and prints its pairing JSON to stdout. A broadcast's result would
+    # carry it too, but Android 16 and 17 log those. adb shell joins its arguments into one remote
+    # command line, so the URI is quoted for the phone's shell, where ? and & are special.
+    errfile="$(mktemp)"
+    out="$(adb shell content read --uri "'$uri'" 2>"$errfile" | tr -d '\r')" \
+        || { rm -f "$errfile"; die "Pairing failed: adb could not reach the phone."; }
+    err="$(tr -d '\r' <"$errfile")"
+    rm -f "$errfile"
+    # content exits 0 even when the provider throws, so success is JSON with a token in it.
+    if ! json="$(jq -ce 'select(.token | type == "string") | .host = "127.0.0.1" | .scheme = "http"' <<<"$out" 2>/dev/null)"; then
+        # On failure content prints the exception to stderr, and that text is the only signal of
+        # why. Its first line holds the provider's message, or "Could not find provider" when the
+        # package is not installed.
+        error="$(sed -n 's/^[A-Za-z.]*Exception: //p' <<<"$err" | head -n 1)"
+        [[ -z $error || $error == "Could not find provider"* ]] \
+            || die "Pairing failed: $error"
+        die "Pairing failed. Is FingertipsMCP installed as $PKG?"
     fi
-    json="$(jq -c '.host = "127.0.0.1" | .scheme = "http"' <<<"$json" 2>/dev/null)" \
-        || die "CREATE_TOKEN returned something other than JSON."
     port="$(jq -r '.port // empty' <<<"$json")"
-    [[ $port =~ ^[0-9]+$ ]] || die "CREATE_TOKEN returned no port."
+    [[ $port =~ ^[0-9]+$ ]] || die "Pairing returned no port."
 
     mkdir -p "$(dirname "$PAPI_PAIRING")"
     # The file holds a bearer token, so only its owner may read it.

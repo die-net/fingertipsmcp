@@ -1,34 +1,11 @@
 package com.fingertipsmcp
 
-import com.fingertipsmcp.model.Scope
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ShellCommandParsingTest {
-    @Test
-    fun `parses scopes`() {
-        assertEquals(Scope.entries.toSet(), taken(parseScopeList(null)))
-        assertEquals(setOf(Scope.OBSERVE, Scope.CONTROL), taken(parseScopeList("observe,control")))
-        assertEquals(
-            setOf(Scope.OBSERVE, Scope.CONTROL),
-            taken(parseScopeList(" Observe , CONTROL ")),
-        )
-        assertEquals(setOf(Scope.BROWSER), taken(parseScopeList("browser,")))
-    }
-
-    @Test
-    fun `rejects bad scopes`() {
-        assertTrue(parseScopeList("") is Parse.Error)
-        assertTrue(parseScopeList("   ") is Parse.Error)
-        assertTrue(parseScopeList(",") is Parse.Error)
-        val unknown = parseScopeList("bogus")
-        assertTrue(unknown is Parse.Error)
-        assertTrue((unknown as Parse.Error).message.contains("bogus"))
-        assertTrue(parseScopeList("observe,nope") is Parse.Error)
-    }
-
     @Test
     fun `parses pairing extras`() {
         assertEquals("123456", taken(parsePairingCode(" 123456 ")))

@@ -41,7 +41,7 @@ scripts/fingertips-dev setup            # build, install, grant, pair, server, h
 scripts/fingertips-dev setup --no-build # skip the Gradle build
 ```
 
-That installs the debug APK as `com.fingertipsmcp.dev` (so it can sit next to a release build), grants `WRITE_SECURE_SETTINGS` so the app can re-enable Wireless Debugging after reboot, writes `.dev/pairing.json`, exposes the server on localhost, and starts the helper.
+That installs the debug APK as `com.fingertipsmcp.dev` (so it can sit next to a release build), grants `WRITE_SECURE_SETTINGS` so the app can re-enable Wireless Debugging after reboot, mints a token into `.dev/pairing.json` as `fingertips pair` does, exposes the server on localhost, and starts the helper.
 
 To rebuild by hand:
 

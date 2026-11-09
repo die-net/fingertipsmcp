@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.StrictMode
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class FingertipsApp : Application() {
     override fun onCreate() {
@@ -31,6 +33,7 @@ class FingertipsApp : Application() {
                 StrictMode.setThreadPolicy(policy)
             }
         graph = AppGraph(this, filesDir = files).also { it.start() }
+        built.countDown()
     }
 
     companion object {
@@ -39,6 +42,16 @@ class FingertipsApp : Application() {
         lateinit var graph: AppGraph
             private set
 
+        private val built = CountDownLatch(1)
+
         fun graphOrNull(): AppGraph? = if (this::graph.isInitialized) graph else null
+
+        /**
+         * Waits up to [timeoutMs] for [onCreate] to build the graph, for a provider's binder call.
+         * Android publishes providers before it calls [onCreate], so a call that started the
+         * process can arrive first. Null when the deadline passes.
+         */
+        fun awaitGraph(timeoutMs: Long): AppGraph? =
+            if (built.await(timeoutMs, TimeUnit.MILLISECONDS)) graph else null
     }
 }
