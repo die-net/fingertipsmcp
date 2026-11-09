@@ -1,6 +1,7 @@
 // The viewer extension's offscreen document, where the tab is captured and encoded. FingertipsMCP
 // drives it over DevTools: it adds the binding fingertipsViewerSend, through which this hands back
-// frames and news, and calls fingertipsViewer.capture, window, configure, keyFrame, and stop.
+// frames and news, and calls fingertipsViewer.capture, showing, window, configure, keyFrame, and
+// stop.
 //
 // Each frame goes out as the viewer's sockets carry it: a type byte (1 codec config, 2 key, 3
 // delta), the timestamp in microseconds as 8 big-endian bytes, then H.264 in Annex B or an Opus
@@ -385,12 +386,22 @@ globalThis.fingertipsViewer = {
       return { error: String((e && e.message) || e) };
     }
   },
-  // The type of the window with DevTools' id id, which chrome.windows uses too, or of the window
-  // Chrome focused last when id is undefined: {type}, with type null when the extension can't see
-  // the window, or {error} when the worker did not answer.
-  async window(id) {
+  // The DevTools target ids of the tab Chrome shows, as the worker reads them: {ids}, empty when
+  // Chrome has no normal window, or {error}.
+  async showing() {
     try {
-      const answer = await chrome.runtime.sendMessage({ op: "window", id: id });
+      const answer = await chrome.runtime.sendMessage({ op: "showing" });
+      if (answer && Array.isArray(answer.ids)) return { ids: answer.ids };
+      return { error: (answer && answer.error) || "The extension's worker gave no answer" };
+    } catch (e) {
+      return { error: String((e && e.message) || e) };
+    }
+  },
+  // The type of the window Chrome focused last: {type}, with type null when there is none, or
+  // {error} when the worker did not answer.
+  async window() {
+    try {
+      const answer = await chrome.runtime.sendMessage({ op: "window" });
       if (answer && "type" in answer) return { type: answer.type };
       return { error: "The extension's worker gave no answer" };
     } catch (e) {

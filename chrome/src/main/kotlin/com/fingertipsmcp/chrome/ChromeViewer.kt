@@ -326,53 +326,44 @@ class ChromeViewer(
     }
 
     /**
-     * The tab Chrome shows that the viewer can capture. A captured tab reports itself visible
-     * whatever Chrome shows, so while one is captured, another tab that is visible is the one
-     * Chrome shows now, and the captured tab stays when there is none. A tab in a window without
-     * the extension's action, such as a popup, is passed over, as [hasAction] says why.
-     */
-    private suspend fun showingTab(ext: Loaded): String? {
-        val pages = browser.targets().filter { it.type == "page" }.map { it.id }
-        val now = captured?.pageId?.takeIf { it in pages }
-        for (page in pages) {
-            if (page == now || browser.showing(page) != true) continue
-            if (hasAction(ext, page)) return page
-            log.info("Not capturing {}, whose window has no extension action", page)
-        }
-        return now
-    }
-
-    /**
-     * Whether [pageId] is in a window with the extension's action, which only a normal window the
-     * extension can see has. A popup's has no toolbar, and a window of another profile has no
-     * action for this extension. Chrome 156 runs `Extensions.triggerAction` on such a tab without
-     * checking for either, and crashes; Chromium's main branch checks and refuses. The extension's
-     * worker knows each window's type, under the id `Browser.getWindowForTarget` gives.
-     */
-    private suspend fun hasAction(ext: Loaded, pageId: String): Boolean {
-        val (_, chromeId) = parseBrowserTargetId(pageId)
-        val window =
-            ext.connection.root
-                .call("Browser.getWindowForTarget", buildJsonObject { put("targetId", chromeId) })
-                .decodeCdp<WindowForTarget>()
-                ?.windowId
-                ?: throw ApiException.unavailable(
-                    "capture_failed",
-                    "Chrome did not say which window holds the tab",
-                )
-        return windowType(ext, window) == NORMAL_WINDOW
-    }
-
-    /**
-     * The `chrome.windows` type of [window], or of the window Chrome focused last when it is null,
-     * as the extension's worker gives it. Null when the extension can't see that window.
+     * The tab Chrome shows that the viewer can capture: the active tab of the normal window Chrome
+     * focused last, as the extension's worker reads it from Chrome. It is read from Chrome rather
+     * than from which page reports itself visible, since a page hears of a switch only some time
+     * after Chrome makes it, by when the news of the switch may have come and gone, and a captured
+     * tab reports itself visible whatever Chrome shows. Only a normal window has the extension's
+     * action: a popup's has no toolbar, and a window of another profile, which the extension does
+     * not see, has no action for it. Chrome 156 runs `Extensions.triggerAction` on a tab in such a
+     * window without checking, and crashes; Chromium's main branch checks and refuses. With no
+     * normal window open, the captured tab stays, if it is still open.
      */
     @Suppress("MissingUseCall") // The document's session stays open until capture stops.
-    private suspend fun windowType(ext: Loaded, window: Long?): String? {
+    private suspend fun showingTab(ext: Loaded): String? {
+        val failed = "The viewer extension did not say which tab Chrome shows"
+        val reply =
+            offscreenSession(ext)
+                .evaluate("fingertipsViewer.showing()", failed)
+                .decodeCdp<ShowingTab>()
+        val ids =
+            reply?.ids
+                ?: throw ApiException.unavailable(
+                    "capture_failed",
+                    "$failed: ${reply?.error ?: "no answer"}",
+                )
+        val pages = browser.targets().filter { it.type == "page" }.map { it.id }
+        return pages.firstOrNull { parseBrowserTargetId(it).second in ids }
+            ?: captured?.pageId?.takeIf { it in pages }
+    }
+
+    /**
+     * The `chrome.windows` type of the window Chrome focused last, as the extension's worker gives
+     * it. Null when Chrome has no window.
+     */
+    @Suppress("MissingUseCall") // The document's session stays open until capture stops.
+    private suspend fun windowType(ext: Loaded): String? {
         val failed = "The viewer extension did not say what type the window is"
         val reply =
             offscreenSession(ext)
-                .evaluate("fingertipsViewer.window(${window ?: ""})", failed)
+                .evaluate("fingertipsViewer.window()", failed)
                 .decodeCdp<WindowType>()
         if (reply == null || reply.error != null) {
             throw ApiException.unavailable(
@@ -392,7 +383,7 @@ class ChromeViewer(
     private suspend fun showFocus(ext: Loaded) {
         val type =
             try {
-                windowType(ext, null)
+                windowType(ext)
             } catch (e: ApiException) {
                 log.debug("Could not read which window Chrome focused: {}", e.message)
                 return
@@ -406,7 +397,9 @@ class ChromeViewer(
      * failure before that leaves the capture running and [captured] as it was, unless the tab is
      * the one captured, whose capture stops before the action runs. [pageId] is one [showingTab]
      * chose, or the one captured, so its window has the extension's action, which the action needs
-     * so as not to crash Chrome; Chrome moves no tab into a popup.
+     * so as not to crash Chrome; Chrome moves no tab into a popup. Chrome 156 runs the action on
+     * the active tab of [pageId]'s window, which is [pageId] unless Chrome switched tabs since
+     * [showingTab] read it, and the news of that switch then moves capture on.
      */
     @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun capture(ext: Loaded, pageId: String) {
@@ -827,7 +820,9 @@ class ChromeViewer(
     @Serializable
     private data class CaptureOutcome(val ok: Boolean? = null, val error: String? = null)
 
-    @Serializable private data class WindowForTarget(val windowId: Long? = null)
+    /** The DevTools target ids of the tab Chrome shows, empty when it has no normal window. */
+    @Serializable
+    private data class ShowingTab(val ids: List<String>? = null, val error: String? = null)
 
     /** A window's type as `chrome.windows` names it, null when the extension can't see it. */
     @Serializable private data class WindowType(val type: String? = null, val error: String? = null)

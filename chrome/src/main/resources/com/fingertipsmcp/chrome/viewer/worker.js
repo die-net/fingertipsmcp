@@ -2,9 +2,9 @@
 // viewer shows (Extensions.triggerAction), which is what lets tabCapture capture that tab. The
 // worker gets a stream id for it and hands the id to the offscreen document, which captures and
 // encodes when FingertipsMCP tells it to. The worker also tells the document when the active tab
-// changes, so FingertipsMCP can follow it, and when a window changes size, and answers what type a
-// window is. The extension has no content scripts and no web-accessible resources, so no page can
-// see it.
+// changes, so FingertipsMCP can follow it, and when a window changes size, and answers which tab
+// Chrome shows and what type the focused window is. The extension has no content scripts and no
+// web-accessible resources, so no page can see it.
 "use strict";
 
 const OFFSCREEN = "offscreen.html";
@@ -34,17 +34,33 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Answers the offscreen document with the type of the window it names, or of the window Chrome
-// focused last when it names none, as chrome.windows gives it, or null when the extension can't see
-// that window, as with one of another profile. Only a normal window has this extension's action,
-// and FingertipsMCP runs the action only on a tab in one; the Viewer section of docs/chrome.md says
-// why. The focused window's type tells the viewer page when a popup is in front. The document can't
-// ask chrome.windows itself.
+// The DevTools target ids of the tab Chrome shows: the active tab of the normal window Chrome
+// focused last. Chrome knows which tab that is as it switches, while a page's visibilityState
+// changes only once its renderer hears, which can be 150 ms later, and a captured tab reads visible
+// whatever Chrome shows. Only a normal window has this extension's action, and the action on a tab
+// anywhere else crashes Chrome 156; the Viewer section of docs/chrome.md says why. A window of
+// another profile is not one the extension sees. chrome.debugger links the tab to its target
+// without attaching to it.
+async function showing() {
+  const normal = await chrome.windows.getAll({ windowTypes: ["normal"] });
+  if (normal.length === 0) return { ids: [] };
+  const window = await chrome.windows.getLastFocused({ populate: true, windowTypes: ["normal"] });
+  const tab = window.tabs.find((t) => t.active);
+  if (!tab) return { ids: [] };
+  const targets = await chrome.debugger.getTargets();
+  return { ids: targets.filter((t) => t.type === "page" && t.tabId === tab.id).map((t) => t.id) };
+}
+
+// Answers the offscreen document, which can't ask chrome.windows itself: which tab Chrome shows, or
+// the type of the window Chrome focused last, null when there is none. The focused window's type
+// tells the viewer page when a popup is in front.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.op === "showing") {
+    showing().then(reply, (e) => reply({ error: String((e && e.message) || e) }));
+    return true;
+  }
   if (message.op !== "window") return false;
-  const asked =
-    message.id === undefined ? chrome.windows.getLastFocused() : chrome.windows.get(message.id);
-  asked.then(
+  chrome.windows.getLastFocused().then(
     (window) => reply({ type: window.type }),
     () => reply({ type: null }),
   );
