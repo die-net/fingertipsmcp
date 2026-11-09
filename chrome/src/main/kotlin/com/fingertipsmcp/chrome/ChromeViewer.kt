@@ -6,8 +6,10 @@ import com.fingertipsmcp.browser.OpenCdpSession
 import com.fingertipsmcp.browser.ViewerPageInput
 import com.fingertipsmcp.browser.decodeCdp
 import com.fingertipsmcp.browser.evalResult
+import com.fingertipsmcp.browser.hasCommand
 import com.fingertipsmcp.browser.pagePixelRatio
 import com.fingertipsmcp.browser.parseBrowserTargetId
+import com.fingertipsmcp.browser.refusedByChrome
 import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.core.BrowserService
 import com.fingertipsmcp.model.ActionResult
@@ -223,16 +225,28 @@ class ChromeViewer(
             ?.let {
                 return it
             }
+        requireExtensionCommands(browserConnection)
         val dir = writeExtension()
         // Watching before the extension loads, so its document is seen however soon it opens.
         val targets = ViewerTargets.open(browserConnection, scope)
         var made: Loaded? = null
         try {
             val reply =
-                browserConnection.root.call(
-                    "Extensions.loadUnpacked",
-                    buildJsonObject { put("path", dir.absolutePath) },
-                )
+                try {
+                    browserConnection.root.call(
+                        "Extensions.loadUnpacked",
+                        buildJsonObject { put("path", dir.absolutePath) },
+                    )
+                } catch (e: ApiException) {
+                    // Chrome 146 to 148 have the command but refuse it over the pipe unless Chrome
+                    // was started with --enable-unsafe-extension-debugging. Whatever the reason,
+                    // a Chrome that won't load this extension can't run the viewer.
+                    if (!e.refusedByChrome) throw e
+                    throw unsupported(
+                        "This Chrome would not load its extension: ${e.message.orEmpty()}",
+                        e,
+                    )
+                }
             val id =
                 reply.decodeCdp<LoadedExtension>()?.id
                     ?: throw ApiException.unavailable(
@@ -248,6 +262,17 @@ class ChromeViewer(
         loaded = made
         scope.launch { watch(made) }
         return made
+    }
+
+    /**
+     * Refuses the viewer on a Chrome whose DevTools can't load the extension or run its action,
+     * before anything is written or loaded. Chrome 125 has neither command, and
+     * `Extensions.triggerAction` first came in Chrome 146, so Chrome 126 to 145 would load an
+     * extension that can capture nothing.
+     */
+    private suspend fun requireExtensionCommands(connection: CdpBrowserConnection) {
+        val missing = EXTENSION_COMMANDS.firstOrNull { !connection.root.hasCommand(it) } ?: return
+        throw unsupported("This Chrome's DevTools has no $missing.")
     }
 
     /**
@@ -728,26 +753,13 @@ class ChromeViewer(
             try {
                 for (frame in frames) {
                     if (frame.op != PointerOp.CANCEL && frame.id != 0) continue
-                    val at = Point(frame.x, frame.y)
-                    when (frame.op) {
-                        PointerOp.DOWN -> {
-                            gate.withLock { pageInput() }.press(at)
-                            down = at
-                        }
-                        PointerOp.MOVE ->
-                            if (down != null) {
-                                gate.withLock { pageInput() }.move(at, pressed = true)
-                                down = at
-                            }
-                        PointerOp.UP ->
-                            if (down != null) {
-                                gate.withLock { pageInput() }.release(at)
-                                down = null
-                            }
-                        PointerOp.CANCEL -> {
-                            down?.let { gate.withLock { pageInput() }.release(it) }
-                            down = null
-                        }
+                    try {
+                        down = contact(frame.op, Point(frame.x, frame.y), down)
+                    } catch (e: ApiException) {
+                        // One contact that can't reach a tab, as with nothing captured, is
+                        // dropped, and the socket stays open for the next. A press that failed
+                        // left no button down, so its gesture's moves and release are dropped too.
+                        log.debug("Dropped the viewer's {}: {}", frame.op, e.message)
                     }
                 }
             } finally {
@@ -762,6 +774,30 @@ class ChromeViewer(
                 }
             }
         }
+
+        /**
+         * Sends one contact [op] at [at] to the captured tab, with the button down at [down], and
+         * returns where the button is down after it, or null when it is up.
+         */
+        private suspend fun contact(op: PointerOp, at: Point, down: Point?): Point? =
+            when (op) {
+                PointerOp.DOWN -> {
+                    gate.withLock { pageInput() }.press(at)
+                    at
+                }
+                PointerOp.MOVE -> {
+                    if (down != null) gate.withLock { pageInput() }.move(at, pressed = true)
+                    down?.let { at }
+                }
+                PointerOp.UP -> {
+                    if (down != null) gate.withLock { pageInput() }.release(at)
+                    null
+                }
+                PointerOp.CANCEL -> {
+                    down?.let { gate.withLock { pageInput() }.release(it) }
+                    null
+                }
+            }
 
         override suspend fun key(request: KeyRequest): ActionResult =
             gate.withLock { pageInput() }.key(request.key, request.metaState)
@@ -816,6 +852,8 @@ class ChromeViewer(
         const val EXTENSION_PREFIX = "viewer-extension-"
         const val HASH_BYTES = 6
         val EXTENSION_FILES = listOf("manifest.json", "worker.js", "offscreen.html", "offscreen.js")
+        /** The DevTools commands the viewer loads its extension and starts capture with. */
+        val EXTENSION_COMMANDS = listOf("Extensions.loadUnpacked", "Extensions.triggerAction")
         val AUDIO_HEADER: String =
             ApiJson.encodeToString(AudioHeader.serializer(), AudioHeader("opus", 48_000, 2))
         /** Audio packets a viewer may fall behind by before the oldest go, as on the phone. */
@@ -867,6 +905,18 @@ private fun evaluation(expression: String) = buildJsonObject {
     put("awaitPromise", true)
     put("returnByValue", true)
 }
+
+/** The viewer can't run on this Chrome, for [reason]. */
+private fun unsupported(reason: String, cause: Throwable? = null) =
+    ApiException(
+        422,
+        "unsupported",
+        "The viewer needs Chrome $VIEWER_CHROME or later. $reason",
+        cause = cause,
+    )
+
+/** The oldest Chrome that loads the viewer's extension over the pipe and runs its action. */
+private const val VIEWER_CHROME = 149
 
 private fun nothingShown() =
     ApiException.unavailable("capture_failed", "Chrome is showing no tab for the viewer.")

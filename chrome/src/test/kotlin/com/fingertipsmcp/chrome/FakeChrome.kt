@@ -26,7 +26,9 @@ import kotlinx.serialization.json.putJsonObject
  * event it causes, as Chrome does. The extension's capture answers with [captureError], or ok, and
  * a key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does. Each page is
  * in a window of [windows], and running the extension's action on a tab in a window that is not
- * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does.
+ * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does. The extension's
+ * commands refuse what Chrome refuses: missing parameters, themselves when [missing] lists them, as
+ * an older release's DevTools does, and a load when [loadRefusal] says why.
  *
  * Chrome names the document while it is still loading, so with [scriptRan] false its script has not
  * run yet: a call into `fingertipsViewer` throws the `ReferenceError` Chrome 156 gave, and
@@ -57,6 +59,15 @@ internal class FakeChrome : CdpTransport {
     var throws: String? = null
     /** Replies to [DOCUMENT_READY] held until the script runs, by command id and session. */
     private val awaitingScript = ArrayList<Pair<Int, String?>>()
+    /** DevTools commands this Chrome's release lacks, as Chrome 125 lacks the Extensions domain. */
+    val missing = mutableSetOf<String>()
+    /**
+     * Why Chrome refuses to load an unpacked extension, as Chrome 146 to 148 refuse it over the
+     * pipe without `--enable-unsafe-extension-debugging`, or null when it loads it.
+     */
+    var loadRefusal: String? = null
+    /** How many times the extension was loaded. */
+    var loads = 0
     /** Whether the offscreen document has opened, which it does when the extension loads. */
     private var documentOpen = false
     /** The target types discovery reports, null for every type, once it is on. */
@@ -85,15 +96,25 @@ internal class FakeChrome : CdpTransport {
             awaitingScript += id to session
             return
         }
-        reply(id, session, answer(method, params, session))
+        val reply =
+            try {
+                "result" to answer(method, params, session)
+            } catch (e: Refused) {
+                "error" to
+                    buildJsonObject {
+                        put("code", e.code)
+                        put("message", e.message)
+                    }
+            }
+        reply(id, session, reply.first, reply.second)
     }
 
-    private fun reply(id: Int, session: String?, result: JsonElement) {
+    private fun reply(id: Int, session: String?, key: String, body: JsonElement) {
         out.trySend(
             buildJsonObject {
                 put("id", id)
                 session?.let { put("sessionId", it) }
-                put("result", result)
+                put(key, body)
             }
                 .toString()
         )
@@ -102,13 +123,30 @@ internal class FakeChrome : CdpTransport {
     /** The offscreen document's script runs, and its `DOMContentLoaded` follows. */
     fun runScript() {
         scriptRan = true
-        awaitingScript.forEach { (id, session) -> reply(id, session, value(JsonPrimitive(true))) }
+        awaitingScript.forEach { (id, session) ->
+            reply(id, session, "result", value(JsonPrimitive(true)))
+        }
         awaitingScript.clear()
+    }
+
+    /** Chrome's error answer to a command, with its JSON-RPC [code]. */
+    private class Refused(val code: Int, override val message: String) : Exception(message)
+
+    /**
+     * Refuses [method] as Chrome does: one in [missing] is not found, and one sent without the
+     * parameters it needs has invalid parameters, which Chrome checks before running it.
+     */
+    private fun check(method: String, params: JsonObject, needs: String) {
+        if (method in missing) throw Refused(METHOD_NOT_FOUND, "'$method' wasn't found")
+        if (needs !in params) throw Refused(INVALID_PARAMS, "Invalid parameters")
     }
 
     private fun answer(method: String, params: JsonObject, session: String?): JsonElement =
         when (method) {
             "Extensions.loadUnpacked" -> {
+                check(method, params, needs = "path")
+                loadRefusal?.let { throw Refused(SERVER_ERROR, it) }
+                loads++
                 documentOpen = true
                 openDocument()
                 buildJsonObject { put("id", "ext") }
@@ -132,6 +170,7 @@ internal class FakeChrome : CdpTransport {
                     }
                 }
             "Extensions.triggerAction" -> {
+                check(method, params, needs = "targetId")
                 val tab = params.getValue("targetId").jsonPrimitive.content
                 if (windows[window(tabs[tab])] != "normal") crash() else actionTab = tab
                 empty()
@@ -344,6 +383,9 @@ internal class FakeChrome : CdpTransport {
         const val NOT_DEFINED = "ReferenceError: fingertipsViewer is not defined"
         const val KEY = 2
         const val DELTA = 3
+        const val SERVER_ERROR = -32_000
+        const val METHOD_NOT_FOUND = -32_601
+        const val INVALID_PARAMS = -32_602
     }
 }
 

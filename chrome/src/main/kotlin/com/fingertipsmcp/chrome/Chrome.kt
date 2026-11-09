@@ -101,59 +101,74 @@ class ChromeLauncher(
 
     /**
      * Starts Chrome and waits for it to answer. On any failure, a cancel included, it stops the
-     * Chrome it started, so a later launch doesn't find the profile taken.
+     * Chrome it started and waits for it to exit, so a later launch doesn't find the profile taken.
+     * A Chrome that never answers may be stuck where it can't take SIGTERM either, as on a macOS
+     * keychain prompt, so it is killed when it doesn't exit.
      */
-    @Suppress("MissingUseCall") // closeOnFailure stops the launch unless it is returned.
+    @Suppress("MissingUseCall") // The launch is stopped unless it is returned.
     suspend fun start(): RunningBrowser {
         profile.mkdirs()
         logFile.parentFile?.mkdirs()
         val logStart = if (logFile.exists()) logFile.length() else 0L
-        return openOn(io) { Launch(startProcess()) }
-            .closeOnFailure { launch ->
-                val started = launch.process
-                val cdp = launch.connect()
-                cdp.start()
-                val product =
-                    try {
-                        browserVersion(cdp)
-                    } catch (e: ApiException) {
-                        throw LaunchException(
-                            "Chrome did not start (${e.message.orEmpty()}). If another Chrome uses " +
-                                "${profile.path}, close it or pass --profile. " +
-                                logTail(logFile, logStart),
-                            e,
-                        )
-                    }
-                logger.info("Started {} (pid {}) with profile {}", product, started.pid(), profile)
-                if (!headless) {
-                    try {
-                        openFirstWindow(cdp)
-                    } catch (e: ApiException) {
-                        throw LaunchException(
-                            "Chrome started but did not open a window: ${e.message.orEmpty()}",
-                            e,
-                        )
-                    }
+        val launch = openOn(io) { Launch(startProcess()) }
+        var started: RunningBrowser? = null
+        try {
+            val cdp = launch.connect()
+            cdp.start()
+            val product =
+                try {
+                    browserVersion(cdp)
+                } catch (e: ApiException) {
+                    throw LaunchException(
+                        "Chrome did not start (${e.message.orEmpty()}). If another Chrome uses " +
+                            "${profile.path}, close it or pass --profile. " +
+                            logTail(logFile, logStart),
+                        e,
+                    )
                 }
-                LaunchedChrome(cdp, started, product)
+            logger.info(
+                "Started {} (pid {}) with profile {}",
+                product,
+                launch.process.pid(),
+                profile,
+            )
+            if (!headless) {
+                try {
+                    openFirstWindow(cdp)
+                } catch (e: ApiException) {
+                    throw LaunchException(
+                        "Chrome started but did not open a window: ${e.message.orEmpty()}",
+                        e,
+                    )
+                }
             }
+            return LaunchedChrome(cdp, launch.process, product).also { started = it }
+        } finally {
+            if (started == null) withContext(NonCancellable) { launch.stop() }
+        }
     }
 
-    /** A Chrome being started, and its connection once there is one. Closing it stops both. */
+    /**
+     * A Chrome being started, and its connection once there is one. [stop] stops both. Closing it
+     * is only for [openOn], when a cancel comes as the process starts, before Chrome has anything
+     * to save, so it kills the process.
+     */
     private inner class Launch(val process: Process) : Closeable {
         private var connection: CdpBrowserConnection? = null
 
-        @Suppress("MissingUseCall") // Closing the launch closes the connection.
+        @Suppress("MissingUseCall") // Stopping the launch closes the connection.
         fun connect(): CdpBrowserConnection =
             CdpBrowserConnection(PipeTransport(process.inputStream, process.outputStream, io), io)
                 .also { connection = it }
 
+        /** Closes the connection and stops Chrome. */
+        suspend fun stop() {
+            connection?.close()
+            process.terminate()
+        }
+
         override fun close() {
-            try {
-                connection?.close()
-            } finally {
-                process.destroy()
-            }
+            process.destroyForcibly()
         }
     }
 
@@ -211,16 +226,10 @@ class ChromeLauncher(
             } finally {
                 withContext(NonCancellable) {
                     connection.close()
-                    if (!exited()) {
-                        process.destroy()
-                        if (!exited()) process.destroyForcibly()
-                    }
+                    if (!process.exited()) process.terminate()
                 }
             }
         }
-
-        private suspend fun exited(): Boolean =
-            withTimeoutOrNull(EXIT_WAIT_MS) { process.onExit().await() } != null
     }
 
     private companion object {
@@ -231,7 +240,6 @@ class ChromeLauncher(
          */
         const val PIPE_SHIM = "exec 3<&0 4>&1 0</dev/null 1>&2; exec \"$@\""
         const val CLOSE_MS = 3_000L
-        const val EXIT_WAIT_MS = 5_000L
     }
 }
 
@@ -459,6 +467,21 @@ class BrowserSupervisor(
             "FingertipsMCP for Chrome is shutting down.",
         )
 }
+
+/**
+ * Asks this process to exit with SIGTERM, and kills it when it has not exited within
+ * [EXIT_WAIT_MS], as a Chrome whose main thread is stuck does not.
+ */
+private suspend fun Process.terminate() {
+    destroy()
+    if (!exited()) destroyForcibly()
+}
+
+/** Whether this process exits within [EXIT_WAIT_MS]. */
+private suspend fun Process.exited(): Boolean =
+    withTimeoutOrNull(EXIT_WAIT_MS) { onExit().await() } != null
+
+private const val EXIT_WAIT_MS = 5_000L
 
 private suspend fun browserVersion(connection: CdpBrowserConnection): String =
     connection.root.call("Browser.getVersion").decodeCdp<BrowserVersion>()?.product ?: "Chrome"

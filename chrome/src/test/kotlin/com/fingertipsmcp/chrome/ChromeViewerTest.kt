@@ -3,11 +3,14 @@ package com.fingertipsmcp.chrome
 import com.fingertipsmcp.browser.CdpBrowserConnection
 import com.fingertipsmcp.browser.DesktopPointer
 import com.fingertipsmcp.model.ApiException
+import com.fingertipsmcp.model.PointerFrame
+import com.fingertipsmcp.model.PointerOp
 import com.fingertipsmcp.stream.VideoSpec
 import com.fingertipsmcp.stream.VideoViewer
 import java.io.File
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -68,6 +71,85 @@ class ChromeViewerTest {
                     chrome.evaluated.toString(),
                 )
             }
+        }
+    }
+
+    /** Chrome 125 has no Extensions domain, so the viewer can't load its extension. */
+    @Test
+    fun `no Extensions domain refused`() = runTest {
+        assertRefused(
+            this,
+            "Extensions.loadUnpacked",
+        ) {
+            missing += setOf("Extensions.loadUnpacked", "Extensions.triggerAction")
+        }
+    }
+
+    /**
+     * Chrome 126 to 145 load an unpacked extension but can't run its action, so the extension would
+     * capture nothing. It is not loaded.
+     */
+    @Test
+    fun `no trigger action refused`() = runTest {
+        assertRefused(
+            this,
+            "Extensions.triggerAction",
+        ) {
+            missing += "Extensions.triggerAction"
+        }
+    }
+
+    /** Chrome 146 to 148 have both commands but refuse the load over the pipe. */
+    @Test
+    fun `refused extension load`() = runTest {
+        assertRefused(
+            this,
+            "Method not available.",
+            written = true,
+        ) {
+            loadRefusal = "Method not available."
+        }
+    }
+
+    /**
+     * A Chrome set up by [setUp] in [scope] refuses a video and an audio viewer as unsupported,
+     * naming [named], and loads no extension. Its files are [written] only when Chrome refused the
+     * load.
+     */
+    private suspend fun assertRefused(
+        scope: TestScope,
+        named: String,
+        written: Boolean = false,
+        setUp: FakeChrome.() -> Unit,
+    ) {
+        withViewer(scope, setUp) { chrome, viewer ->
+            val watches =
+                listOf<suspend () -> Unit>({ viewer.watchVideo(SPEC) {} }, { viewer.watchAudio {} })
+            for (watch in watches) {
+                val refused = assertThrows<ApiException> { watch() }
+                assertEquals(422, refused.status)
+                assertEquals("unsupported", refused.error)
+                assertTrue(refused.message.orEmpty().contains(named), refused.message)
+            }
+            assertEquals(0, chrome.loads)
+            assertEquals(written, home.list().orEmpty().isNotEmpty())
+        }
+    }
+
+    /**
+     * A click from the input socket with nothing captured, as on a Chrome the viewer can't run on,
+     * is dropped, and the socket goes on to its next contact rather than ending.
+     */
+    @Test
+    fun `uncaptured click dropped`() = runTest {
+        withViewer(this) { _, viewer ->
+            val frames = Channel<PointerFrame>(Channel.UNLIMITED)
+            frames.trySend(PointerFrame(PointerOp.DOWN, x = 10f, y = 10f))
+            frames.trySend(PointerFrame(PointerOp.UP, x = 10f, y = 10f, tMs = 80))
+            frames.close()
+            // Throws, failing the test, if the click ends the socket's contacts.
+            viewer.controls.contacts(frames)
+            assertTrue(frames.tryReceive().isClosed, "The contacts after the click were not read")
         }
     }
 
