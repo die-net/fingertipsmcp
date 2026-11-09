@@ -6,7 +6,7 @@ The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android
 
 ## Last phone run
 
-On 2026-11-07, a dev build of `main` at 9e047f7 ran on the Android 11 test phone, with Chrome 156.0.8078.79. A dev build of `main` at 4a18edd ran there earlier that day, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
+On 2026-11-08, a dev build of `main` at 3fd0bef ran on the Android 11 test phone, with Chrome 156.0.8078.79, for closing a tab and `browser_key` with Shift over `cdp`. On 2026-11-07, a dev build of `main` at 9e047f7 ran on the Android 11 test phone, with Chrome 156.0.8078.79. A dev build of `main` at 4a18edd ran there earlier that day, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
 
 Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
 
@@ -116,6 +116,8 @@ Chrome refuses a DevTools connection to a closed tab with 500 "No such target id
 
 Closing Chrome's last tab, which opens the placeholder first, was checked on 2026-11-08 on the Android 16 emulator with Chrome 133 and the Android 17 emulator with Chrome 145, with Chrome holding only the session's tab (older tabs and the placeholder closed over raw DevTools first). With the session holding the screen and Chrome showing that tab, `POST /v1/browser/targets/{id}/close` left Chrome in front showing `about:blank`, 1 of 1 on Chrome 133 and 3 of 3 on Chrome 145. With Chrome behind the home screen, the home screen stayed in front, 1 of 1 each. Each time Chrome's own list then held only the placeholder, and `GET /v1/browser/targets` listed nothing. A restored tab Chrome had not loaded was in `/json/list`, with a short numeric id, and not in `Target.getTargets`, on both.
 
+On the Android 11 test phone on 2026-11-08, with Chrome 156.0.8078.79, Chrome kept two tabs that were not the test's, so the session's tab was never Chrome's last, and the last-tab path was not reached. What was checked is that closing a tab beside others opens no placeholder. With Chrome behind the home screen and no placeholder open, Chrome's `/json/list` held one restored tab. A session opened a tab and brought it on screen with a `read` with `show`, and Chrome then also listed a restored new tab page it had not listed before. With Chrome in front showing the session's tab, `POST /v1/browser/targets/{id}/close` answered in 0.36 s, Chrome stayed in front, and `/json/list` held the two other tabs and no `about:blank`, 1 of 1. Ending that session went home and put the placeholder up. A new session without the screen then opened and closed a tab with Chrome behind the home screen. The close answered in 0.37 s, the home screen stayed in front, `/json/list` held the placeholder and the two tabs, and `GET /v1/browser/targets` listed the two tabs, unowned, and not the placeholder, 1 of 1.
+
 ### Target events
 
 Chrome 156 on the Android 11 test phone on 2026-11-07, over raw DevTools, on a browser session with `Target.setDiscoverTargets`. Times are from the call that started it. Chrome hidden and Chrome in front gave the same events, unless noted.
@@ -175,7 +177,7 @@ A world belongs to one document. `Runtime.evaluate` naming a world whose documen
 - Whether Chrome 156 still freezes a hidden tab whole at about 90 s with FingertipsMCP's helper running, as it did on 2026-11-07 without it.
 - That `show` brings a background tab on screen, including when Chrome is behind another app, and that `shown` and `pending` match what is on screen.
 - That Chrome on the phone still ignores `Target.createTarget`'s `background` flag, now that a session without the screen sends it, or if it honors it, that the tab opens hidden.
-- That closing Chrome's last tab on the phone's Chrome 156 does what it did on Chrome 133 and 145.
+- That closing Chrome's last tab on the phone's Chrome 156 does what it did on Chrome 133 and 145. On 2026-11-08 the phone's Chrome had tabs that were not the test's, as [Closed tabs](#closed-tabs) says, so this needs a Chrome holding only the session's tab.
 
 ## Android's app freezer
 
@@ -1008,6 +1010,14 @@ On the same phone that day, the system cancelled one swipe sent right after `BAC
 - Shift with an arrow moved the selection's end and typed nothing. Shift with Tab moved focus to the field before, and typed nothing.
 - `COMMA` and `PERIOD` over `cdp` got 400 `Unknown key`, with or without Shift, since the `cdp` key names have no punctuation.
 
+The same on the Android 11 test phone on 2026-11-08, with Chrome 156.0.8078.79, into a focused field on a tab a session without the screen opened, with Chrome behind the home screen, read back over `evaluate` with a `keydown` listener in the isolated world. The tab read `visible` throughout.
+
+- Shift and `A` typed `A`, with `key` `A`, `code` `KeyA`, and `shiftKey` true. So did `metaState` 65 with `B`. `c` and `Z` without Shift typed `c` and `z`.
+- Shift and `1` typed `!` with `code` `Digit1`, and Shift and `3` typed `#`. `2` without Shift typed `2`.
+- Shift with `DPAD_LEFT` twice after typing moved the selection from 7..7 to 5..7, `backward`, and Shift with `DPAD_RIGHT` then made it 6..7. None of them typed anything. After `text` over `cdp`, Shift with `DPAD_LEFT` selected the last character. `DPAD_LEFT` without Shift collapsed the selection.
+- Shift with `TAB` moved focus to the field before, and Tab without Shift moved it back. Neither typed anything.
+- `COMMA` with Shift got 400 `Unknown key`.
+
 ### Pages Chrome has not drawn
 
 On Chrome 109, 133, and 145 on the emulators on 2026-11-07, Chrome dropped mouse clicks and key events on a page it had not drawn, and answered `ok`. Chrome 156 on the Android 11 test phone did the same that day for clicks, 0 of 10. Chrome 91 delivered them.
@@ -1042,7 +1052,6 @@ Chromium has a check, behind the `CDPScreenshotNewSurface` feature, that crashes
 - `chrome-input-check` on a phone, since it now tests a page from a server. It passed on the Android 13, 16, and 17 emulators on 2026-11-07, with Chrome on screen too. On Chrome 91 six checks differ, since that Chrome has no hold.
 - That `Page.captureScreenshot` ends the hold on Chrome 156 on the Android 11 test phone. It was not tried there. If it does not, a tap on a page Chrome has not drawn fails with `not_visible`.
 - Whether Chrome ever turns on `CDPScreenshotNewSurface`. FingertipsMCP sends a screenshot request to a `hidden` page that dropped a press, which that check would crash on.
-- `browser_key` with Shift over `cdp` on the phone's Chrome 156.
 
 ## Desktop Chrome (FingertipsMCP for Chrome)
 
