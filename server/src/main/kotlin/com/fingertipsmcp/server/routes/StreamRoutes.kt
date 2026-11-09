@@ -124,12 +124,18 @@ private fun ApplicationCall.viewerPathWithoutAccessToken(): String {
     return "$VIEWER_PATH?$query"
 }
 
-/** The viewer page, which every product serves from this module's resources. */
+/**
+ * The viewer page, which every product serves from this module's resources. The path is absolute,
+ * since R8 renames and moves classes in the app's release build, and a path relative to a class
+ * would follow it.
+ */
 private fun viewerPage(): ByteArray =
-    checkNotNull(StreamServices::class.java.getResourceAsStream("viewer.html")) {
-            "viewer.html is missing from the server's resources"
+    checkNotNull(StreamServices::class.java.classLoader.getResourceAsStream(VIEWER_RESOURCE)) {
+            "$VIEWER_RESOURCE is missing from the server's resources"
         }
         .use { it.readBytes() }
+
+private const val VIEWER_RESOURCE = "com/fingertipsmcp/server/viewer.html"
 
 /** A bundled page, read once the first time a client asks for it. */
 internal class CachedBytes(private val load: suspend () -> ByteArray) {

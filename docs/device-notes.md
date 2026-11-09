@@ -6,7 +6,7 @@ The emulators run Android 10 with Chrome 91, Android 13 with Chrome 109, Android
 
 ## Last phone run
 
-On 2026-11-08, a dev build of `main` at 3fd0bef ran on the Android 11 test phone, with Chrome 156.0.8078.79, for closing a tab and `browser_key` with Shift over `cdp`. On 2026-11-07, a dev build of `main` at 9e047f7 ran on the Android 11 test phone, with Chrome 156.0.8078.79. A dev build of `main` at 4a18edd ran there earlier that day, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
+On 2026-11-08, a dev build of `main` at 3fd0bef ran on the Android 11 test phone, with Chrome 156.0.8078.79, for closing a tab and `browser_key` with Shift over `cdp`. On 2026-11-07, a dev build of `main` at 9e047f7 ran on the Android 11 test phone, with Chrome 156.0.8078.79. A dev build of `main` at 4a18edd ran there earlier that day, for what had landed since 2acb53e and raw DevTools checks of Chrome's target events. A dev build at 2acb53e ran there earlier that day, to recheck what had changed since 4059efb. On 2026-11-06, a dev build at 4059efb ran there beside the release app, with Chrome 156.0.8078.73 and no secure lock screen, for ordinary use through REST and MCP. On 2026-11-08, a release build of `main` at bbf6f1a, with R8, signed with the debug key and installed as `com.fingertipsmcp`, ran on the Android 16 emulator with Chrome 133 and the Android 10 emulator with Chrome 91. It ran the helper, MCP's 41 tools, sessions, UI snapshot, find, and taps, screenshot, clipboard, tokens, and logcat on both, and video and every browser call on Android 16 (Android 10 took only open, read, and find). Only `GET /viewer` failed, with 500 `internal`: the page was looked up relative to a class R8 had moved to another package. It now uses an absolute path, and the rebuilt APK passed the same list. What a run finds goes in the section for its topic, and a list of what passed goes in the run's PR.
 
 Not run on 2026-11-06: PIN unlock, since no PIN is stored for the dev build; `device_orientation`; incognito tabs; `app_clear`; clipboard images; `browser.newTarget`; `browser.dialog`, a known failure on the emulators.
 
@@ -728,9 +728,7 @@ Progress would need one of two things. The session's GET stream already carries 
 
 MCP's stateless revision (2026-07-28) drops protocol sessions: servers that need state across calls mint handles that clients pass as tool arguments, as `session_start` does. SDK 0.16.0 does not speak that revision yet (its latest protocol version is 2025-11-25), so such clients cannot connect, but the tools would carry over.
 
-### Still to check
-
-- Whether a release build logs anything from the SDK, such as session ids. A release build uses a different logging backend from the debug build checked above.
+In a release build on the Android 16 emulator on 2026-11-08, neither an MCP session id nor a REST one reached logcat. FingertipsMCP's own lines there show sessions only by their hash.
 
 ## Wireless debugging pairing
 
@@ -806,6 +804,14 @@ On the Android 11 phone on 2026-11-07, at Chrome 156, the same corruption killed
 
 - That turning off the listener's notification leaves the service foreground on Android 10, and whether Android posts its own notification in its place. Android 11, 12, and 13 were checked. The listener's text says it can be turned off.
 - That closing the input on Android 10, where it now closes the USB tunnel's descriptor rather than nothing, still ends a blocked read there. Only the Android 17 emulator ran the fix.
+
+## Tokens minted over ADB
+
+On the Android 16 emulator on 2026-11-08, `system_server` logged the result of `am broadcast` at info, under `ActivityManager`: `Broadcast completed: result=0, data="..."`, with the pairing JSON `CREATE_TOKEN` returns, token included. So the token minted by `fingertips pair` is in the system log, and `logcat_tail`, which needs only `observe`, returned it. The Android 10 emulator did not log that line.
+
+### Still to check
+
+- Which Android release started logging the broadcast result, and whether the Android 11 and 12 test phones do.
 
 ## Unlocking
 
@@ -991,9 +997,9 @@ The phone's wait loop is the one the desktop uses since 2026-11-08. Checked that
 
 On 2026-11-07, in desktop Chrome 156 made to look like a phone, MDN's HTTP page drew its main content through a `<main>` with `display: contents`. `checkVisibility()` said that element was not visible, with or without its CSS options, while each child said it was. So `page-read.js` treated it as hidden and read 333 of the page's 11,251 characters, in both scopes. Article scope at v0.3.8 got 9,635, since Readability was then given the whole page. The phone's read of the same page got 347.
 
-### Still to check
+A release build with R8, on the Android 16 emulator on 2026-11-08, read the page scripts, Readability, and pdf.js from the `browser` module's jar resources: an article read came back `article`, and the arXiv PDF read `pdf`, 38,965 characters. Its slf4j lines reached logcat under `FingertipsServer`, `FingertipsMcp`, and `FingertipsStream`. The `browser` module logs only on failures, so none of its tags showed.
 
-- That an APK reads the page scripts and pdf.js from the `browser` module's jar resources, where they used to be assets, and that slf4j reaches logcat under the `Fingertips` tags, in debug and release builds. Since the move to shared modules, this has only had unit tests and `assembleDebug`.
+### Still to check
 - How long a large page takes to read past the cache on a phone. The emulators took about 900 ms for 3,000 elements.
 - That a card number in a toast or a window title reaches `WS /v1/events` as `[card number]`, and the rest of the text is unchanged.
 
