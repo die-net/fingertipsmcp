@@ -4,7 +4,7 @@
   "version": "1",
   "description": "Captures the tab FingertipsMCP's viewer shows, and encodes it for the viewer page.",
   "minimum_chrome_version": "116",
-  "permissions": ["tabCapture", "offscreen"],
+  "permissions": ["tabCapture", "offscreen", "debugger"],
   "action": {},
   "background": { "service_worker": "worker.js" }
 }

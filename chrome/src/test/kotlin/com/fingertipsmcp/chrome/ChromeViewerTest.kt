@@ -210,7 +210,7 @@ class ChromeViewerTest {
         withViewer(this, { tabs["TAB2"] = "PAGE2" }) { chrome, viewer ->
             val watching = watch(viewer)
             browser.pages = listOf("PAGE", "PAGE2")
-            browser.shown = setOf("PAGE2")
+            chrome.active[FakeChrome.NORMAL] = "PAGE2"
             chrome.captureError = "Permission denied"
             chrome.activated()
             runCurrent()
@@ -225,10 +225,61 @@ class ChromeViewerTest {
     }
 
     /**
-     * A page opens a popup, which shows beside the captured tab, and later a tab in another normal
-     * window shows too. The extension's action on the popup's tab would crash Chrome, so capture
-     * stays on its tab, then moves to the other normal window's tab, past the popup listed before
-     * it.
+     * The agent's input brings its tab forward as the first viewer connects, while the extension
+     * loads: Chrome switches before the new worker's listeners are in place, so no news of it
+     * comes, and the pages have not yet heard, so the one Chrome showed still reports itself
+     * visible and the other hidden. Capture starts on the tab Chrome shows now. Chrome 156 did this
+     * through the jar, with the switch 30 to 60 ms after the viewer connected.
+     */
+    @Test
+    fun `switch at load is followed`() = runTest {
+        val setUp: FakeChrome.() -> Unit = {
+            tabs["TAB2"] = "PAGE2"
+            onCommand = { method ->
+                if (method == "Extensions.loadUnpacked") active[FakeChrome.NORMAL] = "PAGE2"
+            }
+        }
+        withViewer(this, setUp) { chrome, viewer ->
+            browser.pages = listOf("PAGE", "PAGE2")
+            watch(viewer)
+            assertEquals("TAB2", chrome.capturing)
+        }
+    }
+
+    /**
+     * The agent's input brings its tab forward while the first capture starts on the tab Chrome
+     * showed. The news of the switch comes then, and is followed once that capture has started,
+     * when the captured tab reports itself visible, as a captured tab does, and the other has not
+     * yet heard it shows. Capture moves to the tab Chrome shows. Chrome 156 did this through the
+     * jar: the tab brought forward still read hidden 150 ms after the news.
+     */
+    @Test
+    fun `switch at capture is followed`() = runTest {
+        val setUp: FakeChrome.() -> Unit = {
+            tabs["TAB2"] = "PAGE2"
+            var switched = false
+            onCommand = { method ->
+                if (method == "Extensions.triggerAction" && !switched) {
+                    switched = true
+                    active[FakeChrome.NORMAL] = "PAGE2"
+                    activated()
+                }
+            }
+        }
+        withViewer(this, setUp) { chrome, viewer ->
+            browser.pages = listOf("PAGE", "PAGE2")
+            val watching = watch(viewer)
+            runCurrent()
+            assertEquals("TAB2", chrome.capturing)
+            assertEquals(2, chrome.capture)
+            assertNull(watching.failure)
+        }
+    }
+
+    /**
+     * A page opens a popup, which takes focus, and later a tab in another normal window takes it.
+     * The extension's action on the popup's tab would crash Chrome, so capture stays on its tab,
+     * then moves to the other normal window's tab, and stays there when the popup is focused again.
      */
     @Test
     fun `popup is passed over`() = runTest {
@@ -244,17 +295,25 @@ class ChromeViewerTest {
             val watching = watch(viewer)
             val first = chrome.capture
             browser.pages = listOf("PAGE", "POPUP")
-            browser.shown = setOf("PAGE", "POPUP")
+            chrome.active[POPUP_WINDOW] = "POPUP"
+            chrome.focus(POPUP_WINDOW)
             chrome.activated()
             runCurrent()
             assertFalse(chrome.crashed)
             assertEquals(first, chrome.capture)
             browser.pages = listOf("PAGE", "POPUP", "PAGE2")
-            browser.shown = setOf("PAGE", "POPUP", "PAGE2")
+            chrome.active[OTHER_WINDOW] = "PAGE2"
+            chrome.focus(OTHER_WINDOW)
             chrome.activated()
             runCurrent()
             assertFalse(chrome.crashed)
             assertEquals(first + 1, chrome.capture)
+            assertEquals("TAB2", chrome.capturing)
+            chrome.focus(POPUP_WINDOW)
+            chrome.activated()
+            runCurrent()
+            assertFalse(chrome.crashed)
+            assertEquals("TAB2", chrome.capturing)
             assertNull(watching.failure)
         }
     }
@@ -271,6 +330,7 @@ class ChromeViewerTest {
             tabs["POPUP_TAB"] = "POPUP"
             windowOf["POPUP"] = POPUP_WINDOW
             windows[POPUP_WINDOW] = "popup"
+            active[POPUP_WINDOW] = "POPUP"
         }
         withViewer(this, setUp) { chrome, viewer ->
             val notice = viewer.controls.notice
@@ -280,32 +340,31 @@ class ChromeViewerTest {
             runCurrent()
             assertNull(notice.value)
             browser.pages = listOf("PAGE", "POPUP")
-            browser.shown = setOf("PAGE", "POPUP")
-            chrome.focused = POPUP_WINDOW
+            chrome.focus(POPUP_WINDOW)
             chrome.activated()
             runCurrent()
             assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
-            chrome.focused = FakeChrome.NORMAL
+            chrome.focus(FakeChrome.NORMAL)
             chrome.activated()
             runCurrent()
             assertNull(notice.value)
-            chrome.focused = POPUP_WINDOW
+            chrome.focus(POPUP_WINDOW)
             chrome.activated()
             runCurrent()
             assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
             browser.pages = listOf("PAGE")
-            browser.shown = setOf("PAGE")
-            chrome.focused = FakeChrome.NORMAL
+            chrome.closeWindow(POPUP_WINDOW)
             chrome.activated()
             runCurrent()
             assertNull(notice.value)
 
-            // The last viewer leaves, and one comes back while the popup is in front.
+            // The last viewer leaves, a popup opens in front again, and a viewer comes back.
             watching.cancel()
             runCurrent()
             browser.pages = listOf("PAGE", "POPUP")
-            browser.shown = setOf("PAGE", "POPUP")
-            chrome.focused = POPUP_WINDOW
+            chrome.windows[POPUP_WINDOW] = "popup"
+            chrome.active[POPUP_WINDOW] = "POPUP"
+            chrome.focus(POPUP_WINDOW)
             watch(viewer)
             assertTrue(notice.value.orEmpty().contains("popup"), notice.value)
             assertFalse(chrome.crashed)
@@ -326,7 +385,9 @@ class ChromeViewerTest {
         withViewer(this, setUp) { chrome, viewer ->
             val watching = watch(viewer)
             browser.pages = listOf("POPUP")
-            browser.shown = setOf("POPUP")
+            chrome.active[POPUP_WINDOW] = "POPUP"
+            chrome.focus(POPUP_WINDOW)
+            chrome.closeWindow(FakeChrome.NORMAL)
             chrome.ended()
             runCurrent()
             assertFalse(chrome.crashed)
@@ -341,7 +402,11 @@ class ChromeViewerTest {
      */
     @Test
     fun `other profile's tab is refused`() = runTest {
-        withViewer(this, { windowOf["PAGE"] = OTHER_WINDOW }) { chrome, viewer ->
+        val setUp: FakeChrome.() -> Unit = {
+            windowOf["PAGE"] = OTHER_WINDOW
+            closeWindow(FakeChrome.NORMAL)
+        }
+        withViewer(this, setUp) { chrome, viewer ->
             assertThrows<ApiException> { viewer.watchVideo(SPEC) {} }
             assertFalse(chrome.crashed)
             assertEquals(0, chrome.capture)

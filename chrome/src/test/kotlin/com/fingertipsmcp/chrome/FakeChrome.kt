@@ -18,17 +18,20 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 /**
  * DevTools for a Chrome whose tabs hold one page each, as [tabs] lists them, with the viewer's
  * extension, whose offscreen document is DOC. Each command is answered once it is sent, after any
- * event it causes, as Chrome does. The extension's capture answers with [captureError], or ok, and
- * a key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does. Each page is
+ * event it causes, as Chrome does, and after [onCommand], which can change what Chrome shows or
+ * send news as that command runs. The extension's capture answers with [captureError], or ok, and a
+ * key frame asked for makes the next of [frame] a key frame, as `offscreen.js` does. Each page is
  * in a window of [windows], and running the extension's action on a tab in a window that is not
  * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does. The extension's
  * commands refuse what Chrome refuses: missing parameters, themselves when [missing] lists them, as
- * an older release's DevTools does, and a load when [loadRefusal] says why.
+ * an older release's DevTools does, and a load when [loadRefusal] says why. The extension reads
+ * which tab Chrome shows from [active] and [focusOrder], as Chrome knows it the moment it switches.
  *
  * Chrome names the document while it is still loading, so with [scriptRan] false its script has not
  * run yet: a call into `fingertipsViewer` throws the `ReferenceError` Chrome 156 gave, and
@@ -48,8 +51,12 @@ internal class FakeChrome : CdpTransport {
      * profile, which the extension can't see.
      */
     val windows = mutableMapOf(NORMAL to "normal")
-    /** The window Chrome focused last, which `fingertipsViewer.window()` with no id names. */
-    var focused = NORMAL
+    /** Window ids the extension can see, the one Chrome focused last first. */
+    val focusOrder = mutableListOf(NORMAL)
+    /** Window id to the page of its active tab. */
+    val active = mutableMapOf(NORMAL to "PAGE")
+    /** Runs as each command is, with its method, before Chrome answers it. */
+    var onCommand: FakeChrome.(String) -> Unit = {}
     /** Whether Chrome crashed, which closed DevTools. */
     var crashed = false
     var captureError: String? = null
@@ -79,7 +86,10 @@ internal class FakeChrome : CdpTransport {
     var capture = 0
     /** The tab the extension's action last ran on, and the tab it captures. */
     private var actionTab: String? = null
-    private var capturing: String? = null
+    /** The tab the extension captures. */
+    var capturing: String? = null
+        private set
+
     /** Whether the next frame is a key frame. The first frame of a capture is. */
     var keyNext = true
     private var pts = 0L
@@ -141,10 +151,16 @@ internal class FakeChrome : CdpTransport {
         if (needs !in params) throw Refused(INVALID_PARAMS, "Invalid parameters")
     }
 
-    private fun answer(method: String, params: JsonObject, session: String?): JsonElement =
+    private fun answer(method: String, params: JsonObject, session: String?): JsonElement {
+        // Chrome checks a command's parameters before it runs anything, so a probe sent with none
+        // changes nothing and reaches no hook.
         when (method) {
+            "Extensions.loadUnpacked" -> check(method, params, needs = "path")
+            "Extensions.triggerAction" -> check(method, params, needs = "targetId")
+        }
+        onCommand(method)
+        return when (method) {
             "Extensions.loadUnpacked" -> {
-                check(method, params, needs = "path")
                 loadRefusal?.let { throw Refused(SERVER_ERROR, it) }
                 loads++
                 documentOpen = true
@@ -170,18 +186,14 @@ internal class FakeChrome : CdpTransport {
                     }
                 }
             "Extensions.triggerAction" -> {
-                check(method, params, needs = "targetId")
                 val tab = params.getValue("targetId").jsonPrimitive.content
                 if (windows[window(tabs[tab])] != "normal") crash() else actionTab = tab
                 empty()
             }
-            "Browser.getWindowForTarget" ->
-                buildJsonObject {
-                    put("windowId", window(params.getValue("targetId").jsonPrimitive.content))
-                }
             "Runtime.evaluate" -> evaluate(params.getValue("expression").jsonPrimitive.content)
             else -> empty()
         }
+    }
 
     /** Turns discovery on, and reports the targets already open, as Chrome does. */
     private fun discover(params: JsonObject): JsonElement {
@@ -222,9 +234,20 @@ internal class FakeChrome : CdpTransport {
             return thrown(it)
         }
         if (expression.startsWith("fingertipsViewer.window(")) {
-            val id = expression.substringAfter("(").substringBefore(")").toIntOrNull() ?: focused
             return buildJsonObject {
-                putJsonObject("result") { putJsonObject("value") { put("type", windows[id]) } }
+                putJsonObject("result") {
+                    putJsonObject("value") { put("type", windows[focusOrder.firstOrNull()]) }
+                }
+            }
+        }
+        if (expression == "fingertipsViewer.showing()") {
+            val shown = focusOrder.firstOrNull { windows[it] == "normal" }?.let { active[it] }
+            return buildJsonObject {
+                putJsonObject("result") {
+                    putJsonObject("value") {
+                        putJsonArray("ids") { shown?.let { add(JsonPrimitive(it)) } }
+                    }
+                }
             }
         }
         if (expression == "fingertipsViewer.keyFrame()") keyNext = true
@@ -270,6 +293,19 @@ internal class FakeChrome : CdpTransport {
             put("text", "Uncaught")
             put("exception", error)
         }
+    }
+
+    /** Chrome focuses [window], as a person clicking it or a page opening a popup does. */
+    fun focus(window: Int) {
+        focusOrder.remove(window)
+        focusOrder.add(0, window)
+    }
+
+    /** The window [window] closes, with its tabs. */
+    fun closeWindow(window: Int) {
+        focusOrder.remove(window)
+        active.remove(window)
+        windows.remove(window)
     }
 
     /** The extension's document says its capture encodes at [width] by [height]. */
@@ -390,9 +426,9 @@ internal class FakeChrome : CdpTransport {
 }
 
 /**
- * A browser whose page targets are [pages], with [shown] the ones Chrome shows, one in each window.
- * The viewer asks only which pages there are and which show; anything else is not something it
- * calls.
+ * A browser whose page targets are [pages], with [shown] the ones whose pages report themselves
+ * visible. A page hears of a tab switch only some time after Chrome makes it, so [shown] can lag
+ * what the extension reads from Chrome. Anything else is not something the viewer calls.
  */
 internal class ShowingBrowser(var pages: List<String>, var shown: Set<String>) : TabBrowser() {
     /** Calls to [targets], which start Chrome when it is not running. */
