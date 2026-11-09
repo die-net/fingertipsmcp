@@ -20,11 +20,12 @@ const DELTA = 3;
 // Samples within 8 of zero at 16 bits count as silence, as on Android, so a quiet tab sends no
 // audio at all.
 const SILENT = 8 / 32768;
-// When the last frame goes again. A tab that stops changing gets the frame again at these times
-// after its last one, so the encoder can sharpen what it blurred while it moved, and then every
-// IDLE_MS, so a viewer can tell a still tab from a dead stream. This is a port of the phone's
-// RedrawPlan (app/.../stream/RedrawPlan.kt), which Kotlin can't share with the extension; keep the
-// two the same.
+// When Chrome is asked for the tab's picture again. A tab that stops changing is asked for it at
+// these times after its last frame, so the encoder can sharpen what it blurred while it moved and a
+// repaint Chrome lost still reaches the viewer, and then every IDLE_MS, so a viewer can tell a
+// still tab from a dead stream. This is a port of the phone's RedrawPlan
+// (app/.../stream/RedrawPlan.kt), which Kotlin can't share with the extension; keep the two the
+// same.
 const SETTLE_MS = [100, 300, 700];
 const IDLE_MS = 4000;
 // How long capture waits for the stream id that the action on the tab produces.
@@ -112,7 +113,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-// When the last frame is encoded again, in milliseconds on one clock, as RedrawPlan.kt does it.
+// When Chrome is asked for the tab's picture again, in milliseconds on one clock, as RedrawPlan.kt
+// times its redraws.
 class RedrawPlan {
   constructor() {
     this.hasFrame = false;
@@ -146,7 +148,7 @@ class RedrawPlan {
   }
 }
 
-// One tab's capture: its tracks, encoders, and the last frame, kept to send again while still.
+// One tab's capture: its tracks, its encoders, and when to ask for its picture while it is still.
 class Capture {
   constructor(stream, id) {
     this.stream = stream;
@@ -156,21 +158,25 @@ class Capture {
     this.size = null;
     this.keyNext = true;
     this.frames = 0;
-    this.last = null;
+    this.track = null;
+    // Whether a redraw asked Chrome for a frame that has not come yet.
+    this.asking = false;
     this.plan = new RedrawPlan();
-    // The next redraw, or before the first frame, the next time Chrome is asked for one.
     this.timer = 0;
-    this.startedAt = performance.now();
-    this.asked = 0;
     this.audio = null;
     this.audioHead = false;
     this.playback = null;
     const [video] = stream.getVideoTracks();
     const [sound] = stream.getAudioTracks();
     if (video) {
+      this.track = video;
       video.addEventListener("ended", () => this.ended());
       this.read(video, (f) => this.video(f));
-      this.askForFirst(video);
+      // The capture's start counts as the tab's last change, so a tab that never repaints is
+      // asked for its picture on the same schedule.
+      const now = performance.now();
+      this.plan.captured(now);
+      this.schedule(now);
     }
     if (sound) {
       // Capturing a tab's audio stops it playing where the tab is, so it is played back here.
@@ -192,32 +198,6 @@ class Capture {
     } finally {
       reader.cancel().catch(() => {});
     }
-  }
-
-  // Until the first frame comes, asks Chrome for the tab's picture on the redraw schedule, counted
-  // from the capture's start. Chrome 156 can leave a still tab's capture with no frame for good.
-  // Its first frames reach the track before getUserMedia answers, so before the reader is there.
-  // The reader's own request for a frame comes too soon after them, and Chrome retries it as a
-  // refresh. When Chrome's first copy of the tab failed, it counts that copy as pending for the
-  // rest of the capture, and it takes no refresh while one is pending. A new sink on the track
-  // demands a frame, which Chrome takes even then. grabFrame adds one, and the frame it brings
-  // reaches the reader too. docs/device-notes.md, "The first frame", has what was measured.
-  askForFirst(track) {
-    const step = this.asked++;
-    const last = SETTLE_MS.length - 1;
-    const at = step <= last ? SETTLE_MS[step] : SETTLE_MS[last] + (step - last) * IDLE_MS;
-    this.timer = setTimeout(
-      () => {
-        if (!this.open || this.plan.hasFrame) return;
-        // The picture is the reader's, so the grabbed copy goes. A stopped track refuses.
-        new ImageCapture(track).grabFrame().then(
-          (picture) => picture.close(),
-          () => {},
-        );
-        this.askForFirst(track);
-      },
-      Math.max(1, this.startedAt + at - performance.now()),
-    );
   }
 
   ended() {
@@ -265,10 +245,13 @@ class Capture {
       this.configureVideo(width, height);
     }
     const now = performance.now();
-    this.plan.captured(now);
+    // The first frame after a redraw asked for one is that redraw's, so it does not count as the
+    // tab changing. Should a repaint come between the two, it is taken for the redraw's frame and
+    // the redraw's for the repaint, a few milliseconds apart.
+    if (this.asking) this.asking = false;
+    else this.plan.captured(now);
     this.encode(f, now);
-    if (this.last) this.last.close();
-    this.last = f;
+    f.close();
     this.schedule(now);
   }
 
@@ -289,15 +272,28 @@ class Capture {
     if (wait !== null) this.timer = setTimeout(() => this.redraw(), wait);
   }
 
-  // Encodes the last frame again, while the tab is still.
+  // Asks Chrome for the tab's picture, while the tab is still, and encodes the frame that brings.
+  // Encoding the last frame again would lose a repaint Chrome did not deliver, and Chrome 156 loses
+  // two kinds. After a still spell, its track drops a frame that comes well within the frame
+  // rate's period of the one before, even when the tab's capturer sent it, and the capturer then
+  // has no reason to send it again, so the last repaint of a burst a display frame after the one
+  // before is often lost. And when the capturer's first copy of a tab failed, it takes no refresh request for
+  // the rest of the capture, so a still tab can get no first frame, and a repaint it put off as
+  // too soon never comes. A new sink on the track demands a frame, which Chrome takes either way.
+  // grabFrame adds one, and the frame it brings reaches the reader too. docs/device-notes.md, "The
+  // first frame" and "The last repaint", has what was measured.
   redraw() {
-    if (!this.open || !this.last || !this.encoder) return;
+    if (!this.open) return;
     const now = performance.now();
-    const again = new VideoFrame(this.last, { timestamp: this.last.timestamp + (now - this.plan.lastFrameAt) * 1000 });
-    this.encode(again, now);
-    again.close();
-    // A redraw the encoder had no room for counts as drawn too, so the plan moves on and the
-    // timer does not spin.
+    this.asking = true;
+    // The picture is the reader's, so the grabbed copy goes. A stopped track refuses.
+    new ImageCapture(this.track).grabFrame().then(
+      (picture) => picture.close(),
+      () => {
+        this.asking = false;
+      },
+    );
+    // The redraw counts as drawn once asked for, so the plan moves on and the timer does not spin.
     this.plan.drew(now);
     this.schedule(now);
   }
@@ -351,8 +347,6 @@ class Capture {
     for (const track of this.stream.getTracks()) track.stop();
     if (this.encoder && this.encoder.state !== "closed") this.encoder.close();
     this.stopAudio();
-    if (this.last) this.last.close();
-    this.last = null;
     if (this.playback) this.playback.close();
   }
 }

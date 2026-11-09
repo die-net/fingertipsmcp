@@ -332,9 +332,11 @@ class ChromeViewer(
      * after Chrome makes it, by when the news of the switch may have come and gone, and a captured
      * tab reports itself visible whatever Chrome shows. Only a normal window has the extension's
      * action: a popup's has no toolbar, and a window of another profile, which the extension does
-     * not see, has no action for it. Chrome 156 runs `Extensions.triggerAction` on a tab in such a
-     * window without checking, and crashes; Chromium's main branch checks and refuses. With no
-     * normal window open, the captured tab stays, if it is still open.
+     * not see, has no action for it, nor has a window `--app` opens; an installed web app's window
+     * has one, but the extension reads both as type `app`, so both are passed over. Chrome 156 runs
+     * `Extensions.triggerAction` on a tab in such a window without checking, and crashes;
+     * Chromium's main branch checks and refuses. With no normal window open, the captured tab
+     * stays, if it is still open.
      */
     @Suppress("MissingUseCall") // The document's session stays open until capture stops.
     private suspend fun showingTab(ext: Loaded): String? {
