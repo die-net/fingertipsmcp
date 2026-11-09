@@ -4,23 +4,19 @@ import android.content.BroadcastReceiver
 import android.content.BroadcastReceiver.PendingResult
 import android.content.Context
 import android.content.Intent
-import com.fingertipsmcp.core.ApiJson
-import com.fingertipsmcp.model.PairingInfo
-import com.fingertipsmcp.model.Scope
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
  * Host-side provisioning over ADB. Protected by `android.permission.DUMP`, which only shell and
- * root hold, so other apps cannot mint tokens.
+ * root hold, so other apps cannot reach it.
  *
- * Prefer the host client: `fingertips pair` for [ACTION_CREATE_TOKEN]. Set or clear the PIN with
- * `PUT|DELETE /v1/device/pin` (admin scope). Pair wireless debugging from the app UI
- * ([ACTION_PAIR_ADB] is what that flow sends).
+ * Prefer the API: set or clear the PIN with `PUT|DELETE /v1/device/pin` (admin scope). Pair
+ * wireless debugging from the app UI ([ACTION_PAIR_ADB] is what that flow sends).
  *
- * The result data is the pairing JSON for `CREATE_TOKEN`. Omitting `scopes` grants every scope.
- * `SET_PIN` with no `pin` clears it. A bad extra returns result code 1 and a short message; success
- * is result code 0. Neither PIN path returns the PIN.
+ * Android 16 and 17 log every broadcast's result data, so no result here carries a secret. Tokens
+ * come from [PairingProvider] instead. `SET_PIN` with no `pin` clears it. A bad extra returns
+ * result code 1 and a short message; success is result code 0. Neither PIN path returns the PIN.
  */
 class ShellCommandReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -53,28 +49,8 @@ class ShellCommandReceiver : BroadcastReceiver() {
 
     private suspend fun handle(graph: AppGraph, intent: Intent, pending: PendingResult) {
         when (intent.action) {
-            ACTION_CREATE_TOKEN -> createToken(graph, intent, pending)
             ACTION_SET_PIN -> setPin(graph, intent, pending)
             ACTION_PAIR_ADB -> pairAdb(graph, intent, pending)
-        }
-    }
-
-    private fun createToken(graph: AppGraph, intent: Intent, pending: PendingResult) {
-        val name = intent.getStringExtra("name") ?: "adb"
-        when (val scopes = parseScopeList(intent.getStringExtra("scopes"))) {
-            is Parse.Error -> fail(pending, scopes.message)
-            is Parse.Ok -> {
-                val created = graph.tokens.create(name, scopes.value)
-                val pairing =
-                    PairingInfo(
-                        host = "127.0.0.1",
-                        port = graph.settings.current.port,
-                        token = created.token,
-                        name = name,
-                    )
-                pending.resultCode = 0
-                pending.resultData = ApiJson.encodeToString(PairingInfo.serializer(), pairing)
-            }
         }
     }
 
@@ -105,15 +81,10 @@ class ShellCommandReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_CREATE_TOKEN = "com.fingertipsmcp.CREATE_TOKEN"
         const val ACTION_SET_PIN = "com.fingertipsmcp.SET_PIN"
         const val ACTION_PAIR_ADB = "com.fingertipsmcp.PAIR_ADB"
 
-        private val ACTIONS = setOf(ACTION_CREATE_TOKEN, ACTION_SET_PIN, ACTION_PAIR_ADB)
-
-        /** The host command that mints a token and prints the pairing JSON. */
-        fun createTokenCommand(packageName: String): String =
-            "FINGERTIPS_PKG=$packageName fingertips pair --name laptop"
+        private val ACTIONS = setOf(ACTION_SET_PIN, ACTION_PAIR_ADB)
     }
 }
 
@@ -121,18 +92,6 @@ internal sealed interface Parse<out T> {
     data class Ok<T>(val value: T) : Parse<T>
 
     data class Error(val message: String) : Parse<Nothing>
-}
-
-/** Null [raw] grants every scope. Blank text and unknown names are errors. */
-internal fun parseScopeList(raw: String?): Parse<Set<Scope>> {
-    if (raw == null) return Parse.Ok(Scope.entries.toSet())
-    val names = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-    if (names.isEmpty()) return Parse.Error("scopes must name at least one scope")
-    val scopes = names.map { name ->
-        Scope.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
-            ?: return Parse.Error("unknown scope $name")
-    }
-    return Parse.Ok(scopes.toSet())
 }
 
 internal fun parsePairingCode(raw: String?): Parse<String> {

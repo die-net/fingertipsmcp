@@ -48,7 +48,7 @@ Unauthenticated or unknown Bearer tokens get an **empty 404** (no banner).
 
 ## Pairing and auth
 
-Bearer tokens are minted over ADB (`CREATE_TOKEN` through `ShellCommandReceiver`, DUMP-protected). The shell user is already trusted, so the phone does not need an Allow dialog for that path. `fingertips pair` writes pairing JSON (scheme `http`, host `127.0.0.1`, port, token) to `~/.config/fingertips/pairing.json`. `fingertips server` installs the forward from that file.
+Bearer tokens are minted over ADB: `fingertips pair` reads `content://<package>.pairing/token` with `adb shell content read`, and `PairingProvider` mints a token and returns the pairing JSON, which `content` prints to adb's stdout. The provider takes `DUMP` and also refuses every uid but shell and root. The shell user is already trusted, so the phone does not need an Allow dialog for that path. A broadcast result would carry the JSON too, but Android 16 and 17 write every broadcast's result to the system log, which `logcat_tail` reads. `fingertips pair` writes pairing JSON (scheme `http`, host `127.0.0.1`, port, token) to `~/.config/fingertips/pairing.json`. `fingertips server` installs the forward from that file.
 
 Scopes: `observe`, `control`, `browser`, `stream`, `admin`. Routes and MCP tools are gated by scope and by `capabilities` from `/v1/device`. `?access_token=` is only for WebSocket upgrades and `GET /viewer` (which sets a cookie and redirects), not for `/mcp`.
 
@@ -163,7 +163,7 @@ The helper calls into framework internals that apps are not supposed to use. On 
 | Input | `ServiceManager.getService("input")`, `IInputManager.injectInputEvent` (arity varies by release) |
 | Display mirror | Hidden `DisplayManager` mirror APIs; fallback `SurfaceControl.createDisplay` / `openTransaction` / `setDisplaySurface` / `destroyDisplay`, plus `DisplayManagerGlobal` |
 | Audio | `REMOTE_SUBMIX` capture (`CAPTURE_AUDIO_OUTPUT`, shell-only) |
-| Privileges | `WRITE_SECURE_SETTINGS`, which the app grants itself through the helper, so the app can re-enable Wireless Debugging after reboot; `DUMP` for `CREATE_TOKEN` |
+| Privileges | `WRITE_SECURE_SETTINGS`, which the app grants itself through the helper, so the app can re-enable Wireless Debugging after reboot; `DUMP` for `fingertips pair` and the ADB broadcasts |
 
 Video encoding also uses `MediaFormat.KEY_LOW_LATENCY` where the codec claims support; that key is not equally real on every device.
 

@@ -115,6 +115,7 @@ class AppGraph(
     val bus = EventBus()
     val settings = SettingsStore(filesDir)
     val tokens = TokenStore(filesDir)
+    internal val adbPairing = AdbPairing(tokens) { settings.current.port }
     val state = DeviceStateTracker(context, bus)
     val helper =
         HelperConnection(

@@ -75,6 +75,14 @@
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
 
+        <!-- `fingertips pair` mints a token here with `adb shell content read`. Only shell and root
+             hold DUMP, and the provider refuses every other uid too. -->
+        <provider
+            android:name=".PairingProvider"
+            android:authorities="${applicationId}.pairing"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
         <!-- The image FingertipsMCP last put on the clipboard. The clipboard grants readers access. -->
         <provider
             android:name=".input.ClipProvider"
@@ -103,7 +111,6 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="com.fingertipsmcp.CREATE_TOKEN" />
                 <action android:name="com.fingertipsmcp.SET_PIN" />
                 <action android:name="com.fingertipsmcp.PAIR_ADB" />
             </intent-filter>

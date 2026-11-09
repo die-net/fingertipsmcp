@@ -807,11 +807,15 @@ On the Android 11 phone on 2026-11-07, at Chrome 156, the same corruption killed
 
 ## Tokens minted over ADB
 
-On the Android 16 emulator on 2026-11-08, `system_server` logged the result of `am broadcast` at info, under `ActivityManager`: `Broadcast completed: result=0, data="..."`, with the pairing JSON `CREATE_TOKEN` returns, token included. So the token minted by `fingertips pair` is in the system log, and `logcat_tail`, which needs only `observe`, returned it. The Android 10 emulator did not log that line.
+On the Android 16 emulator on 2026-11-08, `system_server` logged the result of every `am broadcast` at info, under `ActivityManager`: `Broadcast completed: result=0, data="..."`. `fingertips pair` then sent a `CREATE_TOKEN` broadcast whose result was the pairing JSON, so the token was in the system log, and `logcat_tail`, which needs only `observe`, returned it. The Android 17 emulator logged the same line that day. The Android 10 and 13 emulators did not.
+
+So `fingertips pair` now reads `content://<package>.pairing/token` with `adb shell content read`, which copies what the provider returns to adb's stdout. On the Android 10, 13, 16, and 17 emulators on 2026-11-08 it paired with the app force-stopped and again with it running, the token answered `GET /v1/device`, and neither `adb logcat -d` nor `logcat_tail` held the token or the pairing JSON. A bad `--scopes` came back as the provider's message, and a package not installed as "Could not find provider". `content` exits 0 even when the provider throws, and prints the exception to stderr. Android 10's `content call` takes only `--arg`, with no extras, which is one reason pairing reads a URI instead. A `content read` from an app's uid, through `run-as`, was refused by Android before the provider ran, for want of `ACCESS_CONTENT_PROVIDERS_EXTERNALLY`.
+
+The Android 17 emulator's `adbd` logged every shell command it ran, under `adbd`: `adbd service requested 'shell,v2,raw:<command line>'`. So anything on an `adb shell` command line reaches the log there. The pairing URI holds only the token's name and scopes. A `SET_PIN` broadcast's `--es pin` and a `PAIR_ADB` broadcast's `--es code` did reach it there, though their broadcast results ("stored", "cleared", and the pairing message) hold neither. On the Android 13 and 16 emulators no `adbd` line was logged, and the PIN and code appeared nowhere: `ActivityManager` writes only "(has extras)" for a broadcast's extras.
 
 ### Still to check
 
-- Which Android release started logging the broadcast result, and whether the Android 11 and 12 test phones do.
+- Whether Android 14 and 15 log broadcast results or `adbd` command lines, and whether the Android 11 and 12 test phones do.
 
 ## Unlocking
 

@@ -10,6 +10,7 @@ import android.os.Process
 import android.util.Log
 import com.fingertipsmcp.FingertipsApp
 import com.fingertipsmcp.helper.Registration
+import com.fingertipsmcp.isShellOrRoot
 
 /**
  * The helper, running as the shell UID, calls `register` here to hand over its Binder. Only shell
@@ -20,7 +21,7 @@ class HelperRegistrationProvider : ContentProvider() {
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
         val uid = Binder.getCallingUid()
-        if (uid != SHELL_UID && uid != Process.ROOT_UID) {
+        if (!isShellOrRoot(uid)) {
             Log.w(TAG, "Rejected helper registration from uid $uid")
             throw SecurityException("Not allowed")
         }
@@ -64,7 +65,6 @@ class HelperRegistrationProvider : ContentProvider() {
     ): Int = 0
 
     companion object {
-        const val SHELL_UID = 2000
         private const val TAG = "FingertipsHelper"
 
         /** Dies with this process. The helper links to it and registers again when it does. */

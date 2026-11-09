@@ -32,7 +32,7 @@ Scopes on a token:
 | `stream` | Viewer page and video/audio WebSockets |
 | `admin` | Token CRUD and stored unlock PIN |
 
-`fingertips pair` grants every scope unless `--scopes` names some, such as `--scopes observe,stream`. It sends ADB `CREATE_TOKEN`, whose `scopes` extra takes the same list. With an admin token, `POST /v1/tokens` creates a token with the scopes it names, and `PATCH /v1/tokens/{id}` replaces a token's scopes. The token keeps its secret, and REST and WebSocket upgrades check the new scopes on the next request. An MCP session's tools are fixed at `initialize`, so a session whose token loses a scope it started with ends at its next request, and within 30 s if it makes none; one whose token gains a scope sees the new tools when its client next initializes. The app's settings screen lists each token's scopes.
+`fingertips pair` grants every scope unless `--scopes` names some, such as `--scopes observe,stream`. It reads `content://<package>.pairing/token?name=<name>&scopes=<list>` with `adb shell content read`, which mints the token and prints its pairing JSON, and `scopes` takes the same list. Only the shell and root uids can read it. With an admin token, `POST /v1/tokens` creates a token with the scopes it names, and `PATCH /v1/tokens/{id}` replaces a token's scopes. The token keeps its secret, and REST and WebSocket upgrades check the new scopes on the next request. An MCP session's tools are fixed at `initialize`, so a session whose token loses a scope it started with ends at its next request, and within 30 s if it makes none; one whose token gains a scope sees the new tools when its client next initializes. The app's settings screen lists each token's scopes.
 
 ## Conventions
 
