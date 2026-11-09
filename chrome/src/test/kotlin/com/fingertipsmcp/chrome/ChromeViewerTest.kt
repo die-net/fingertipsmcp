@@ -597,6 +597,71 @@ class ChromeViewerTest {
         }
     }
 
+    /**
+     * With no viewer, selecting a tab loads the extension and selects it there, which leaves the
+     * app in front as it was, and sends none of DevTools' commands that bring Chrome in front.
+     */
+    @Test
+    fun `select uses the extension`() = runTest {
+        withViewer(this, { tabs["TAB2"] = "PAGE2" }) { chrome, viewer ->
+            assertTrue(viewer.select("chrome~PAGE2"))
+            assertEquals("PAGE2", chrome.active[FakeChrome.NORMAL])
+            assertEquals(1, chrome.loads)
+            assertTrue(viewer.select("chrome~PAGE"))
+            assertEquals("PAGE", chrome.active[FakeChrome.NORMAL])
+            assertEquals(1, chrome.loads)
+            val sent = chrome.commands.map { it.first }
+            assertFalse("Page.bringToFront" in sent, sent.toString())
+            assertFalse("Target.activateTarget" in sent, sent.toString())
+        }
+    }
+
+    /**
+     * With no viewer, which tab Chrome shows comes from the extension, as the worker reads it from
+     * Chrome, and follows a selection.
+     */
+    @Test
+    fun `showing uses the extension`() = runTest {
+        withViewer(this, { tabs["TAB2"] = "PAGE2" }) { chrome, viewer ->
+            assertEquals("chrome~PAGE", viewer.showing())
+            assertTrue(viewer.select("chrome~PAGE2"))
+            assertEquals("chrome~PAGE2", viewer.showing())
+            assertEquals(1, chrome.loads)
+        }
+    }
+
+    /** A target id the extension finds no tab for is not selected, so the caller falls back. */
+    @Test
+    fun `select of no tab is false`() = runTest {
+        withViewer(this) { chrome, viewer ->
+            assertFalse(viewer.select("chrome~GONE"))
+            assertEquals("PAGE", chrome.active[FakeChrome.NORMAL])
+        }
+    }
+
+    /**
+     * On Chrome 125, whose DevTools has no Extensions domain, and on Chrome 146 to 148, which
+     * refuse the load, selecting a tab says it could not, loads nothing, and asks Chrome only once.
+     */
+    @Test
+    fun `select without extension`() = runTest {
+        val setUps =
+            listOf<FakeChrome.() -> Unit>(
+                { missing += setOf("Extensions.loadUnpacked", "Extensions.triggerAction") },
+                { loadRefusal = "Method not available." },
+            )
+        for (setUp in setUps) {
+            withViewer(this, setUp) { chrome, viewer ->
+                assertFalse(viewer.select("chrome~PAGE"))
+                val asked = chrome.commands.toList()
+                assertFalse(viewer.select("chrome~PAGE"))
+                assertNull(viewer.showing())
+                assertEquals(asked, chrome.commands.toList())
+                assertEquals(0, chrome.loads)
+            }
+        }
+    }
+
     /** Runs [test] with a viewer of a [FakeChrome] set up by [setUp], on [scope]'s clock. */
     private suspend fun withViewer(
         scope: TestScope,

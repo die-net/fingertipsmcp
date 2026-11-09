@@ -41,13 +41,19 @@ internal interface PageInputs {
 
     fun checkGesture(request: BrowserGestureRequest)
 
-    suspend fun gesture(cdp: CdpSession, pkg: String?, request: BrowserGestureRequest): ActionResult
+    suspend fun gesture(
+        cdp: CdpSession,
+        id: String,
+        pkg: String?,
+        request: BrowserGestureRequest,
+    ): ActionResult
 
     /** Resolves a DOM key before the session opens, or null when the platform sends it itself. */
     fun prepareKey(request: BrowserKeyRequest): DomKey?
 
     suspend fun key(
         cdp: CdpSession,
+        id: String,
         pkg: String?,
         request: BrowserKeyRequest,
         pageKey: DomKey?,
@@ -90,10 +96,12 @@ internal fun checkGestureRequest(request: BrowserGestureRequest) {
 
 /**
  * Selects the tab, and refuses the input if Chrome won't within [FRONT_MS], so it can't land on
- * another tab.
+ * another tab. [select] selects it without bringing Chrome in front of other apps, and says whether
+ * it did; when it did not, `Page.bringToFront` does, which on a desktop also brings Chrome in
+ * front. Either answers before the page hears, so the wait for it to read as showing follows both.
  */
-internal suspend fun selectTab(cdp: CdpSession) {
-    cdp.call("Page.bringToFront")
+internal suspend fun selectTab(cdp: CdpSession, select: suspend () -> Boolean = { false }) {
+    if (!select()) cdp.call("Page.bringToFront")
     if (settled(FRONT_MS) { tabShowing(cdp) }) return
     throw ApiException(409, "not_visible", "Chrome did not bring this tab forward.")
 }

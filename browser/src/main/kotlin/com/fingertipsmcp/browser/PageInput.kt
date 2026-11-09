@@ -124,6 +124,7 @@ internal class PageInput(
 
     override suspend fun gesture(
         cdp: CdpSession,
+        id: String,
         pkg: String?,
         request: BrowserGestureRequest,
     ): ActionResult =
@@ -162,6 +163,7 @@ internal class PageInput(
 
     override suspend fun key(
         cdp: CdpSession,
+        id: String,
         pkg: String?,
         request: BrowserKeyRequest,
         pageKey: DomKey?,

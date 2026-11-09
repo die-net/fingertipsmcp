@@ -3,8 +3,9 @@
 // worker gets a stream id for it and hands the id to the offscreen document, which captures and
 // encodes when FingertipsMCP tells it to. The worker also tells the document when the active tab
 // changes, so FingertipsMCP can follow it, and when a window changes size, and answers which tab
-// Chrome shows and what type the focused window is. The extension has no content scripts and no
-// web-accessible resources, so no page can see it.
+// Chrome shows and what type the focused window is. It also selects a tab for FingertipsMCP, which
+// DevTools can't do without bringing Chrome in front of the person's other apps. The extension has
+// no content scripts and no web-accessible resources, so no page can see it.
 "use strict";
 
 const OFFSCREEN = "offscreen.html";
@@ -51,12 +52,32 @@ async function showing() {
   return { ids: targets.filter((t) => t.type === "page" && t.tabId === tab.id).map((t) => t.id) };
 }
 
-// Answers the offscreen document, which can't ask chrome.windows itself: which tab Chrome shows, or
-// the type of the window Chrome focused last, null when there is none. The focused window's type
-// tells the viewer page when a popup is in front.
+// Makes the tab with the DevTools target id targetId the active tab in its window, as clicking it
+// would, and leaves the app in front as it was. It does not focus the window: chrome.windows.update
+// with focused brings Chrome in front, as DevTools' Page.bringToFront and Target.activateTarget do.
+// chrome.tabs.update needs no "tabs" permission, which only shows a tab's URL and title.
+async function select(targetId) {
+  const targets = await chrome.debugger.getTargets();
+  const target = targets.find((t) => t.id === targetId && t.tabId !== undefined);
+  if (!target) return { error: "No tab has that target id" };
+  await chrome.tabs.update(target.tabId, { active: true });
+  return { ok: true };
+}
+
+function failure(e) {
+  return { error: String((e && e.message) || e) };
+}
+
+// Answers the offscreen document, which can't use chrome.windows or chrome.tabs itself: which tab
+// Chrome shows, the type of the window Chrome focused last, null when there is none, or a tab
+// selected. The focused window's type tells the viewer page when a popup is in front.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.op === "showing") {
-    showing().then(reply, (e) => reply({ error: String((e && e.message) || e) }));
+    showing().then(reply, (e) => reply(failure(e)));
+    return true;
+  }
+  if (message.op === "select") {
+    select(message.targetId).then(reply, (e) => reply(failure(e)));
     return true;
   }
   if (message.op !== "window") return false;

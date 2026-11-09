@@ -31,7 +31,10 @@ import kotlinx.serialization.json.putJsonObject
  * normal, or that the extension can't see, crashes Chrome, as Chrome 156 does. The extension's
  * commands refuse what Chrome refuses: missing parameters, themselves when [missing] lists them, as
  * an older release's DevTools does, and a load when [loadRefusal] says why. The extension reads
- * which tab Chrome shows from [active] and [focusOrder], as Chrome knows it the moment it switches.
+ * which tab Chrome shows from [active] and [focusOrder], as Chrome knows it the moment it switches,
+ * and selecting a tab through it makes the tab active in its window, leaving which window has focus
+ * as it was, and tells the extension's document, as `chrome.tabs.onActivated` does. [commands]
+ * holds every command sent.
  *
  * Chrome names the document while it is still loading, so with [scriptRan] false its script has not
  * run yet: a call into `fingertipsViewer` throws the `ReferenceError` Chrome 156 gave, and
@@ -40,6 +43,8 @@ import kotlinx.serialization.json.putJsonObject
 internal class FakeChrome : CdpTransport {
     private val out = Channel<String>(Channel.UNLIMITED)
     val evaluated: MutableList<String> = Collections.synchronizedList(ArrayList())
+    /** Each command sent, by method, with its parameters, in order. */
+    val commands: MutableList<Pair<String, JsonObject>> = Collections.synchronizedList(ArrayList())
 
     /** Tab target id to the page in it, or null for a tab that reports none. */
     val tabs = linkedMapOf<String, String?>("TAB" to "PAGE")
@@ -101,6 +106,7 @@ internal class FakeChrome : CdpTransport {
         val params = message["params"]?.jsonObject ?: JsonObject(emptyMap())
         val session = message["sessionId"]?.jsonPrimitive?.content
         val expression = params["expression"]?.jsonPrimitive?.content
+        commands += method to params
         if (method == "Runtime.evaluate" && expression == DOCUMENT_READY && !scriptRan) {
             evaluated += expression
             awaitingScript += id to session
@@ -250,6 +256,7 @@ internal class FakeChrome : CdpTransport {
                 }
             }
         }
+        if (expression.startsWith("fingertipsViewer.select(")) return select(expression)
         if (expression == "fingertipsViewer.keyFrame()") keyNext = true
         if (expression == "fingertipsViewer.stop()") capturing = null
         var error: String? = null
@@ -267,6 +274,27 @@ internal class FakeChrome : CdpTransport {
             putJsonObject("result") {
                 putJsonObject("value") {
                     if (error != null) put("error", error) else put("ok", true)
+                }
+            }
+        }
+    }
+
+    /**
+     * The worker selects the tab whose page has the target id in [expression], as
+     * `chrome.tabs.update` does, or says there is none.
+     */
+    private fun select(expression: String): JsonElement {
+        val argument = expression.substringAfter("(").substringBeforeLast(")")
+        val page = Json.parseToJsonElement(argument).jsonPrimitive.content
+        val found = page in tabs.values
+        if (found) {
+            active[window(page)] = page
+            activated()
+        }
+        return buildJsonObject {
+            putJsonObject("result") {
+                putJsonObject("value") {
+                    if (found) put("ok", true) else put("error", "No tab has that target id")
                 }
             }
         }

@@ -111,20 +111,31 @@ class BrowserServiceImpl(
     },
     /** Where background timer checks and network captures run. Null runs neither. */
     scope: CoroutineScope? = null,
+    /**
+     * For a desktop browser with a window: selects tabs without bringing the browser in front of
+     * the person's other apps, and says which tab it shows. Tabs are then opened hidden and
+     * selected through it. When it is null or can't, `Page.bringToFront`, `Target.activateTarget`,
+     * and a tab opened in front select the tab, and on a desktop each of those also brings the
+     * browser in front. Android's Chrome has no such way and keeps no new tab hidden, so it has
+     * none.
+     */
+    selector: TabSelector? = null,
 ) : BaseBrowser {
     private val axTrees = newAxCache()
     private val probe = if (freezesTabs) TabProbe(devtools) else null
+    private val unanswered = UnansweredTabs()
+    private val selection = TabSelection(selector) { id -> pageVisible(id) }
     private val privateTabs =
         IncognitoTabs(
             targets = { socket ->
                 devtools.withBrowser(socket) { it.call("Target.getTargets") }
             },
-            createBlank = { socket -> createTab(socket, BLANK) },
+            // A probe tab, closed at once, so it stays hidden where the browser keeps it so.
+            createBlank = { socket -> createTab(socket, BLANK, devtools.backgroundStaysHidden) },
             close = { id -> closeQuietly(id) },
             openPrivateTab = openPrivateTab,
         )
     private val locator = ElementLocator(axTrees)
-    private val unanswered = UnansweredTabs()
     private val timers =
         if (freezesTabs && scope != null) {
             TimerWatch(
@@ -152,7 +163,7 @@ class BrowserServiceImpl(
         }
     private val opener =
         TabOpener(
-            createBlank = { socket -> createTab(socket, BLANK) },
+            createBlank = { socket, background -> createTab(socket, BLANK, background) },
             onPage = { id, block ->
                 val (socket, chromeId) = parseBrowserTargetId(id)
                 usePage(socket, chromeId, block)
@@ -167,7 +178,9 @@ class BrowserServiceImpl(
     @Volatile private var stateSource: String? = null
     private val pageNodes = PageNodes(showPackage) { pkg -> contentBounds(pkg) }
     private val pageInput: PageInputs by lazy {
-        desktopInput?.let { DesktopPageInput(locator::quads, it) }
+        desktopInput?.let {
+            DesktopPageInput(locator::quads, it, select = { id -> selection.forUse(id) })
+        }
             ?: PageInput(
                 touchAt = touchAt,
                 swipeAt = swipeAt,
@@ -294,7 +307,7 @@ class BrowserServiceImpl(
                 packageName = chrome.packageName,
                 tookScreen = tookScreen,
             )
-        val remembered = if (incognito) null else opener.remembered(tab, created)
+        val remembered = if (incognito) null else opener.remembered(tab, background, created)
         if (remembered != null) return remembered
         // Recording has to start before the page loads, so the tab opens blank and loads after.
         // The blank page stays in the tab's history, so the page sees history.length 2, not 1.
@@ -309,10 +322,11 @@ class BrowserServiceImpl(
         // follows is heard on the browser session, which is listening before the tab exists.
         return onTabEvents(chrome.name) { events ->
             if (incognito) return@onTabEvents openPrivate(chrome, tab, events, ::hook)
-            val chromeId = events.newTab(if (recording) BLANK else pageUrl, background)
+            val chromeId =
+                selection.newTab(events, chrome.name, if (recording) BLANK else pageUrl, background)
             val id = browserTargetId(chrome.name, chromeId)
             events.cancellingPdf(chromeId) {
-                opener.follow(tab.copy(id = id), recording, false, events, hook(id))
+                opener.follow(tab.copy(id = id), recording, false, background, events, hook(id))
             }
         }
     }
@@ -332,7 +346,7 @@ class BrowserServiceImpl(
                 ?: tabsPackageOf(devtools.tabs)
                 ?: throw noIncognito()
         val id = browserTargetId(chrome.name, privateTabs.open(chrome, pkg))
-        return opener.follow(tab.copy(id = id), true, true, events, hook(id))
+        return opener.follow(tab.copy(id = id), true, true, false, events, hook(id))
     }
 
     override fun awaitingPage(id: String): Boolean = unanswered.awaitingPage(id)
@@ -353,9 +367,9 @@ class BrowserServiceImpl(
     override suspend fun chromeStopped(): Boolean =
         noChromeSocket(devtools.tabs, devtools::endpoints)
 
-    private suspend fun createTab(socket: String, url: String): String =
+    private suspend fun createTab(socket: String, url: String, background: Boolean): String =
         devtools.withBrowser(socket) { cdp ->
-            withTabEvents(cdp) { events -> events.newTab(url) }
+            withTabEvents(cdp) { events -> selection.newTab(events, socket, url, background) }
         }
 
     /** Runs [block] on a browser session hearing tabs and downloads on [socket]. */
@@ -409,7 +423,14 @@ class BrowserServiceImpl(
         return ActionResult(ok = ok, backend = "cdp", seq = sequence())
     }
 
+    /**
+     * Selects [id] through the [TabSelector] where it can, and with `Target.activateTarget`, which
+     * brings a desktop Chrome in front, where it can't. Unlike input and [show], this never raises
+     * a window another app covers: its callers need the tab selected in its window, so that it is
+     * what a person sees when they look, not drawn now.
+     */
     override suspend fun activate(id: String) {
+        if (selection.quietly(id)) return
         onTarget(id, "Target.activateTarget")
     }
 
@@ -429,7 +450,10 @@ class BrowserServiceImpl(
         }
     }
 
-    override suspend fun showing(id: String): Boolean? {
+    override suspend fun showing(id: String): Boolean? = selection.showing(id)
+
+    /** Whether [id]'s page reads `visible`: false for a closed tab, null when it can't be told. */
+    private suspend fun pageVisible(id: String): Boolean? {
         val (socket, chromeId) = parseBrowserTargetId(id)
         return try {
             withTimeoutOrNull(SHOWING_MS) { usePage(socket, chromeId) { tabShowing(it) } }
@@ -471,7 +495,7 @@ class BrowserServiceImpl(
             pointer = true,
             before = { pageInput.checkGesture(request) },
         ) { cdp, pkg ->
-            pageInput.gesture(cdp, pkg, request)
+            pageInput.gesture(cdp, id, pkg, request)
         }
 
     override suspend fun key(id: String, request: BrowserKeyRequest): ActionResult {
@@ -482,7 +506,7 @@ class BrowserServiceImpl(
             request.input,
             before = { pageKey = pageInput.prepareKey(request) },
         ) { cdp, pkg ->
-            pageInput.key(cdp, pkg, request, pageKey)
+            pageInput.key(cdp, id, pkg, request, pageKey)
         }
     }
 
@@ -631,7 +655,9 @@ class BrowserServiceImpl(
                     front = settled(APPEAR_MS) { inFront(pkg.orEmpty()) }
                 }
                 // With the app behind, visibility says nothing, so there is no point trying again.
-                bringForward(cdp, attempts = if (front) SHOW_ATTEMPTS else 1)
+                bringForward(cdp, attempts = if (front) SHOW_ATTEMPTS else 1) {
+                    selection.forUse(id)
+                }
             }
         } finally {
             invalidateSnapshots()

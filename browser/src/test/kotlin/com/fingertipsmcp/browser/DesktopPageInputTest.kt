@@ -119,7 +119,7 @@ class DesktopPageInputTest {
         val page = FakePage("a", visible = false, switchMs = null)
         val error =
             assertThrows<ApiException> {
-                input().key(page, null, BrowserKeyRequest(key = "a"), pageKey = null)
+                input().key(page, "t", null, BrowserKeyRequest(key = "a"), pageKey = null)
             }
         assertEquals(409, error.status)
         assertEquals("not_visible", error.error)
@@ -179,7 +179,8 @@ class DesktopPageInputTest {
     @Test
     fun `a shortcut holds its modifier`() = clock.run {
         val page = FakePage("a")
-        input().key(page, null, BrowserKeyRequest(key = "a", metaState = CTRL_ON), pageKey = null)
+        input()
+            .key(page, "t", null, BrowserKeyRequest(key = "a", metaState = CTRL_ON), pageKey = null)
         val keys =
             page.calls("Input.dispatchKeyEvent").map {
                 it.type + " " + it.params["key"]!!.jsonPrimitive.content

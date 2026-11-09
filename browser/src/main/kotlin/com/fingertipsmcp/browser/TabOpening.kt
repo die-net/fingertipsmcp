@@ -77,14 +77,14 @@ internal class UnansweredTabs {
 
 /**
  * Sees a new tab to its page, and decides there what opening it gives back. [onPage] runs a block
- * on a session to a tab, [createBlank] opens a blank tab on a socket and returns its Chrome id, and
- * [close] closes a tab, whether or not it is still there. [savedPdf] and [loadPdf] are
- * [PageReader]'s. [onBrowser] runs a block on a new browser session hearing tabs and downloads on a
- * socket, and [scope], when there is one, keeps such a session on a tab that came back unanswered,
- * as [unanswered] records.
+ * on a session to a tab, [createBlank] opens a blank tab on a socket, in the background when asked,
+ * and returns its Chrome id, and [close] closes a tab, whether or not it is still there. [savedPdf]
+ * and [loadPdf] are [PageReader]'s. [onBrowser] runs a block on a new browser session hearing tabs
+ * and downloads on a socket, and [scope], when there is one, keeps such a session on a tab that
+ * came back unanswered, as [unanswered] records.
  */
 internal class TabOpener(
-    private val createBlank: suspend (String) -> String,
+    private val createBlank: suspend (String, Boolean) -> String,
     private val onPage: suspend (String, suspend (CdpSession) -> TabOpening) -> TabOpening,
     private val close: suspend (String) -> Unit,
     private val savedPdf: (String) -> Boolean,
@@ -95,16 +95,21 @@ internal class TabOpener(
 ) {
     /**
      * A stand-in tab shaped like [tab] when Chrome saved its URL before, since opening it would
-     * save another copy. Null when it did not, or the URL no longer gives a PDF.
+     * save another copy. Null when it did not, or the URL no longer gives a PDF. It opens in the
+     * [background] when the open does.
      */
-    suspend fun remembered(tab: BrowserTarget, created: suspend (String) -> Unit): BrowserTarget? =
-        if (savedPdf(tab.url.orEmpty())) standIn(tab, created) else null
+    suspend fun remembered(
+        tab: BrowserTarget,
+        background: Boolean,
+        created: suspend (String) -> Unit,
+    ): BrowserTarget? = if (savedPdf(tab.url.orEmpty())) standIn(tab, background, created) else null
 
     /**
      * Takes the just-made [tab] to its page, first running [created] on it, and navigating it when
      * [navigate] is set. A failure closes the tab, since no caller has its id yet. A URL Chrome
      * saves moves to a stand-in tab, except when [incognito], since a normal tab would read the
-     * file with the phone's logins. [events] is what hears the tab, from before it existed.
+     * file with the phone's logins, and the stand-in opens in the [background] when [tab] did.
+     * [events] is what hears the tab, from before it existed.
      *
      * A tab opened on its URL is only watched, with no connection to it: Chrome holds a new
      * connection's `Page.enable` until the commit, and may be closing the tab under it. A tab that
@@ -114,6 +119,7 @@ internal class TabOpener(
         tab: BrowserTarget,
         navigate: Boolean,
         incognito: Boolean,
+        background: Boolean,
         events: TabEvents,
         created: suspend (String) -> Unit,
     ): BrowserTarget {
@@ -137,7 +143,8 @@ internal class TabOpener(
             TabOpening.SAVED -> {
                 // It may yet close on its own, so the stand-in gets a tab that will not.
                 close(tab.id)
-                (if (incognito) null else standIn(tab, created)) ?: throw downloadSaved()
+                (if (incognito) null else standIn(tab, background, created))
+                    ?: throw downloadSaved()
             }
         }
     }
@@ -224,9 +231,10 @@ internal class TabOpener(
      */
     private suspend fun standIn(
         tab: BrowserTarget,
+        background: Boolean,
         created: suspend (String) -> Unit,
     ): BrowserTarget? {
-        val id = browserTargetId(tab.socket, createBlank(tab.socket))
+        val id = browserTargetId(tab.socket, createBlank(tab.socket, background))
         val loaded =
             closingOnFailure(id) {
                 created(id)

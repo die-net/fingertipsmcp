@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FingertipsMCP viewer",
   "version": "1",
-  "description": "Captures the tab FingertipsMCP's viewer shows, and encodes it for the viewer page.",
+  "description": "Captures the tab FingertipsMCP's viewer shows, encodes it for the viewer page, and selects tabs for FingertipsMCP.",
   "minimum_chrome_version": "116",
   "permissions": ["tabCapture", "offscreen", "debugger"],
   "action": {},

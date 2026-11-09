@@ -11,8 +11,7 @@ const val CHROME_PACKAGE = "com.android.chrome"
 const val OPEN_PRIVATE_TAB = "org.chromium.chrome.browser.incognito.OPEN_PRIVATE_TAB"
 
 /** One path segment: the socket name, then Chrome's target id. */
-internal fun browserTargetId(socket: String, chromeId: String): String =
-    "$socket$SEPARATOR$chromeId"
+fun browserTargetId(socket: String, chromeId: String): String = "$socket$SEPARATOR$chromeId"
 
 fun parseBrowserTargetId(id: String): Pair<String, String> {
     val split = id.indexOf(SEPARATOR)
