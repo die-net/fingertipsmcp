@@ -1,3 +1,7 @@
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
 plugins {
     id("fingertips.jvm.library")
     alias(libs.plugins.kotlin.serialization)
@@ -37,7 +41,68 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
-val runtimeJars = configurations.runtimeClasspath
+/**
+ * A dependency jar as R8 gets it. It leaves out the files nearly every jar has its own of, which
+ * the fat jar can't use: manifests, signatures, `INDEX.LIST`, and `module-info` classes, at the top
+ * or under `META-INF/versions`. Its license and notice files move under `META-INF/licenses/JAR/`,
+ * so each library's ships, not whichever R8 read first. R8 then finds no two resources with one
+ * name, which it warns about.
+ */
+abstract class R8InputJar : TransformAction<TransformParameters.None> {
+    @get:InputArtifact
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val input: Provider<FileSystemLocation>
+
+    override fun transform(outputs: TransformOutputs) {
+        val jar = input.get().asFile
+        val licenses = "META-INF/licenses/${jar.nameWithoutExtension}/"
+        ZipInputStream(jar.inputStream().buffered()).use { zin ->
+            ZipOutputStream(outputs.file(jar.name).outputStream().buffered()).use { zout ->
+                while (true) {
+                    val entry = zin.nextEntry ?: break
+                    val name = renamed(entry.name, licenses) ?: continue
+                    zout.putNextEntry(ZipEntry(name).apply { time = entry.time })
+                    zin.copyTo(zout)
+                    zout.closeEntry()
+                }
+            }
+        }
+    }
+
+    private companion object {
+        val dropped =
+            Regex(
+                "META-INF/(MANIFEST\\.MF|INDEX\\.LIST|[^/]+\\.(SF|DSA|RSA|EC)|versions/.*)|" +
+                    "module-info\\.class"
+            )
+        val license = Regex("META-INF/([^/]*(LICENSE|NOTICE)[^/]*)", RegexOption.IGNORE_CASE)
+
+        /** Where [name] goes in the jar R8 reads, or null to leave it out. */
+        fun renamed(name: String, licenses: String): String? =
+            when {
+                dropped.matches(name) -> null
+                else -> license.matchEntire(name)?.let { licenses + it.groupValues[1] } ?: name
+            }
+    }
+}
+
+/** Marks a jar [R8InputJar] made. */
+val r8Input: Attribute<Boolean> = Attribute.of("fingertips.r8Input", Boolean::class.javaObjectType)
+
+dependencies {
+    attributesSchema { attribute(r8Input) }
+    artifactTypes.getByName("jar") { attributes.attribute(r8Input, false) }
+    registerTransform(R8InputJar::class) {
+        from.attribute(r8Input, false)
+        to.attribute(r8Input, true)
+    }
+}
+
+/** Every runtime dependency's jar, as [R8InputJar] makes it for R8. */
+val runtimeJars =
+    configurations.runtimeClasspath.map { classpath ->
+        classpath.incoming.artifactView { attributes { attribute(r8Input, true) } }.files
+    }
 
 /** R8's command line for [shrunkClasses], with what it reads and writes declared to Gradle. */
 abstract class R8Arguments : CommandLineArgumentProvider {
@@ -122,16 +187,10 @@ val fatJar =
         }
         from(shrunkClasses.map { zipTree(it.outputs.files.singleFile) }) {
             exclude(
-                "META-INF/*.SF",
-                "META-INF/*.DSA",
-                "META-INF/*.RSA",
-                "META-INF/*.EC",
-                "META-INF/INDEX.LIST",
+                // The app's own jar keeps its manifest; R8InputJar left out the others.
                 "META-INF/MANIFEST.MF",
                 "META-INF/proguard/**",
                 "META-INF/com.android.tools/**",
-                "module-info.class",
-                "META-INF/versions/**",
                 "com/sun/jna/aix-*/**",
                 "com/sun/jna/darwin-*/**",
                 "com/sun/jna/dragonflybsd-*/**",
