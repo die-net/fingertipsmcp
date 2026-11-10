@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -172,6 +173,45 @@ class DesktopSelectTest {
         }
     }
 
+    /**
+     * In a minimized window, which draws none of its tabs, input restores the window with
+     * `Browser.setWindowBounds`, which leaves the app in front on macOS, and then selects the tab
+     * quietly, rather than raising the window with `Page.bringToFront`.
+     */
+    @Test
+    fun `minimized input restores`() = runTest {
+        withService(this, selects = true, minimized = true) { chrome, service, asked ->
+            service.key(SECOND, BrowserKeyRequest(key = "a", input = BrowserInput.CDP))
+            assertFalse(chrome.minimized)
+            assertEquals(listOf(SECOND), asked)
+            assertEquals(emptyList<String>(), chrome.focusTaking())
+            assertTrue("Input.dispatchKeyEvent" in chrome.methods())
+        }
+    }
+
+    /** A show in a minimized window restores it too. */
+    @Test
+    fun `minimized show restores`() = runTest {
+        withService(this, selects = true, minimized = true) { chrome, service, asked ->
+            service.snapshot(SECOND, BrowserSnapshotOptions(show = true))
+            assertFalse(chrome.minimized)
+            assertEquals("T2", chrome.front)
+            assertTrue(asked.isNotEmpty() && asked.all { it == SECOND }, asked.toString())
+            assertEquals(emptyList<String>(), chrome.focusTaking())
+        }
+    }
+
+    /** Activate needs the tab selected in its window, not drawn, so it restores nothing. */
+    @Test
+    fun `minimized activate stays`() = runTest {
+        withService(this, selects = true, minimized = true) { chrome, service, asked ->
+            service.activate(SECOND)
+            assertEquals(listOf(SECOND), asked)
+            assertTrue(chrome.minimized)
+            assertEquals(emptyList<String>(), chrome.focusTaking())
+        }
+    }
+
     /** What the selector says Chrome shows wins over the page's visibility, which a cover hides. */
     @Test
     fun `showing asks the selector`() = runTest {
@@ -194,16 +234,18 @@ class DesktopSelectTest {
     /**
      * Runs [test] on a browser service for a [FakeDesktop] showing T1, with a selector that selects
      * a tab, as the extension does, when [selects], records the ids it was asked for, and, when it
-     * [knows], says which tab Chrome shows. The window is [covered] by another app's.
+     * [knows], says which tab Chrome shows. The window is [covered] by another app's, or
+     * [minimized].
      */
     private suspend fun withService(
         scope: TestScope,
         selects: Boolean,
         covered: Boolean = false,
+        minimized: Boolean = false,
         knows: Boolean = true,
         test: suspend (FakeDesktop, BrowserServiceImpl, List<String>) -> Unit,
     ) =
-        FakeDesktop(covered).use { chrome ->
+        FakeDesktop(covered, minimized).use { chrome ->
             val dispatcher = StandardTestDispatcher(scope.testScheduler)
             CdpBrowserConnection(chrome, dispatcher).use { connection ->
                 connection.start()
@@ -231,11 +273,16 @@ class DesktopSelectTest {
 
     /**
      * A desktop Chrome with one window, whose tabs read `visible` only while the window shows them
-     * and is not [covered] by another app's window. `Page.bringToFront`, `Target.activateTarget`,
-     * and a tab opened without `background` select a tab, and bring Chrome in front of other apps
-     * as they do on macOS, which uncovers the window. Each command is answered once it is sent.
+     * and is neither [covered] by another app's window nor [minimized]. `Page.bringToFront`,
+     * `Target.activateTarget`, and a tab opened without `background` select a tab, and bring Chrome
+     * in front of other apps as they do on macOS, which uncovers and restores the window.
+     * `Browser.setWindowBounds` minimizes and restores the window and leaves the app in front. Each
+     * command is answered once it is sent.
      */
-    private class FakeDesktop(@Volatile var covered: Boolean) : CdpTransport {
+    private class FakeDesktop(
+        @Volatile var covered: Boolean,
+        @Volatile var minimized: Boolean,
+    ) : CdpTransport {
         private val out = Channel<String>(Channel.UNLIMITED)
         private val sent: MutableList<Pair<String, String?>> =
             Collections.synchronizedList(ArrayList())
@@ -313,6 +360,19 @@ class DesktopSelectTest {
                     cameForward()
                     obj {}
                 }
+                "Browser.getWindowForTarget" ->
+                    obj {
+                        put("windowId", WINDOW)
+                        putJsonObject("bounds") {
+                            put("windowState", if (minimized) "minimized" else "normal")
+                        }
+                    }
+                "Browser.setWindowBounds" -> {
+                    val state =
+                        params.getValue("bounds").jsonObject["windowState"]?.jsonPrimitive?.content
+                    if (state != null) minimized = state == "minimized"
+                    obj {}
+                }
                 else -> obj {}
             }
 
@@ -354,7 +414,9 @@ class DesktopSelectTest {
             val expression = params.getValue("expression").jsonPrimitive.content
             val value =
                 if (expression == "document.visibilityState") {
-                    JsonPrimitive(if (page == front && !covered) "visible" else "hidden")
+                    JsonPrimitive(
+                        if (page == front && !covered && !minimized) "visible" else "hidden"
+                    )
                 } else {
                     JsonPrimitive(0)
                 }
@@ -366,9 +428,10 @@ class DesktopSelectTest {
             }
         }
 
-        /** Chrome came in front of other apps, which uncovers its window. */
+        /** Chrome came in front of other apps, which uncovers and restores its window. */
         private fun cameForward() {
             covered = false
+            minimized = false
         }
 
         private fun obj(build: JsonObjectBuilder.() -> Unit): JsonObject = buildJsonObject(build)
@@ -388,6 +451,7 @@ class DesktopSelectTest {
         const val BLANK = "about:blank"
         const val WIDTH = 800
         const val HEIGHT = 600
+        const val WINDOW = 1
         val FOCUS_TAKING = setOf("Page.bringToFront", "Target.activateTarget")
     }
 }

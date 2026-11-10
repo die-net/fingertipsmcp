@@ -124,7 +124,12 @@ class BrowserServiceImpl(
     private val axTrees = newAxCache()
     private val probe = if (freezesTabs) TabProbe(devtools) else null
     private val unanswered = UnansweredTabs()
-    private val selection = TabSelection(selector) { id -> pageVisible(id) }
+    private val selection =
+        TabSelection(
+            selector,
+            restore = { id -> restoreMinimized(devtools, id) },
+            visible = { id -> pageVisible(id) },
+        )
     private val privateTabs =
         IncognitoTabs(
             targets = { socket ->

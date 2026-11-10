@@ -116,6 +116,7 @@ class ChromeLocatorTest {
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
                 "--no-startup-window",
+                "--disable-backgrounding-occluded-windows",
                 "--lang=de",
             ),
             args,
@@ -136,6 +137,7 @@ class ChromeLocatorTest {
         val args = launcher(headless = true, hideAutomation = true).arguments()
         assertTrue("--headless=new" in args)
         assertFalse("--no-startup-window" in args)
+        assertFalse("--disable-backgrounding-occluded-windows" in args)
     }
 
     private fun launcher(headless: Boolean, hideAutomation: Boolean) =
