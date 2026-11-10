@@ -1193,6 +1193,7 @@ Checked on 2026-11-09 on Windows 10 Pro N 22H2 (19045) in a Proxmox VM with no G
   - On Chrome for Testing 125.0.6422.141, where the extension can't select tabs, the code restores the window and then sends `Page.bringToFront`. Which of the two moved the window was not seen apart. As Chrome's only window it came in front with the foreground, 3 of 3 times. With a second window open it came back behind Notepad, which kept the foreground, 2 of 2 times. Each time `shown` was true in 1.0 to 1.4 s and `text` landed.
 - With `close` waiting for `Target.targetDestroyed`, on Chrome 157.0.8103.51 on 2026-11-09: four closes returned in 68 to 87 ms with no `message`, and the next `GET /v1/browser/targets` left the tab out each time. The smoke test passed 5 of 5.
 - Replacing a file another program has open, on 2026-11-10 with Java 21.0.13: `Files.move` with `ATOMIC_MOVE` and `REPLACE_EXISTING` failed with `AccessDeniedException` while the target was open for reading, whether through `FileInputStream` or `Files.newInputStream`, which shares delete. With `pairing.json` held open by PowerShell (`[IO.File]::Open` with read sharing), `token create` exited 1 saying another program may have the file open, revoked the token it had minted, and left no `pairing.json.new`. The next `token create` with the file closed wrote it.
+- A per-user install's location, on 2026-11-10: with `ProgramFiles` and `ProgramFiles(x86)` pointed at an empty folder, Chrome not on `PATH`, and `%LOCALAPPDATA%\Google\Chrome\Application` a junction to the Program Files install, the server found Chrome there and started Chrome 157. Chrome's own per-user installer was not run, since the VM has a system-wide Chrome.
 - `text` with `clear` replaced the text of an input and a textarea through Ctrl+A and Backspace, with Chrome partly covered and Notepad in front.
 - A swipe over 0.6 of the page sent 3 wheel events of `deltaY` 100 in pixel mode, and each scrolled exactly 100 px, ending at 300. No scroll event came between notches, so Chrome's smooth scrolling did not animate them, and the position read right after the swipe returned was already final.
 - Closing Chrome's only window with `SC_CLOSE`, as its close button does, left Chrome running with no window on 157 and on 125, with and without the viewer's extension loaded. The next `POST /v1/browser/tabs` opened a window in the same Chrome process, behind Notepad. Chrome started the usual way exits when its last window closes, so this comes from how FingertipsMCP starts it.
@@ -1207,7 +1208,8 @@ Checked on 2026-11-09 on Windows 10 Pro N 22H2 (19045) in a Proxmox VM with no G
 
 - The viewer's sound, on a computer with an audio output.
 - The viewer's capture on a desktop with a GPU.
-- Chrome found in a per-user install that Chrome's own installer made, and Windows 11.
+- Chrome in a per-user install that Chrome's own installer made, rather than its location through a junction. Windows 11.
+- Windows on ARM64. Every Windows check so far ran on x64.
 - Covering and raising with a person's real input, rather than injected clicks.
 
 ### Tab capture for a viewer
