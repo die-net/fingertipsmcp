@@ -4,6 +4,8 @@ import com.fingertipsmcp.core.ApiJson
 import com.fingertipsmcp.core.AtomicTextFile
 import com.fingertipsmcp.model.PairingInfo
 import com.fingertipsmcp.server.TokenStore
+import java.io.File
+import java.io.IOException
 import java.io.PrintStream
 import kotlin.system.exitProcess
 import kotlinx.serialization.serializer
@@ -36,6 +38,9 @@ fun main(args: Array<String>) {
             } catch (e: UsageException) {
                 System.err.println("fingertips-chrome: ${e.message.orEmpty()}")
                 exitProcess(1)
+            } catch (e: PairingWriteException) {
+                System.err.println("fingertips-chrome: ${e.message.orEmpty()}")
+                exitProcess(1)
             }
         Command.TokenList -> listTokens(paths, System.out)
         is Command.TokenRevoke ->
@@ -58,7 +63,8 @@ private fun serve(options: ServeOptions, paths: ChromePaths) {
 
 /**
  * Mints a token and writes `pairing.json` for it, with the address in `settings.json` that `serve`
- * listens on. It is refused before minting when that address is a Unix socket.
+ * listens on. It is refused before minting when that address is a Unix socket. When `pairing.json`
+ * can't be written, the token is revoked, since nothing else holds its secret.
  */
 internal fun createToken(command: Command.TokenCreate, paths: ChromePaths, out: PrintStream) {
     paths.ensure()
@@ -77,14 +83,28 @@ internal fun createToken(command: Command.TokenCreate, paths: ChromePaths, out: 
                 token = created.token,
                 name = command.name,
             )
-        AtomicTextFile(paths.pairing)
-            .write(ApiJson.encodeToString(serializer<PairingInfo>(), pairing))
-        ownerOnly(paths.pairing)
+        try {
+            AtomicTextFile(paths.pairing)
+                .write(ApiJson.encodeToString(serializer<PairingInfo>(), pairing))
+            ownerOnly(paths.pairing)
+        } catch (e: IOException) {
+            TokenStore(paths.config).revoke(created.info.id)
+            throw PairingWriteException(paths.pairing, created.info.id, e)
+        }
         out.println("Wrote ${paths.pairing}")
     } else {
         out.println(created.token)
     }
 }
+
+/** `pairing.json` could not be written, so the token minted for it was revoked. */
+internal class PairingWriteException(file: File, id: String, cause: IOException) :
+    Exception(
+        "Could not write $file, so token $id was revoked. Another program may have the file open, " +
+            "which on Windows keeps it from being replaced. Close it and run token create again. " +
+            "($cause)",
+        cause,
+    )
 
 private fun listTokens(paths: ChromePaths, out: PrintStream) {
     TokenStore(paths.config).list().forEach { token ->

@@ -77,6 +77,16 @@ class ListenTest {
     }
 
     @Test
+    fun `unwritable pairing revokes`() {
+        // A directory with something in it can't be replaced on any system, as Windows can't
+        // replace a file another program has open.
+        assertTrue(File(paths.pairing, "inside").mkdirs())
+        assertThrows(PairingWriteException::class.java) { createPairing() }
+        assertTrue(listTokens().isEmpty(), "no token is left that nothing holds")
+        assertFalse(File(paths.config, "pairing.json.new").exists())
+    }
+
+    @Test
     fun `windows refuses a socket`() {
         val port = (listenFor(ServeOptions(), paths.config) as Listen.Tcp).port
         assertThrows(UsageException::class.java) {
