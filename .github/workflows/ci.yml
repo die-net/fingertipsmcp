@@ -212,6 +212,7 @@ jobs:
           image=fingertipsmcp-chrome:ci
           docker image ls "$image"
           docker run --rm --entrypoint google-chrome "$image" --version
+          docker run --rm --entrypoint java "$image" -version
           docker volume create fingertips-chrome-config
           docker volume create fingertips-chrome-data
           docker run --rm -v fingertips-chrome-config:/home/fingertips/.config/fingertips-chrome "$image" \
@@ -228,6 +229,8 @@ jobs:
           docker logs fingertips-chrome > "$RUNNER_TEMP/container.log" 2>&1
           test "$(grep -c 'Started Chrome' "$RUNNER_TEMP/container.log")" = 1
           ! grep -q 'The browser exited' "$RUNNER_TEMP/container.log"
+          # The JVM warns on stderr about calls a later Java may refuse, such as loading a native library.
+          ! grep -q '^WARNING:' "$RUNNER_TEMP/container.log"
 
       - name: Container and Chrome logs
         if: always()

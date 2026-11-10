@@ -18,7 +18,7 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         google-chrome-stable \
-        openjdk-21-jre-headless \
+        openjdk-25-jre-headless \
         xvfb \
         xauth \
         tzdata \
