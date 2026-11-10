@@ -1,5 +1,6 @@
 package com.fingertipsmcp.browser
 
+import com.fingertipsmcp.model.ActionResult
 import com.fingertipsmcp.model.ApiException
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -123,6 +124,21 @@ internal class TabEvents(private val cdp: CdpSession) {
     }
 
     /**
+     * Closes the tab [id] and waits up to [CLOSE_MS] for Chrome to destroy it. Chrome answers
+     * `Target.closeTarget` before that, so a list of tabs taken in between still holds the tab, and
+     * a check for Chrome's last tab would count it. True once Chrome destroyed it, false when
+     * Chrome would not close it, and null when that was not heard in time or the session ended.
+     */
+    suspend fun close(id: String): Boolean? {
+        val answer =
+            cdp.call("Target.closeTarget", buildJsonObject { put("targetId", id) })
+                .decodeCdp<ClosedTarget>()
+        if (answer?.success == false) return false
+        val seen = withTimeoutOrNull(CLOSE_MS) { heard.first { it.ended || it.tab(id).closed } }
+        return if (seen?.tab(id)?.closed == true) true else null
+    }
+
+    /**
      * Makes the tab [id] the one its window shows, with `Target.activateTarget`, which on a desktop
      * also brings Chrome in front of other apps.
      */
@@ -243,6 +259,28 @@ internal class TabEvents(private val cdp: CdpSession) {
 }
 
 /**
+ * Closes the tab [id] on [devtools], returning once Chrome has destroyed it, so a list of tabs
+ * taken after this no longer holds it. When Chrome takes longer than [CLOSE_MS], `message` says so.
+ * A tab Chrome no longer has is [tabClosed].
+ */
+internal suspend fun closeBrowserTab(devtools: DevtoolsEndpoints, id: String): ActionResult {
+    val (socket, chromeId) = parseBrowserTargetId(id)
+    val closed =
+        try {
+            devtools.withBrowser(socket) { cdp -> withTabEvents(cdp) { it.close(chromeId) } }
+        } catch (e: ApiException) {
+            if (e.rejected == null) throw e
+            throw tabClosed(id)
+        }
+    val late = "Chrome is closing the tab, but had not closed it after ${CLOSE_MS / 1000} s"
+    return ActionResult(
+        ok = closed != false,
+        backend = "cdp",
+        message = late.takeIf { closed == null },
+    )
+}
+
+/**
  * Runs [block] with [cdp], a session on the browser, hearing Chrome's tab events. The session
  * ending fails what waits on them.
  */
@@ -284,6 +322,9 @@ private data class EventTarget(
 
 @Serializable private data class ClosedEvent(val targetId: String? = null)
 
+/** `Target.closeTarget`'s answer. */
+@Serializable private data class ClosedTarget(val success: Boolean? = null)
+
 /**
  * How long a new tab has for its server to answer. Under a DevTools call's own 15 s limit, so a
  * `Page.navigate` that is still waiting ends here, as an unanswered tab, rather than failing.
@@ -295,3 +336,6 @@ internal const val COMMIT_MS = 12_000L
  * failed navigation was a download.
  */
 internal const val SAVE_MS = 2_000L
+
+/** How long Chrome has to destroy a tab once it has answered that it will close it. */
+internal const val CLOSE_MS = 5_000L

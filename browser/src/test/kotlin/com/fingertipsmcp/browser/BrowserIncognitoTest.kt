@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 /** Opening a tab in Chrome's incognito profile, and refusing one that is not. */
 class BrowserIncognitoTest {
     private val harness = BrowserServiceTest()
-    private val closing = harness.socket(reply("""{"success":true}"""))
+    private val closing = harness.socket(harness.closes("inc"))
     private val replies = ArrayDeque<DevtoolsSocket>()
     private lateinit var browser: StallingSocket
 
@@ -28,7 +28,7 @@ class BrowserIncognitoTest {
                     // A blank tab, to learn the normal tabs' context, and closing it.
                     harness.created("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
-                    reply("""{"success":true}"""),
+                    harness.closes("blank"),
                     // Before and after the shortcut, then loading the page.
                     targets(page("a", "normal")),
                     targets(page("a", "normal"), page("inc", "private")),
@@ -69,7 +69,7 @@ class BrowserIncognitoTest {
                     listening(),
                     harness.created("blank"),
                     targets(page("blank", "normal")),
-                    reply("""{"success":true}"""),
+                    harness.closes("blank"),
                     targets(),
                 )
             )
@@ -145,7 +145,7 @@ class BrowserIncognitoTest {
         }
         assertEquals("download_saved", error)
         assertTrue(replies.isEmpty())
-        assertEquals(listOf("Target.closeTarget"), closing.methods())
+        assertEquals(listOf("Target.setDiscoverTargets", "Target.closeTarget"), closing.methods())
         // No stand-in reads it, so its save is left alone.
         assertFalse("Browser.cancelDownload" in browser.methods())
     }
@@ -190,7 +190,7 @@ class BrowserIncognitoTest {
             harness.failure { service.openTab(PAGE, incognito = true) }
         }
         assertEquals("bad_request", error)
-        assertEquals(listOf("Target.closeTarget"), closing.methods())
+        assertEquals(listOf("Target.setDiscoverTargets", "Target.closeTarget"), closing.methods())
     }
 
     @Test
@@ -248,7 +248,7 @@ class BrowserIncognitoTest {
                 listOf(
                     harness.created("blank"),
                     targets(page("a", "normal"), page("blank", "normal")),
-                    reply("""{"success":true}"""),
+                    harness.closes("blank"),
                     targets(page("a", "normal"), page("inc", "private")),
                 )
             )
@@ -282,7 +282,7 @@ class BrowserIncognitoTest {
             listOf(
                     harness.created("blank"),
                     targets(page("blank", "normal")),
-                    reply("""{"success":true}"""),
+                    harness.closes("blank"),
                     targets(),
                     targets(page("inc", "private")),
                 )

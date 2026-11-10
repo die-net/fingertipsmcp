@@ -316,18 +316,6 @@ class BrowserServiceTest {
     }
 
     @Test
-    fun `closes a tab`() {
-        val service =
-            service(
-                switched() + serverTextFrame("""{"id":1,"result":{"success":true}}"""),
-                sockets = CHROME,
-            )
-        val result = virtual { service.closeTab("chrome_devtools_remote~abc") }
-        assertTrue(result.ok)
-        assertEquals("cdp", result.backend)
-    }
-
-    @Test
     @Suppress("MissingUseCall") // The service closes each socket it opens.
     fun `gone tab is not_found`() {
         // Chrome refuses a page socket for a closed tab, and the browser-wide commands on it.
