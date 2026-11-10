@@ -110,8 +110,12 @@ class ChromeLocator(
 /** The browser could not be found or started. */
 class LaunchException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-/** What Chromium costs in stealth, logged when it stands in for Chrome. */
+/**
+ * What Chromium costs in stealth, logged when it runs in place of Chrome. It holds whether a search
+ * fell back to Chromium or `--chrome` or `FINGERTIPS_CHROME` named it.
+ */
 const val CHROMIUM_WARNING: String =
-    "Google Chrome was not found, so fingertips-chrome is using Chromium. Sites can tell: Client Hints " +
+    "fingertips-chrome is using Chromium, not Google Chrome. Sites can tell: Client Hints " +
         "(Sec-CH-UA) name Chromium instead of Google Chrome, and Chromium lacks Chrome's " +
-        "proprietary codecs (H.264, AAC) and Widevine. Install Google Chrome, or pass --chrome."
+        "proprietary codecs (H.264, AAC) and Widevine. To use Chrome, install it, or pass --chrome " +
+        "with its path."
