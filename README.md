@@ -59,7 +59,7 @@ fingertips helper
 
 ### Desktop Chrome
 
-You need Java 21 and Google Chrome on Linux, macOS, or Windows.
+You need Java 21 or later and Google Chrome on Linux, macOS, or Windows.
 
 1. Download `fingertipsmcp-chrome-vX.Y.Z.jar` from [Releases](https://github.com/die-net/fingertipsmcp/releases) and save it as `fingertipsmcp-chrome.jar`.
 2. Add it to your MCP client, which starts it and Chrome when it needs them:
