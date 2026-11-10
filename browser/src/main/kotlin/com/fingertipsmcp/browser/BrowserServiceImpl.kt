@@ -421,11 +421,10 @@ class BrowserServiceImpl(
 
     override suspend fun closeTab(id: String): ActionResult {
         recorder?.stop(id)
-        val closed = onTarget(id, "Target.closeTarget")
+        val closed = closeBrowserTab(devtools, id)
         axTrees.remove(id)
         unanswered.forget(id)
-        val ok = closed.decodeCdp<ClosedTarget>()?.success != false
-        return ActionResult(ok = ok, backend = "cdp", seq = sequence())
+        return closed.copy(seq = sequence())
     }
 
     /**
@@ -827,8 +826,6 @@ private fun nodeRef(ref: String): String {
     }
     return trimmed
 }
-
-@Serializable private data class ClosedTarget(val success: Boolean? = null)
 
 @Serializable private data class NavigateResult(val errorText: String? = null)
 
