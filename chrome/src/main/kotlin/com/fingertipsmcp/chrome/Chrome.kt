@@ -26,6 +26,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
@@ -488,6 +489,17 @@ class BrowserSupervisor(
 }
 
 /**
+ * Cancels [work] and waits for it to stop, then closes [browser]. Work that still uses the browser,
+ * such as the cleanup that runs once the last session lets go of the screen, is cancelled rather
+ * than failing on a browser that is closing. A call blocked in I/O stops only when it returns, so
+ * the wait gives up after [WORK_STOP_MS] and closes the browser anyway.
+ */
+internal suspend fun stopWorkThenBrowser(work: Job, browser: BrowserSupervisor) {
+    withTimeoutOrNull(WORK_STOP_MS) { work.cancelAndJoin() }
+    browser.close()
+}
+
+/**
  * Asks this process to exit, with SIGTERM or on Windows by closing its DevTools pipe, and kills it
  * when it has not exited within [EXIT_WAIT_MS], as a Chrome whose main thread is stuck does not.
  */
@@ -501,6 +513,7 @@ private suspend fun Process.exited(): Boolean =
     withTimeoutOrNull(EXIT_WAIT_MS) { onExit().await() } != null
 
 private const val EXIT_WAIT_MS = 5_000L
+private const val WORK_STOP_MS = 2_000L
 
 private suspend fun browserVersion(connection: CdpBrowserConnection): String =
     connection.root.call("Browser.getVersion").decodeCdp<BrowserVersion>()?.product ?: "Chrome"
