@@ -66,7 +66,6 @@ fun Application.fingertipsModule(
     }
     install(BearerAuth) { tokens = services.tokens }
     attributes.put(SessionsKey, sessions)
-    services.tabs.sessionsFrom { sessions.isLive(it.id) }
     routing { services.groups.forEach { groupRoutes(it, services, sessions) } }
     installPhoneMcp(services, sessions, mcpDnsRebindingProtection)
 }
@@ -104,7 +103,9 @@ private val log = LoggerFactory.getLogger("FingertipsServer")
 
 /**
  * The MCP and REST sessions for [services], started: a session that ends lets go of the screen and
- * closes its tabs. One server, HTTP or stdio, shares one set.
+ * closes its tabs. One server, HTTP or stdio, shares one set. [ServerServices.tabs] learns here
+ * which sessions are live, so a server with no HTTP module, as with `--stdio`, still lets its
+ * sessions own the tabs they open.
  */
 fun mcpSessions(services: ServerServices, scope: CoroutineScope): McpSessions =
     McpSessions(
@@ -119,4 +120,7 @@ fun mcpSessions(services: ServerServices, scope: CoroutineScope): McpSessions =
             tabCount = { services.tabs.count(Holder.Session(it)) },
             tookScreen = { services.phone?.foreground?.count(Holder.Session(it)) ?: 0 },
         )
-        .also { it.start() }
+        .also { sessions ->
+            services.tabs.sessionsFrom { sessions.isLive(it.id) }
+            sessions.start()
+        }
