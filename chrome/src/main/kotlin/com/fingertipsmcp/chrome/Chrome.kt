@@ -76,7 +76,9 @@ interface RunningBrowser : Closeable {
  * Chrome answers that switch with an "unsupported command-line flag" bar on the tab it opens at
  * launch, so a windowed Chrome starts with `--no-startup-window` and fingertips-chrome opens the
  * first window itself. That also means Chrome restores no session at launch. Neither the start nor
- * that window brings Chrome in front of the person's other apps ([openFirstWindow]).
+ * that window brings Chrome in front of the person's other apps ([openFirstWindow]). A windowed
+ * Chrome also gets `--disable-backgrounding-occluded-windows`, so a window covered by another app
+ * keeps drawing and taking input without being raised over it.
  */
 class ChromeLauncher(
     private val binary: BrowserBinary,
@@ -99,6 +101,10 @@ class ChromeLauncher(
         // No launch tab to carry the flag's warning bar, and no restored session. Headless Chrome
         // has no bar to show, and opens its own first tab.
         if (!headless) add("--no-startup-window")
+        // A tab whose window is wholly behind another app's otherwise reads hidden, draws nothing,
+        // and drops input until its window is raised over the app the person is using, which
+        // Windows refuses. With this it draws and takes input where it is.
+        if (!headless) add("--disable-backgrounding-occluded-windows")
         addAll(extraArgs)
     }
 
