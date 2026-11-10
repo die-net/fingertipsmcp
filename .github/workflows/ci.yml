@@ -211,6 +211,8 @@ jobs:
         run: |
           image=fingertipsmcp-chrome:ci
           docker image ls "$image"
+          # Each layer's size, so a change to the Dockerfile shows what it adds or saves.
+          docker history --format '{{.Size}}\t{{.CreatedBy}}' "$image" | cut -c1-120
           docker run --rm --entrypoint google-chrome "$image" --version
           docker run --rm --entrypoint java "$image" -version
           docker volume create fingertips-chrome-config
