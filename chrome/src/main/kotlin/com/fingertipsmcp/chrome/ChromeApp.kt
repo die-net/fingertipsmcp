@@ -39,6 +39,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.asSink
@@ -186,7 +187,7 @@ class ChromeApp(
                 Thread {
                     server.stop(gracePeriodMillis = STOP_GRACE_MS, timeoutMillis = STOP_TIMEOUT_MS)
                     if (listen is Listen.Unix && bound.get()) File(listen.path).delete()
-                    supervisor.close()
+                    shutDown()
                 }
             )
         try {
@@ -226,7 +227,7 @@ class ChromeApp(
      */
     @Suppress("MissingUseCall") // The transport reads stdin until the client closes it.
     fun serveStdio() {
-        Runtime.getRuntime().addShutdownHook(Thread { supervisor.close() })
+        Runtime.getRuntime().addShutdownHook(Thread { shutDown() })
         startBrowserEagerly()
         runBlocking {
             val local = localMcp(services, sessions, STDIO_NAME, DEFAULT_SCOPES)
@@ -241,7 +242,15 @@ class ChromeApp(
             closed.await()
             local.end()
         }
-        supervisor.close()
+        shutDown()
+    }
+
+    /**
+     * Stops this app's background work and then the browser, as [stopWorkThenBrowser] says. A
+     * second call does nothing, so the end of [serveStdio] and its shutdown hook can both call it.
+     */
+    private fun shutDown() = runBlocking {
+        stopWorkThenBrowser(scope.coroutineContext.job, supervisor)
     }
 
     @Suppress("MissingUseCall") // The supervisor takes the started browser and closes it.
@@ -310,7 +319,7 @@ class ChromeApp(
                 is Listen.Unix -> listen.path
                 is Listen.Tcp -> "${listen.host}:${listen.port}"
             }
-        supervisor.close()
+        shutDown()
         return UsageException("Could not listen on $where: $reason", error)
     }
 

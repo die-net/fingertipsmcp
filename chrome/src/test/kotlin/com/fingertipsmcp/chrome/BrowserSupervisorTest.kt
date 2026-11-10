@@ -2,12 +2,16 @@ package com.fingertipsmcp.chrome
 
 import com.fingertipsmcp.browser.CdpBrowserConnection
 import com.fingertipsmcp.browser.CdpTransport
+import com.fingertipsmcp.lease.Holder
+import com.fingertipsmcp.lease.ScreenLease
 import com.fingertipsmcp.model.ApiException
 import java.io.IOException
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
@@ -205,6 +209,38 @@ class BrowserSupervisorTest {
         assertEquals(2, made.size)
         assertSame(made[1], started)
         supervisor.close()
+    }
+
+    @Test
+    fun `shutdown cancels cleanup first`() = runTest {
+        val work = SupervisorJob()
+        val app = CoroutineScope(work + StandardTestDispatcher(testScheduler))
+        val made = FakeBrowser()
+        val supervisor = BrowserSupervisor(app, StandardTestDispatcher(testScheduler)) { made }
+        val proceed = CompletableDeferred<Unit>()
+        val failures = mutableListOf<ApiException>()
+        // The cleanup ChromeApp runs puts up the placeholder tab, which needs the browser.
+        val lease =
+            ScreenLease(
+                scope = app,
+                cleanup = {
+                    proceed.await()
+                    errorOf { supervisor.connection() }?.let { error -> failures += error }
+                    emptyList()
+                },
+            )
+        supervisor.browser()
+        val session = Holder.Session("stdio")
+        lease.withScreen(session) {}
+        lease.release(session)
+        runCurrent()
+
+        stopWorkThenBrowser(work, supervisor)
+        proceed.complete(Unit)
+        runCurrent()
+
+        assertTrue(failures.isEmpty(), "cleanup ran on a closing browser: $failures")
+        assertTrue(made.isClosed)
     }
 
     private fun TestScope.supervisor(start: suspend () -> RunningBrowser) =
