@@ -7,7 +7,7 @@ FingertipsMCP lets an AI agent use your Android phone, or Google Chrome on your 
 It comes in two parts that serve the same API and MCP tools:
 
 - **FingertipsMCP for Android**, an app for a phone on Android 10 or newer, reached from a computer over ADB.
-- **FingertipsMCP for Chrome**, a jar that starts Google Chrome on Linux or macOS, in a desktop session, under Xvfb or Docker, or headless.
+- **FingertipsMCP for Chrome**, a jar that starts Google Chrome on Linux, macOS, or Windows, in a desktop session, under Xvfb or Docker, or headless.
 
 One MCP client can use a phone and a desktop Chrome side by side.
 
@@ -59,7 +59,7 @@ fingertips helper
 
 ### Desktop Chrome
 
-You need Java 21 and Google Chrome on Linux or macOS.
+You need Java 21 and Google Chrome on Linux, macOS, or Windows.
 
 1. Download `fingertipsmcp-chrome-vX.Y.Z.jar` from [Releases](https://github.com/die-net/fingertipsmcp/releases) and save it as `fingertipsmcp-chrome.jar`.
 2. Add it to your MCP client, which starts it and Chrome when it needs them:
@@ -85,7 +85,7 @@ To share one Chrome among several clients, or open the viewer, run it as a serve
 - Windows an app marks secure, such as many banking apps and Chrome's incognito tabs, show black in the phone's screenshots and viewer.
 - The Android app uses Android internals that OEM skins and new Android releases can change. It is sideloaded, not a Play Store app.
 - Apps that check device integrity can still notice USB debugging is on.
-- FingertipsMCP for Chrome runs on Linux and macOS, not Windows. Its input goes through Chrome's DevTools, not the operating system's mouse and keyboard. It has no incognito tabs. Under Xvfb or headless, Chrome is easier for a site to tell apart from a person's.
+- FingertipsMCP for Chrome runs on Linux, macOS, and Windows. Its input goes through Chrome's DevTools, not the operating system's mouse and keyboard. It has no incognito tabs. Under Xvfb or headless, Chrome is easier for a site to tell apart from a person's.
 
 ## Learn more
 

@@ -58,7 +58,7 @@ val USAGE: String =
             "Options:",
             "  --host ADDR          Listen address, default 127.0.0.1. Keep it on loopback.",
             "  --port N             TCP port. Default: one picked at random on first run.",
-            "  --unix PATH          Listen on a Unix socket instead of TCP.",
+            "  --unix PATH          Listen on a Unix socket instead of TCP. Not on Windows.",
             "                       --host, --port, and --unix are kept in settings.json for the",
             "                       next run, and token create writes pairing.json from them.",
             "  --stdio              MCP over stdio for one client. No HTTP listener.",
@@ -74,8 +74,9 @@ val USAGE: String =
             "                       DevTools is on its command line. By default fingertips-chrome passes",
             "                       --disable-blink-features=AutomationControlled to keep it false.",
             "",
-            "Files live in \$XDG_CONFIG_HOME/fingertips-chrome (~/.config/fingertips-chrome): settings.json,",
-            "tokens.json, and pairing.json, which `fingertips-chrome token create` writes for clients.",
+            "Files live in \$XDG_CONFIG_HOME/fingertips-chrome (~/.config/fingertips-chrome), or in",
+            "%LOCALAPPDATA%\\fingertips-chrome on Windows: settings.json, tokens.json, and pairing.json,",
+            "which `fingertips-chrome token create` writes for clients.",
         )
         .joinToString("\n")
 

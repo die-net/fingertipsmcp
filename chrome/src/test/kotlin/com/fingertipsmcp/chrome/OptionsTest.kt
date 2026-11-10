@@ -119,22 +119,40 @@ class OptionsTest {
     @Test
     fun `follows xdg`() {
         val home = File("/home/u")
-        val linux = ChromePaths(env = emptyMap(), home = home, osName = "Linux")
+        val linux = ChromePaths(environment = emptyMap(), home = home, osName = "Linux")
         assertEquals(File("/home/u/.config/fingertips-chrome/pairing.json"), linux.pairing)
         assertEquals(File("/home/u/.local/share/fingertips-chrome/chrome-profile"), linux.profile)
         val xdg =
             ChromePaths(
-                env = mapOf("XDG_CONFIG_HOME" to "/c", "XDG_DATA_HOME" to "/d"),
+                environment = mapOf("XDG_CONFIG_HOME" to "/c", "XDG_DATA_HOME" to "/d"),
                 home = home,
                 osName = "Linux",
             )
         assertEquals(File("/c/fingertips-chrome/pairing.json"), xdg.pairing)
         assertEquals(File("/d/fingertips-chrome/chrome-profile"), xdg.profile)
-        val mac = ChromePaths(env = emptyMap(), home = home, osName = "Mac OS X")
+        val mac = ChromePaths(environment = emptyMap(), home = home, osName = "Mac OS X")
         assertEquals(File("/home/u/.config/fingertips-chrome"), mac.config)
         assertEquals(
             File("/home/u/Library/Application Support/fingertips-chrome/chrome-profile"),
             mac.profile,
         )
+        val local = """C:\Users\u\AppData\Local"""
+        val windows =
+            ChromePaths(
+                environment = mapOf("LOCALAPPDATA" to local),
+                home = home,
+                osName = "Windows 11",
+            )
+        assertEquals(File(local, "fingertips-chrome"), windows.config)
+        assertEquals(File(File(local, "fingertips-chrome"), "chrome-profile"), windows.profile)
+        val mixedCase =
+            ChromePaths(
+                environment = mapOf("LocalAppData" to local),
+                home = home,
+                osName = "Windows 11",
+            )
+        assertEquals(File(local, "fingertips-chrome"), mixedCase.config)
+        val noLocal = ChromePaths(environment = emptyMap(), home = home, osName = "Windows 10")
+        assertEquals(File("/home/u/AppData/Local/fingertips-chrome"), noLocal.config)
     }
 }

@@ -1,6 +1,6 @@
 # FingertipsMCP for Chrome
 
-FingertipsMCP for Chrome is FingertipsMCP for a computer, with a desktop or headless. It starts Google Chrome on Linux or macOS and serves the same browser routes, `browser_*` MCP tools, waits, and screenshots as FingertipsMCP for Android, so one MCP client can drive a phone and a Chrome side by side. The goal is the same as on the phone: to look like a person using an unmodified Chrome, not like an automated one.
+FingertipsMCP for Chrome is FingertipsMCP for a computer, with a desktop or headless. It starts Google Chrome on Linux, macOS, or Windows and serves the same browser routes, `browser_*` MCP tools, waits, and screenshots as FingertipsMCP for Android, so one MCP client can drive a phone and a Chrome side by side. The goal is the same as on the phone: to look like a person using an unmodified Chrome, not like an automated one.
 
 It runs as a single jar (`fingertipsmcp-chrome-vX.Y.Z.jar`, Java 21). Docker is optional packaging.
 
@@ -9,6 +9,7 @@ It runs as a single jar (`fingertipsmcp-chrome-vX.Y.Z.jar`, Java 21). Docker is 
 - Java 21 (for example Temurin)
 - Google Chrome, stable channel, where its installer puts it. Chromium works as a fallback with a cost; see [Chromium](#chromium). FingertipsMCP is tested back to Chrome 125, and the [viewer](#viewer) needs Chrome 149 or later.
 - Linux on x86-64 or ARM64, or macOS. Google ships Chrome for ARM64 Linux through the same apt repository, so a Raspberry Pi 4 or 5 on 64-bit Raspberry Pi OS can run `google-chrome-stable`. Raspberry Pi OS's own browser is Chromium.
+- Or Windows 10 or 11, on x64 or ARM64, with a 64-bit Java. Windows support has run on GitHub's Windows runner, but not yet on a Windows computer with a person at it. [device-notes.md](device-notes.md#still-to-check-on-windows) lists what is unchecked.
 - curl and jq if you want `fingertips papi` to call it
 
 ## Run it
@@ -27,7 +28,7 @@ PAPI_PAIRING=~/.config/fingertips-chrome/pairing.json fingertips papi GET /v1/br
 PAPI_PAIRING=~/.config/fingertips-chrome/pairing.json fingertips papi POST /v1/browser/tabs '{"url":"https://example.com/"}'
 ```
 
-The second command starts Chrome with its own profile in `~/.local/share/fingertips-chrome/chrome-profile` (`~/Library/Application Support/fingertips-chrome/chrome-profile` on macOS, or `$XDG_DATA_HOME/fingertips-chrome`), opens one blank window, and listens on `127.0.0.1` at a port picked once and kept in `settings.json`. `--host`, `--port`, and `--unix` replace what `settings.json` holds, so the next run listens there too, and `token create` writes `pairing.json` with that address. A server on every address (`0.0.0.0`) is paired at `127.0.0.1`. `pairing.json` cannot name a Unix socket, so `token create` refuses to write one for a `--unix` server; pass `--no-pairing` and give the client the socket and token yourself. If Chrome exits, the next call starts it again; see [Windows](#windows). Stopping FingertipsMCP for Chrome closes Chrome.
+The second command starts Chrome with its own profile in `~/.local/share/fingertips-chrome/chrome-profile` (`~/Library/Application Support/fingertips-chrome/chrome-profile` on macOS, `%LOCALAPPDATA%\fingertips-chrome\chrome-profile` on Windows, or `$XDG_DATA_HOME/fingertips-chrome`), opens one blank window, and listens on `127.0.0.1` at a port picked once and kept in `settings.json`. `--host`, `--port`, and `--unix` replace what `settings.json` holds, so the next run listens there too, and `token create` writes `pairing.json` with that address. A server on every address (`0.0.0.0`) is paired at `127.0.0.1`. `pairing.json` cannot name a Unix socket, so `token create` refuses to write one for a `--unix` server; pass `--no-pairing` and give the client the socket and token yourself. If Chrome exits, the next call starts it again; see [Windows](#windows). Stopping FingertipsMCP for Chrome closes Chrome.
 
 `papi` starts a REST session for itself, as with the phone. A client of its own calls `POST /v1/sessions` and sends the id in `Mcp-Session-Id`; see [sharing.md](sharing.md).
 
@@ -89,7 +90,7 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 | --- | --- |
 | `--host ADDR` | Listen address. Default: from `settings.json`, first `127.0.0.1`. A non-loopback address is logged as a warning. Kept in `settings.json`. |
 | `--port N` | TCP port. Default: from `settings.json`, first one picked at random. Kept in `settings.json`. |
-| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. Kept in `settings.json` until `--host` or `--port` switches back to TCP. It refuses a path where a server answers or that is not a socket, including a symbolic link to one, replaces a socket file no server holds, and removes its socket when it stops. |
+| `--unix PATH` | Listen on a Unix socket, mode 0600, instead of TCP. Not on Windows, where the socket can't be limited to its owner that way. Kept in `settings.json` until `--host` or `--port` switches back to TCP. It refuses a path where a server answers or that is not a socket, including a symbolic link to one, replaces a socket file no server holds, and removes its socket when it stops. |
 | `--stdio` | MCP over stdin and stdout. Logs go to stderr. Refuses `--host`, `--port`, and `--unix`. |
 | `--chrome PATH` | Browser binary. Also `FINGERTIPS_CHROME`. |
 | `--profile DIR` | Chrome user data directory. |
@@ -102,7 +103,7 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 
 ## How it drives Chrome
 
-FingertipsMCP for Chrome starts Chrome with `--remote-debugging-pipe`: DevTools runs over two file descriptors instead of a port, so no other process can connect and there is no listening socket to find. One browser connection carries every tab as a flattened session (`Target.attachToTarget`). Other flags are kept to `--user-data-dir`, `--no-first-run`, `--no-default-browser-check`, and, explained under [Stealth](#stealth), `--disable-blink-features=AutomationControlled` and `--no-startup-window`: no `--enable-automation`, `--no-sandbox`, or `--disable-gpu`. The same DevTools hygiene as on Android applies: scripts run in an isolated world, and `Runtime`, `Debugger`, and `Emulation` are not enabled on pages (`browser_console` enables `Runtime` only for its own short session).
+FingertipsMCP for Chrome starts Chrome with `--remote-debugging-pipe`: DevTools runs over two file descriptors instead of a port, so no other process can connect and there is no listening socket to find. Windows has no descriptors 3 and 4 to hand a child, so there Chrome takes the pipe as two inherited handles that `--remote-debugging-io-pipes` names. Java can't pass a child those, so FingertipsMCP for Chrome starts Chrome on Windows with `CreateProcessW`, through JNA, and a handle list that lets Chrome inherit only the two pipe ends and its log file. One browser connection carries every tab as a flattened session (`Target.attachToTarget`). Other flags, besides `--remote-debugging-io-pipes` on Windows, are kept to `--user-data-dir`, `--no-first-run`, `--no-default-browser-check`, and, explained under [Stealth](#stealth), `--disable-blink-features=AutomationControlled` and `--no-startup-window`: no `--enable-automation`, `--no-sandbox`, or `--disable-gpu`. The same DevTools hygiene as on Android applies: scripts run in an isolated world, and `Runtime`, `Debugger`, and `Emulation` are not enabled on pages (`browser_console` enables `Runtime` only for its own short session).
 
 Browser input defaults to `cdp`, which on a desktop is mouse and keyboard events, never touch:
 
@@ -153,7 +154,7 @@ Selecting a tab through the extension while another app is in front leaves that 
 
 FingertipsMCP for Chrome keeps Chrome with a window open:
 
-- Closing the last tab through the API first opens a blank tab, as a person opens a new tab before closing their last one. Chrome on Linux exits when its last window closes, which would end session cookies and logins.
+- Closing the last tab through the API first opens a blank tab, as a person opens a new tab before closing their last one. Chrome on Linux and Windows exits when its last window closes, which would end session cookies and logins.
 - On macOS, Chrome keeps running when a person closes its last window. Opening a tab then opens a window again.
 - A Chrome that does not answer within 15 s of starting, as when macOS holds it on a keychain prompt, is stopped, and killed if it is still running 5 s later, so it does not keep the profile. That call fails, and the next starts Chrome again.
 - If Chrome exits anyway, for example when a person closes its last window on Linux or quits it, the next call starts it again with a fresh blank window. `device_info` reports `model` as `Chrome (not running)` until then. A call that gives up while Chrome starts, such as a client that hangs up, leaves the start to finish, and the next call uses that Chrome.
@@ -207,5 +208,7 @@ CI and the release build it from `docker-bake.hcl` at the repository root, which
 | `~/.local/share/fingertips-chrome/chrome-profile` | Chrome's profile |
 | `~/.local/share/fingertips-chrome/chrome.log` | Chrome's own output |
 | `~/.local/share/fingertips-chrome/chrome-profile/viewer-extension-<hash>` | The viewer's extension, written when a viewer connects, in the `--profile` directory when one is given |
+
+On Windows every file here is in `%LOCALAPPDATA%\fingertips-chrome`, which is the user's own. Windows has no mode 0600, so `pairing.json` and `tokens.json` take that directory's access list. It is local, not roaming, since a token and a port belong to one computer. Chrome on Windows writes nothing to `chrome.log` unless `--chrome-arg --enable-logging=stderr` asks it to.
 
 The API is described in [api.md](api.md), with the [differences from Android](api.md#fingertipsmcp-for-chrome-differences).

@@ -7,14 +7,17 @@ data class BrowserBinary(val path: File, val chromium: Boolean)
 
 /**
  * Finds Google Chrome stable where its installers put it, then Chromium. An explicit path, from
- * `--chrome` or `FINGERTIPS_CHROME`, wins.
+ * `--chrome` or `FINGERTIPS_CHROME`, wins. On Windows a name looked up on `PATH` may leave off
+ * `.exe`.
  */
 class ChromeLocator(
-    private val env: Map<String, String> = System.getenv(),
+    environment: Map<String, String> = System.getenv(),
     private val osName: String = System.getProperty("os.name").orEmpty(),
     private val home: File = File(System.getProperty("user.home")),
     private val runnable: (File) -> Boolean = { it.isFile && it.canExecute() },
 ) {
+    private val env = environmentFor(osName, environment)
+
     fun find(explicit: String?): BrowserBinary {
         val chosen = explicit ?: env["FINGERTIPS_CHROME"]?.takeIf { it.isNotBlank() }
         if (chosen != null) {
@@ -35,12 +38,16 @@ class ChromeLocator(
 
     private fun resolve(name: String): File? {
         val file = File(name)
-        if (file.isAbsolute || name.contains(File.separatorChar)) return file.takeIf(runnable)
+        if (file.isAbsolute || name.contains('/') || name.contains(File.separatorChar)) {
+            return file.takeIf(runnable)
+        }
         return onPath(name)
     }
 
     private fun chromeCandidates(): List<File> =
-        if (isMac(osName)) {
+        if (isWindows(osName)) {
+            windowsInstalls("Google", "Chrome")
+        } else if (isMac(osName)) {
             listOf(
                 File("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
                 File(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
@@ -55,7 +62,9 @@ class ChromeLocator(
         }
 
     private fun chromiumCandidates(): List<File> =
-        if (isMac(osName)) {
+        if (isWindows(osName)) {
+            windowsInstalls("Chromium")
+        } else if (isMac(osName)) {
             listOf(
                 File("/Applications/Chromium.app/Contents/MacOS/Chromium"),
                 File(home, "Applications/Chromium.app/Contents/MacOS/Chromium"),
@@ -69,13 +78,28 @@ class ChromeLocator(
                 )
         }
 
-    private fun onPath(name: String): File? =
-        env["PATH"]
+    /**
+     * Where a Windows installer puts `chrome.exe`, under the [vendor] directories' `Application`:
+     * under Program Files for every user, or under the user's `%LOCALAPPDATA%` for a per-user one.
+     */
+    private fun windowsInstalls(vararg vendor: String): List<File> =
+        listOf("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")
+            .mapNotNull { env[it]?.takeIf(String::isNotBlank) }
+            .map { root ->
+                (vendor.toList() + "Application" + "chrome.exe").fold(File(root), ::File)
+            }
+
+    private fun onPath(name: String): File? {
+        val names =
+            if (isWindows(osName) && !name.contains('.')) listOf("$name.exe", name)
+            else listOf(name)
+        return env["PATH"]
             .orEmpty()
-            .split(File.pathSeparatorChar)
+            .split(if (isWindows(osName)) ';' else ':')
             .filter(String::isNotEmpty)
-            .map { File(it, name) }
+            .flatMap { dir -> names.map { File(dir, it) } }
             .firstOrNull(runnable)
+    }
 
     private fun looksLikeChrome(file: File): Boolean {
         val path = file.path.lowercase()

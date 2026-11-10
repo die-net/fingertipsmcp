@@ -1144,6 +1144,28 @@ Checked on 2026-11-08 in CI, with the image built from `docker-bake.hcl`: Google
 - The raise for a minimized window, end to end; only the covered window ran the build.
 - Whether `--headless=new` loads the viewer's extension. FingertipsMCP for Chrome gives headless Chrome no extension selector, since nothing there takes focus.
 
+### Windows on GitHub's runner
+
+On GitHub's Windows Server 2025 runner on 2026-11-09, with Chrome 156.0.8078.80 and Temurin 21.0.13, started from the job's Git Bash:
+
+- Java's `System.getenv()` map held `PROGRAMFILES` and `PATH` in capitals, as Git Bash passes them, and looks names up by case. A lookup of `ProgramFiles` missed, so the first run found no Chrome. `LOCALAPPDATA` matched only because Windows spells it in capitals. FingertipsMCP for Chrome now looks names up without regard to case on Windows.
+- Chrome was found in Program Files. `CreateProcessW` with a handle list and `--remote-debugging-io-pipes` started it, and DevTools answered over the pipe. The smoke test passed: it read a page, took a 973x605 screenshot on a 1024x768 screen, and closed every tab with Chrome still running. The viewer got an H.264 header and a frame 384 ms after connecting.
+- Ending the server with `Stop-Process -Force`, which terminates that process alone, made Chrome log "Connection terminated while reading from pipe" and "Could not write into pipe". Every Chrome process with the profile on its command line was gone within the 30 s check, and the runner found none left at the job's end.
+- Git Bash's `kill` on the server is no way to end it alone. Git for Windows' `kill` injects `ExitProcess` and falls back to ending the process tree. At the kill, Chrome's network service and GPU process died, the GPU process with exit code -1073741819 (0xC0000005), and a Chrome process other than the browser was still running 30 s later.
+
+### Still to check on Windows
+
+FingertipsMCP for Chrome has not run on a Windows computer with a person at it. Unit tests cover the command line's quoting, the Win32 structures' sizes, where it looks for Chrome, and where it keeps its files, and the CI job above runs the smoke test on the runner's Chrome. Still to check on a Windows computer:
+
+- The launch on Chrome 125. Chrome 125's source has `--remote-debugging-io-pipes`.
+- Finding Chrome in a per-user install under `%LOCALAPPDATA%`, and Chromium's per-user install.
+- Stopping: `CancelIoEx` ending a read blocked on the pipe, and `TerminateProcess` for a Chrome that doesn't exit.
+- Focus: whether opening the first window with `background`, and selecting tabs through the extension, leave the app in front alone, as on macOS; whether a window covered by another app's reads `hidden`; and the raise through `Page.bringToFront`.
+- Chrome exiting when a person closes its last window, which the placeholder is meant to prevent when the API closes the last tab.
+- The wheel's 100 px notch, smooth scrolling, and Ctrl+A clearing a field.
+- The viewer's sound, and its capture on a desktop with a GPU.
+- `tokens.json.lock` while the server runs, and `settings.json` and `pairing.json` being replaced while open.
+
 ### Tab capture for a viewer
 
 Measured on 2026-11-08 with Chrome 156.0.8078.80 on macOS, headful and headless, on scratch profiles over `--remote-debugging-pipe`, to see how a remote person could watch and use a tab with H.264 and Opus rather than a stream of JPEGs. The viewer built on it is under [The viewer](#the-viewer).
