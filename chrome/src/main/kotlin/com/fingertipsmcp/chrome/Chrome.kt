@@ -210,29 +210,7 @@ class ChromeLauncher(
     ) : RunningBrowser {
         override val pid: Long = process.pid()
 
-        /**
-         * Asks Chrome to close, which saves its session, then closes the pipe, which Chrome also
-         * exits on. A caller cancelled meanwhile still waits for the exit, and for the kill when
-         * Chrome doesn't exit, so no Chrome is left holding the profile.
-         */
-        override suspend fun stop() {
-            try {
-                if (process.isAlive && connection.isOpen) {
-                    withTimeoutOrNull(CLOSE_MS) {
-                        try {
-                            connection.root.call("Browser.close")
-                        } catch (_: ApiException) {
-                            // Closing the pipe below ends it anyway.
-                        }
-                    }
-                }
-            } finally {
-                withContext(NonCancellable) {
-                    connection.close()
-                    if (!process.exited()) process.terminate()
-                }
-            }
-        }
+        override suspend fun stop() = stopChrome(process, connection)
     }
 
     private companion object {
@@ -242,7 +220,6 @@ class ChromeLauncher(
          * fd 4, which it writes to. Chrome's own output goes to stderr, which is the log file.
          */
         const val PIPE_SHIM = "exec 3<&0 4>&1 0</dev/null 1>&2; exec \"$@\""
-        const val CLOSE_MS = 3_000L
     }
 }
 
@@ -500,6 +477,34 @@ internal suspend fun stopWorkThenBrowser(work: Job, browser: BrowserSupervisor) 
 }
 
 /**
+ * Stops the Chrome that [connection] drives over [process]'s pipe. It asks Chrome to close, which
+ * saves its session, and gives that [CLOSE_MS]. Then it closes the pipe, which Chrome also exits
+ * on, and terminates the process, which waits once for the exit before it kills. Closing the pipe
+ * and terminating are both requests to exit, and on Windows they are the same one, so waiting after
+ * each would only make a hung Chrome take [EXIT_WAIT_MS] longer to kill. A caller cancelled
+ * meanwhile still waits for the exit, and for the kill when Chrome doesn't exit, so no Chrome is
+ * left holding the profile.
+ */
+internal suspend fun stopChrome(process: Process, connection: CdpBrowserConnection) {
+    try {
+        if (process.isAlive && connection.isOpen) {
+            withTimeoutOrNull(CLOSE_MS) {
+                try {
+                    connection.root.call("Browser.close")
+                } catch (_: ApiException) {
+                    // Closing the pipe below ends it anyway.
+                }
+            }
+        }
+    } finally {
+        withContext(NonCancellable) {
+            connection.close()
+            process.terminate()
+        }
+    }
+}
+
+/**
  * Asks this process to exit, with SIGTERM or on Windows by closing its DevTools pipe, and kills it
  * when it has not exited within [EXIT_WAIT_MS], as a Chrome whose main thread is stuck does not.
  */
@@ -512,6 +517,7 @@ private suspend fun Process.terminate() {
 private suspend fun Process.exited(): Boolean =
     withTimeoutOrNull(EXIT_WAIT_MS) { onExit().await() } != null
 
+private const val CLOSE_MS = 3_000L
 private const val EXIT_WAIT_MS = 5_000L
 private const val WORK_STOP_MS = 2_000L
 
