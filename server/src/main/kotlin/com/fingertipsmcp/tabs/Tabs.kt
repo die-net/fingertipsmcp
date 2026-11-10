@@ -101,7 +101,7 @@ class Tabs(
      */
     @Volatile private var leftShowing: String? = null
 
-    /** Names the session registry. The server does this before any session can exist. */
+    /** Names the session registry. `mcpSessions` does this before any session can exist. */
     fun sessionsFrom(live: (Holder.Session) -> Boolean) {
         this.live = live
     }
