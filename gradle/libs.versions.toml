@@ -22,6 +22,7 @@ androidx-preference = "1.2.1"
 androidx-fragment = "1.9.1"
 jspecify = "1.0.1"
 jna = "5.19.1"
+r8 = "9.5.29"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -34,6 +35,7 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+r8 = { module = "com.android.tools:r8", version.ref = "r8" }
 kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
 
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }

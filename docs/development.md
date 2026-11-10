@@ -158,6 +158,8 @@ java -jar chrome/build/dist/fingertipsmcp-chrome.jar token create
 java -jar chrome/build/dist/fingertipsmcp-chrome.jar
 ```
 
+`fatJar` shrinks the jar with R8, as the release APK is shrunk, which takes it from about 25 MB to 9 MB. R8 gets the app's jar and each dependency's separately, so it applies the rules each library carries in its jar. `chrome/proguard-rules.pro` adds what only the desktop jar needs, such as JNA's proxies and structs. `:chrome:run` and the unit tests use the unshrunk classes, so they can't catch a missing rule. After adding code that finds a class, field, or method by name, or a dependency that does, run the smoke test against the jar, and on Windows for anything that touches JNA. A missing rule fails at run time, such as a `NoSuchFieldException` from a field R8 removed.
+
 To keep a development run away from your own files, point `XDG_CONFIG_HOME` and `XDG_DATA_HOME` at a scratch directory and pass `--profile` with a scratch Chrome profile, or `--attach 9222` to drive a Chrome you started with `--remote-debugging-port=9222` and its own `--user-data-dir`. Calls work with `PAPI_PAIRING=<config>/fingertips-chrome/pairing.json scripts/fingertips papi …`. See [chrome.md](chrome.md).
 
 ## Which Chrome to test
