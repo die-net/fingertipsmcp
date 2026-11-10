@@ -136,7 +136,7 @@ How human the browser looks depends most on where it runs:
 
 1. **A real desktop session.** A person's display, GPU, fonts, and window. Best.
 2. **Xorg with a GPU.** Real rendering and WebGL, but no person's desktop around it.
-3. **Xvfb**, as in the Docker image. Rendering falls back to software, which WebGL and canvas fingerprints show.
+3. **Xvfb**, as in the Docker image. Chrome renders in software and has no WebGL: Chrome 137 and later fall back to their software WebGL only with `--enable-unsafe-swiftshader`, and Chrome 157 in the image refused WebGL with or without Mesa installed. Canvas fingerprints show software rendering, and few people's Chrome lacks WebGL. The flag would make WebGL name SwiftShader, which bot checks know, and runs page shaders through a JIT that Chrome calls unsafe, so FingertipsMCP does not pass it.
 4. **Headless** (`--headless`). The easiest to tell apart from a person's Chrome.
 
 ### navigator.webdriver
@@ -166,7 +166,7 @@ FingertipsMCP for Chrome keeps Chrome with a window open:
 
 ### ARM
 
-Chrome on ARM tells sites so. User-Agent Client Hints report the architecture as `arm` (with a 64-bit bitness), and WebGL names the device's GPU, such as a Raspberry Pi's VideoCore, or SwiftShader under Xvfb. Far fewer people browse from ARM Linux than from x86-64 Linux, Windows, or a Mac, so the same behavior stands out more there. Apple silicon Macs are ARM too, but are common.
+Chrome on ARM tells sites so. User-Agent Client Hints report the architecture as `arm` (with a 64-bit bitness), and WebGL names the device's GPU, such as a Raspberry Pi's VideoCore. Far fewer people browse from ARM Linux than from x86-64 Linux, Windows, or a Mac, so the same behavior stands out more there. Apple silicon Macs are ARM too, but are common.
 
 ### Chromium
 

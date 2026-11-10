@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // smoke-test checks a running FingertipsMCP for Chrome container the way a client uses it: the
 // device answers, a session opens a tab and reads a public page, a screenshot is a PNG, closing the
-// session's last tab leaves Chrome running, and a video viewer gets a header and a frame. CI runs it
-// against the image it just built; see docs/development.md.
+// session's last tab leaves Chrome running, and a video viewer gets a header and a frame. It logs
+// the renderer WebGL names. CI runs it against the image it just built; see docs/development.md.
 //
 // Usage: chrome/docker/smoke-test.mjs PAIRING_JSON
 // Needs Node 22 or later, for fetch and WebSocket. Exits 0 when every check passes and 1 at the
@@ -115,6 +115,17 @@ check(!running.model.includes('not running'), `Chrome runs: ${running.model}, sc
 const read = await json('POST', `/v1/browser/targets/${tab.id}/read`, { show: true });
 if (read.title !== 'Example Domain' || !read.content?.includes('documentation examples')) fail(`read gave ${JSON.stringify(read)}`);
 console.log(`ok: read ${read.totalChars} characters of ${read.url}, shown ${read.shown}`);
+
+// Sites fingerprint the renderer through WebGL, so log what it names. Chrome under Xvfb has none.
+const gl = await json('POST', `/v1/browser/targets/${tab.id}/evaluate`, {
+  expression: `(() => {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const info = gl?.getExtension('WEBGL_debug_renderer_info');
+    return gl && info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : null;
+  })()`,
+});
+if (gl.exception) fail(`the WebGL probe threw ${gl.exception}`);
+console.log(`WebGL: ${gl.value ?? 'none'}`);
 
 const shot = await call('GET', '/v1/screenshot');
 const png = Buffer.from(await shot.arrayBuffer());
