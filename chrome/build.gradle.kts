@@ -101,6 +101,10 @@ val fatJar =
                 "Implementation-Title" to "FingertipsMCP for Chrome",
                 "Implementation-Version" to project.version,
                 "Multi-Release" to "true",
+                // JNA loads its native library to start Chrome on Windows. Java 24 and later warn
+                // on stderr when code outside a named module does that, unless this allows it.
+                // Java 21 ignores it.
+                "Enable-Native-Access" to "ALL-UNNAMED",
             )
         }
         from(mergeServices)

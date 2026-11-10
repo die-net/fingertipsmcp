@@ -2,11 +2,11 @@
 
 FingertipsMCP for Chrome is FingertipsMCP for a computer, with a desktop or headless. It starts Google Chrome on Linux, macOS, or Windows and serves the same browser routes, `browser_*` MCP tools, waits, and screenshots as FingertipsMCP for Android, so one MCP client can drive a phone and a Chrome side by side. The goal is the same as on the phone: to look like a person using an unmodified Chrome, not like an automated one.
 
-It runs as a single jar (`fingertipsmcp-chrome-vX.Y.Z.jar`, Java 21). Docker is optional packaging.
+It runs as a single jar (`fingertipsmcp-chrome-vX.Y.Z.jar`, Java 21 or later). Docker is optional packaging.
 
 ## Requirements
 
-- Java 21 (for example Temurin)
+- Java 21 or later (for example Temurin)
 - Google Chrome, stable channel, where its installer puts it. Chromium works as a fallback with a cost; see [Chromium](#chromium). FingertipsMCP is tested back to Chrome 125, and the [viewer](#viewer) needs Chrome 149 or later.
 - Linux on x86-64 or ARM64, or macOS. Google ships Chrome for ARM64 Linux through the same apt repository, so a Raspberry Pi 4 or 5 on 64-bit Raspberry Pi OS can run `google-chrome-stable`. Raspberry Pi OS's own browser is Chromium.
 - Or Windows with a 64-bit Java. It has been tested only on x64 Windows 10, with Chrome 125 and 157, and CI runs it on GitHub's x64 Windows Server 2025 runner. Windows 11 and Windows on ARM64 have not been tried. [device-notes.md](device-notes.md#still-to-check-on-windows) lists what is unchecked.
