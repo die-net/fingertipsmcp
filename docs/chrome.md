@@ -174,7 +174,7 @@ When Google Chrome is not installed, as on a stock Raspberry Pi OS, FingertipsMC
 
 ## Docker
 
-The image `ghcr.io/die-net/fingertipsmcp-chrome` is Debian with Google Chrome, Java 21, Xvfb, and a desktop font set (Liberation, DejaVu, Noto including CJK and color emoji), for `linux/amd64` and `linux/arm64`.
+The image `ghcr.io/die-net/fingertipsmcp-chrome` is Debian with Google Chrome, Java 25, Xvfb, and a desktop font set (Liberation, DejaVu, Noto including CJK and color emoji), for `linux/amd64` and `linux/arm64`.
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/die-net/fingertipsmcp/main/chrome/docker/seccomp.json
