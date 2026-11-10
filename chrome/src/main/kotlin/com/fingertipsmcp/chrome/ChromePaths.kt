@@ -16,19 +16,36 @@ import org.slf4j.LoggerFactory
  * `$XDG_CONFIG_HOME/fingertips-chrome` (`~/.config/fingertips-chrome`), on macOS too, as
  * fingertips's client does. The Chrome profile is data: `$XDG_DATA_HOME/fingertips-chrome`, or by
  * default `~/.local/share/fingertips-chrome` on Linux and `~/Library/Application
- * Support/fingertips-chrome` on macOS.
+ * Support/fingertips-chrome` on macOS. On Windows both default to
+ * `%LOCALAPPDATA%\fingertips-chrome`, which is local rather than roaming, since a token and a port
+ * belong to this computer.
  */
 class ChromePaths(
-    env: Map<String, String> = System.getenv(),
+    environment: Map<String, String> = System.getenv(),
     home: File = File(System.getProperty("user.home")),
     osName: String = System.getProperty("os.name").orEmpty(),
 ) {
+    private val env = environmentFor(osName, environment)
+
+    private val windowsLocal: File? =
+        if (isWindows(osName)) {
+            File(
+                env["LOCALAPPDATA"]?.takeIf { it.isNotBlank() }?.let(::File)
+                    ?: File(File(home, "AppData"), "Local"),
+                NAME,
+            )
+        } else {
+            null
+        }
+
     val config: File =
         env["XDG_CONFIG_HOME"]?.takeIf { it.isNotBlank() }?.let { File(it, NAME) }
+            ?: windowsLocal
             ?: File(home, ".config/$NAME")
 
     val data: File =
         env["XDG_DATA_HOME"]?.takeIf { it.isNotBlank() }?.let { File(it, NAME) }
+            ?: windowsLocal
             ?: if (isMac(osName)) {
                 File(home, "Library/Application Support/$NAME")
             } else {
@@ -57,7 +74,21 @@ class ChromePaths(
 internal fun isMac(osName: String = System.getProperty("os.name").orEmpty()): Boolean =
     osName.lowercase().let { "mac" in it || "darwin" in it }
 
-/** Restricts [file] to its owner where the file system has POSIX permissions. */
+internal fun isWindows(osName: String = System.getProperty("os.name").orEmpty()): Boolean =
+    osName.lowercase().startsWith("windows")
+
+/**
+ * [env] with names looked up as the OS does. Windows ignores their case, but `System.getenv()`
+ * keeps each name as the parent spelled it, such as `Path` from Explorer, or `PATH` and
+ * `PROGRAMFILES` from Git Bash.
+ */
+internal fun environmentFor(osName: String, env: Map<String, String>): Map<String, String> =
+    if (isWindows(osName)) env.toSortedMap(String.CASE_INSENSITIVE_ORDER) else env
+
+/**
+ * Restricts [file] to its owner where the file system has POSIX permissions. On Windows a file
+ * takes its directory's access list instead, and `%LOCALAPPDATA%` is already the user's own.
+ */
 internal fun ownerOnly(file: File, permissions: String = "rw-------") {
     try {
         Files.setPosixFilePermissions(file.toPath(), PosixFilePermissions.fromString(permissions))
@@ -102,9 +133,14 @@ internal fun loadSettings(dir: File): ChromeSettings {
 /**
  * Where `serve` listens: what [options] give, with `settings.json` filling the rest. Given listen
  * options are kept in `settings.json`, so the next run and `token create` agree with this one.
- * `--host` or `--port` means TCP, and `--unix` a Unix socket.
+ * `--host` or `--port` means TCP, and `--unix` a Unix socket. Windows has no `--unix`, since the
+ * socket could not be made readable only by its owner, which is what keeps other users out.
  */
-internal fun listenFor(options: ServeOptions, dir: File): Listen {
+internal fun listenFor(
+    options: ServeOptions,
+    dir: File,
+    osName: String = System.getProperty("os.name").orEmpty(),
+): Listen {
     val stored = loadSettings(dir)
     val wanted =
         when {
@@ -117,6 +153,12 @@ internal fun listenFor(options: ServeOptions, dir: File): Listen {
                 )
             else -> stored
         }
+    if (wanted.unix != null && isWindows(osName)) {
+        throw UsageException(
+            "Windows has no --unix. settings.json names the socket ${wanted.unix}; " +
+                "pass --host or --port to listen on TCP."
+        )
+    }
     if (wanted != stored) saveSettings(dir, wanted)
     return wanted.listen
 }

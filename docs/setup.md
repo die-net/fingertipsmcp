@@ -84,7 +84,7 @@ Snapshots, injected input, screenshots, logcat, browser routes, and streams need
 
 ### Requirements
 
-- Linux on x86-64 or ARM64, or macOS.
+- Linux on x86-64 or ARM64, macOS, or Windows 10 or 11 on x64 or ARM64 with a 64-bit Java.
 - Java 21, for example Temurin.
 - Google Chrome, stable channel, where its installer puts it. Chromium works too, but sites can tell it apart; see [chrome.md](chrome.md#chromium).
 - `jq` and `curl`, and [`scripts/fingertips`](../scripts/fingertips), only to call the API with `fingertips papi`.
@@ -103,7 +103,7 @@ java -jar fingertipsmcp-chrome.jar token create
 java -jar fingertipsmcp-chrome.jar
 ```
 
-`token create` writes the port and token to `~/.config/fingertips-chrome/pairing.json`, readable only by you, in the same shape as the phone's pairing file. The token gets the `observe`, `control`, and `browser` scopes. `--scopes` replaces them, for example `--name viewer --scopes stream,control` for a viewer.
+`token create` writes the port and token to `~/.config/fingertips-chrome/pairing.json` (`%LOCALAPPDATA%\fingertips-chrome\pairing.json` on Windows), readable only by you, in the same shape as the phone's pairing file. The token gets the `observe`, `control`, and `browser` scopes. `--scopes` replaces them, for example `--name viewer --scopes stream,control` for a viewer.
 
 Either way, it starts Chrome with a profile of its own, so the first run is a clean Chrome to sign in to. Stopping FingertipsMCP for Chrome closes Chrome. [chrome.md](chrome.md) has the options, a Docker image, where its files live, and how it keeps Chrome looking like a person's.
 

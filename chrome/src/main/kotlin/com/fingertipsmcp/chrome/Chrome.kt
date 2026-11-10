@@ -65,9 +65,10 @@ interface RunningBrowser : Closeable {
 
 /**
  * Starts Chrome with `--remote-debugging-pipe`: DevTools on file descriptors 3 and 4 instead of a
- * port, so nothing else on the machine can connect and there is no listening socket to find. The
- * profile persists in [profile]. Flags are kept to what a person's Chrome would not visibly lack:
- * no `--enable-automation`, `--no-sandbox`, or `--disable-gpu`.
+ * port, or on Windows on two pipe handles ([WindowsChromeProcess]), so nothing else on the machine
+ * can connect and there is no listening socket to find. The profile persists in [profile]. Flags
+ * are kept to what a person's Chrome would not visibly lack: no `--enable-automation`,
+ * `--no-sandbox`, or `--disable-gpu`.
  *
  * Any remote-debugging switch, the pipe included, makes Chrome report `navigator.webdriver` true,
  * as an uncontrolled Chrome never does. [hideAutomation] turns that off with
@@ -85,6 +86,7 @@ class ChromeLauncher(
     private val logFile: File,
     private val io: CoroutineContext,
     private val hideAutomation: Boolean = true,
+    private val windows: Boolean = isWindows(),
 ) {
     fun arguments(): List<String> = buildList {
         add("--remote-debugging-pipe")
@@ -175,17 +177,21 @@ class ChromeLauncher(
 
     private fun startProcess(): Process =
         try {
-            ProcessBuilder(
-                    listOf(
-                        "/bin/sh",
-                        "-c",
-                        PIPE_SHIM,
-                        "fingertips-chrome-chrome",
-                        binary.path.path,
-                    ) + arguments()
-                )
-                .redirectError(ProcessBuilder.Redirect.appendTo(logFile))
-                .start()
+            if (windows) {
+                WindowsChromeProcess.start(binary.path, arguments(), logFile)
+            } else {
+                ProcessBuilder(
+                        listOf(
+                            "/bin/sh",
+                            "-c",
+                            PIPE_SHIM,
+                            "fingertips-chrome-chrome",
+                            binary.path.path,
+                        ) + arguments()
+                    )
+                    .redirectError(ProcessBuilder.Redirect.appendTo(logFile))
+                    .start()
+            }
         } catch (e: IOException) {
             throw LaunchException("Could not run ${binary.path}: ${e.message.orEmpty()}", e)
         }
@@ -476,8 +482,8 @@ class BrowserSupervisor(
 }
 
 /**
- * Asks this process to exit with SIGTERM, and kills it when it has not exited within
- * [EXIT_WAIT_MS], as a Chrome whose main thread is stuck does not.
+ * Asks this process to exit, with SIGTERM or on Windows by closing its DevTools pipe, and kills it
+ * when it has not exited within [EXIT_WAIT_MS], as a Chrome whose main thread is stuck does not.
  */
 private suspend fun Process.terminate() {
     destroy()

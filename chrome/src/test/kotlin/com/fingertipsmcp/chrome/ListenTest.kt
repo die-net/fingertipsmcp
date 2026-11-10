@@ -25,7 +25,7 @@ class ListenTest {
     private val dir: File = Files.createTempDirectory(File("/tmp").toPath(), "ft").toFile()
     private val paths =
         ChromePaths(
-            env = mapOf("XDG_CONFIG_HOME" to "$dir/c", "XDG_DATA_HOME" to "$dir/d"),
+            environment = mapOf("XDG_CONFIG_HOME" to "$dir/c", "XDG_DATA_HOME" to "$dir/d"),
             home = dir,
         )
 
@@ -73,6 +73,24 @@ class ListenTest {
         assertEquals(
             Listen.Tcp(DEFAULT_HOST, port),
             listenFor(ServeOptions(port = port), paths.config),
+        )
+    }
+
+    @Test
+    fun `windows refuses a socket`() {
+        val port = (listenFor(ServeOptions(), paths.config) as Listen.Tcp).port
+        assertThrows(UsageException::class.java) {
+            listenFor(ServeOptions(unixSocket = "/tmp/x.sock"), paths.config, "Windows 11")
+        }
+        assertEquals(Listen.Tcp(DEFAULT_HOST, port), listenFor(ServeOptions(), paths.config))
+        // A settings.json that already names a socket is refused too.
+        listenFor(ServeOptions(unixSocket = "/tmp/x.sock"), paths.config)
+        assertThrows(UsageException::class.java) {
+            listenFor(ServeOptions(), paths.config, "Windows 11")
+        }
+        assertEquals(
+            Listen.Tcp(DEFAULT_HOST, port),
+            listenFor(ServeOptions(port = port), paths.config, "Windows 11"),
         )
     }
 

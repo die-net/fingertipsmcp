@@ -95,6 +95,81 @@ jobs:
           name: fingertips-chrome
           path: chrome/build/dist/fingertipsmcp-chrome.jar
 
+  windows:
+    # Runs the fat jar on Windows with the Google Chrome the runner has installed, from the files it keeps
+    # under %LOCALAPPDATA%, and checks it as the image is checked. Then it ends the server and checks
+    # that Chrome exits once its DevTools pipe closes, so no Chrome is left holding the profile.
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: fingertips-chrome
+          path: chrome/build/dist
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Run fingertips-chrome
+        run: |
+          jar=chrome/build/dist/fingertipsmcp-chrome.jar
+          files="$(cygpath -u "$LOCALAPPDATA")/fingertips-chrome"
+          log="$(cygpath -u "$RUNNER_TEMP")/serve.log"
+          java -jar "$jar" --version
+          java -jar "$jar" token create --scopes observe,control,browser,stream
+          # The server keeps running into the next step, which stops it.
+          java -jar "$jar" 2> "$log" &
+          node chrome/docker/smoke-test.mjs "$files/pairing.json"
+          # One Chrome for the whole run: closing its last tab did not make it exit and start again.
+          test "$(grep -c 'Started Chrome' "$log")" = 1
+          if grep -q 'The browser exited' "$log"; then exit 1; fi
+          # slf4j warns on stderr when the jar lost its provider's service file.
+          if grep -q 'SLF4J' "$log"; then exit 1; fi
+
+      # Ends the server alone, as a crash would, so no shutdown hook runs and Chrome sees only its
+      # pipe close. Stop-Process -Force terminates just that process. Git Bash's kill is no use here:
+      # it injects ExitProcess and falls back to ending the whole tree, Chrome's processes included.
+      - name: Chrome exits when the pipe closes
+        shell: pwsh
+        run: |
+          $server = @(Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
+              Where-Object CommandLine -like '*fingertipsmcp-chrome.jar*')
+          if ($server.Count -ne 1) {
+            Write-Error "Expected one fingertips-chrome server, found $($server.Count)"
+            exit 1
+          }
+          Stop-Process -Id $server[0].ProcessId -Force
+          $deadline = (Get-Date).AddSeconds(30)
+          while ($true) {
+            $left = @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
+                Where-Object CommandLine -like '*fingertips-chrome*')
+            if ($left.Count -eq 0) { break }
+            if ((Get-Date) -gt $deadline) {
+              $left | Format-List ProcessId, ParentProcessId, CommandLine | Out-String -Width 400 | Write-Host
+              Write-Error "$($left.Count) Chrome processes were still running 30 s after the server stopped"
+              exit 1
+            }
+            Start-Sleep -Seconds 1
+          }
+
+      - name: Server and Chrome logs
+        if: always()
+        run: |
+          cat "$(cygpath -u "$RUNNER_TEMP")/serve.log" || true
+          cat "$(cygpath -u "$LOCALAPPDATA")/fingertips-chrome/chrome.log" || true
+
   image:
     # Builds the Docker image from the definition the release pushes, and runs it as docs/chrome.md says a
     # person would. arm64 runs on GitHub's arm64 runner rather than under QEMU.

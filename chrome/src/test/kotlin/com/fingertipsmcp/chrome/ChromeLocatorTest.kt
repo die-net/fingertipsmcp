@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 class ChromeLocatorTest {
     private fun locator(os: String, present: Set<String>, env: Map<String, String> = emptyMap()) =
         ChromeLocator(
-            env = mapOf("PATH" to "/usr/local/bin:/usr/bin") + env,
+            environment = mapOf("PATH" to "/usr/local/bin:/usr/bin") + env,
             osName = os,
             home = File("/home/u"),
             runnable = { it.path in present },
@@ -38,6 +38,49 @@ class ChromeLocatorTest {
         val found = locator("Mac OS X", setOf(app)).find(null)
         assertEquals(File(app), found.path)
         assertFalse(found.chromium)
+    }
+
+    @Test
+    fun `finds chrome on windows`() {
+        val env =
+            mapOf(
+                "PATH" to """C:\Windows;C:\tools""",
+                "ProgramFiles" to """C:\Program Files""",
+                "LOCALAPPDATA" to """C:\Users\u\AppData\Local""",
+            )
+        fun install(root: String, vararg vendor: String) =
+            (vendor.toList() + "Application" + "chrome.exe").fold(File(root), ::File)
+        val machine = install("""C:\Program Files""", "Google", "Chrome")
+        val perUser = install("""C:\Users\u\AppData\Local""", "Google", "Chrome")
+        val chromium = install("""C:\Users\u\AppData\Local""", "Chromium")
+        fun windows(vararg present: File) =
+            ChromeLocator(env, "Windows 11", File("""C:\Users\u""")) { it in present }
+
+        assertEquals(BrowserBinary(machine, chromium = false), windows(machine, perUser).find(null))
+        assertEquals(BrowserBinary(perUser, chromium = false), windows(perUser).find(null))
+        assertEquals(BrowserBinary(chromium, chromium = true), windows(chromium).find(null))
+        // A bare name on PATH may leave off .exe.
+        val onPath = File("""C:\tools""", "chrome.exe")
+        assertEquals(onPath, windows(onPath).find("chrome").path)
+    }
+
+    @Test
+    fun `ignores case of windows env`() {
+        val chrome =
+            listOf("Google", "Chrome", "Application", "chrome.exe")
+                .fold(File("""C:\Program Files"""), ::File)
+        val onPath = File("""C:\tools""", "chrome.exe")
+        // Git Bash passes names in capitals, and Explorer as Windows spells them.
+        val gitBash = mapOf("PROGRAMFILES" to """C:\Program Files""", "PATH" to """C:\tools""")
+        val explorer = mapOf("ProgramFiles" to """C:\Program Files""", "Path" to """C:\tools""")
+        for (env in listOf(gitBash, explorer)) {
+            val windows =
+                ChromeLocator(env, "Windows 11", File("""C:\Users\u""")) {
+                    it == chrome || it == onPath
+                }
+            assertEquals(chrome, windows.find(null).path, "$env")
+            assertEquals(onPath, windows.find("chrome").path, "$env")
+        }
     }
 
     @Test
