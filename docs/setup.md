@@ -84,7 +84,7 @@ Snapshots, injected input, screenshots, logcat, browser routes, and streams need
 
 ### Requirements
 
-- Linux on x86-64 or ARM64, macOS, or Windows 10 or 11 on x64 or ARM64 with a 64-bit Java.
+- Linux on x86-64 or ARM64, macOS, or Windows with a 64-bit Java. Windows has been tested only on x64 Windows 10, as [chrome.md](chrome.md) says.
 - Java 21, for example Temurin.
 - Google Chrome, stable channel, where its installer puts it. Chromium works too, but sites can tell it apart; see [chrome.md](chrome.md#chromium).
 - `jq` and `curl`, and [`scripts/fingertips`](../scripts/fingertips), only to call the API with `fingertips papi`.
