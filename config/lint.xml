@@ -7,6 +7,10 @@
     <issue id="AndroidGradlePluginVersion" severity="ignore" />
     <!-- Newer attributes are intentionally declared and simply ignored on older releases. -->
     <issue id="UnusedAttribute" severity="ignore" />
+    <!-- TrulyRandom is about a weak SecureRandom seed on Android 4.3 and older. Lint skips it where
+         minSdk is newer, as in app and helper (29). The JVM modules have no minSdk, so lint assumes
+         the oldest Android, which none of them runs on. -->
+    <issue id="TrulyRandom" severity="ignore" />
     <!-- BouncyCastle ships a trust-all manager for its own tooling; we never use it.
          Kadb pulls BouncyCastle transitively and trusts adbd's self-signed certificate
          while authenticating with the paired key. -->
