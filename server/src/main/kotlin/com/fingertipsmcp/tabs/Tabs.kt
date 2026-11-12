@@ -145,19 +145,23 @@ class Tabs(
      * Keeps the tab of [holder]'s that Chrome is showing past its end, as for a person to finish:
      * it counts as claimed rather than opened, so when the session ends it goes back to being
      * unowned instead of closing, and a later session can claim it. Its other tabs close as usual.
-     * Returns the kept tab's id, or null when Chrome is not in front showing one of [holder]'s.
+     * Returns the kept tab's id. Returns null when there is nothing to keep: Chrome is not in
+     * front, as when a person is to finish in another app, or [holder] has no tab. Fails with
+     * `tab_not_shown` when Chrome is in front and shows none of [holder]'s tabs, since the person
+     * would find another page and every tab of [holder]'s would close when its session ends.
      */
     suspend fun keepShowing(holder: Holder.Session): String? {
         leftShowing = null
         // Chrome's selected tab reports itself visible even with Chrome hidden, so check first.
         if (!inFront(CHROME_PACKAGE)) return null
         val mine = owners.filterValues { it.holder == holder }.keys
+        if (mine.isEmpty()) return null
         // The tab it last brought forward is the likely one, so it is asked about first.
         val front = fronts[holder]?.takeIf { it in mine }
         val shown =
             (listOfNotNull(front) + (mine - setOfNotNull(front))).firstOrNull {
                 base.showing(it) == true
-            } ?: return null
+            } ?: throw tabNotShown()
         mutex.withLock {
             owners.computeIfPresent(shown) { _, owner ->
                 if (owner.holder == holder) owner.copy(opened = false) else owner
@@ -466,7 +470,8 @@ class Tabs(
             throw ApiException(
                 409,
                 "tab_stuck",
-                "Chrome would not switch tabs, so this call did not run. Try it again.",
+                "Chrome is showing another session's tab and did not switch to yours, so this call " +
+                    "did not run. Try it again. If it keeps failing, tell the user.",
             )
         }
         val value = block()
@@ -841,3 +846,17 @@ class Tabs(
         private const val CLAIM_POLL_MS = 250L
     }
 }
+
+/**
+ * What `screen_release` with `cleanup` false says when Chrome shows none of the session's tabs. It
+ * names the fix, since the agent that gets it is usually about to hand the screen to a person.
+ */
+private fun tabNotShown(): ApiException =
+    ApiException(
+        409,
+        "tab_not_shown",
+        "Nothing was released: Chrome is in front but shows none of your tabs, so a person would " +
+            "find another page and all your tabs would close when your session ends. Bring your " +
+            "tab on screen with browser_snapshot or browser_read and show true (on a phone, also " +
+            "device_unlock if it is locked), then call screen_release with cleanup false again.",
+    )

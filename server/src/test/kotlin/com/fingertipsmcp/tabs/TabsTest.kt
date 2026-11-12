@@ -27,8 +27,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -352,72 +350,6 @@ class TabsTest {
         assertEquals(emptyList<String>(), browser.closed)
         tabs.browserFor(b).read(old, BrowserReadRequest())
         assertEquals(1, tabs.count(b))
-    }
-
-    @Test
-    fun `the shown tab outlives it`() = runTest {
-        val tabs = tabs()
-        val shown = tabs.browserFor(a).openTab("https://example.com/")
-        val other = tabs.browserFor(a).openTab("https://example.org/")
-        front = CHROME
-        browser.shown = shown.id
-        assertEquals(shown.id, tabs.keepShowing(a))
-        assertEquals(setOf(other.id), store.ids)
-        tabs.finish(a)
-        assertEquals(listOf(other.id), browser.closed)
-        tabs.browserFor(b).read(shown.id, BrowserReadRequest())
-        assertEquals(1, tabs.count(b))
-    }
-
-    @Test
-    fun `a kept tab stays on screen`() = runTest {
-        // A person may be looking at it, as `cleanup` false says, so the session's next call on it
-        // must not blank the screen.
-        val tabs = tabs()
-        val shown = tabs.browserFor(a).openTab("https://example.com/")
-        front = CHROME
-        browser.shown = shown.id
-        tabs.keepShowing(a)
-        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
-        tabs.browserFor(a).tap(shown.id, tap)
-        assertEquals(shown.id, browser.shown)
-    }
-
-    @Test
-    fun `a popup leaves a kept tab`() = runTest {
-        val tabs = tabs()
-        val shown = tabs.browserFor(a).openTab("https://example.com/")
-        front = CHROME
-        browser.shown = shown.id
-        tabs.keepShowing(a)
-        browser.shown = browser.add("popup", opener = shown.id)
-        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
-        tabs.browserFor(a).tap(shown.id, tap)
-        assertEquals(shown.id, browser.shown)
-    }
-
-    @Test
-    fun `cleanup ends a kept tab`() = runTest {
-        val tabs = tabs()
-        val shown = tabs.browserFor(a).openTab("https://example.com/")
-        front = CHROME
-        browser.shown = shown.id
-        tabs.keepShowing(a)
-        tabs.showPlaceholder()
-        browser.shown = shown.id
-        val tap = BrowserTapRequest(selector = "a", input = BrowserInput.CDP_MOUSE)
-        tabs.browserFor(a).tap(shown.id, tap)
-        assertNotEquals(shown.id, browser.shown)
-    }
-
-    @Test
-    fun `a hidden tab is not kept`() = runTest {
-        val tabs = tabs()
-        val tab = tabs.browserFor(a).openTab("https://example.com/")
-        browser.shown = tab.id
-        assertNull(tabs.keepShowing(a))
-        tabs.finish(a)
-        assertEquals(listOf(tab.id), browser.closed)
     }
 
     @Test

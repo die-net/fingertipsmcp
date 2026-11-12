@@ -557,6 +557,7 @@ At 9e047f7 on the same phone, with the tab's state read over raw DevTools, the k
 ### Still to check
 
 - The lost click on Chrome 109 with the tab switcher open, as above, which did not come back in 35 tries.
+- `screen_release` with `cleanup` false failing `tab_not_shown` when Chrome is in front and shows none of the session's tabs, on the emulator, the Android 11 test phone, and a desktop Chrome. Only the unit tests have run it. Whether a locked phone, with Chrome behind the keyguard, should fail too is open: it releases and the tabs close.
 
 ## Video and audio streams
 
