@@ -1161,7 +1161,7 @@ Checked on 2026-11-10 with Google Chrome 157.0.8103.50 run with `--headless`, fr
 - `--user-agent` changed `navigator.userAgent` and kept the brands, but `getHighEntropyValues` then gave an empty `fullVersionList` and empty `uaFullVersion`, `platformVersion`, and `architecture`. Without it they were `157.0.8103.50` for Google Chrome and Chromium, `157.0.8103.50`, an empty string, and `x86`.
 - With `--window-size=1920,1080`, `--screen-info={1920x1080}`, and `--user-agent` set to headless Chrome's own with `Headless` taken out, Cloudflare Turnstile and reCAPTCHA checks passed.
 
-On macOS on 2026-11-10, headless Chrome 157.0.8103.39's `Browser.getVersion` gave `product` `Chrome/157.0.8103.39` and its own `HeadlessChrome` user agent, and with `--user-agent` the user agent as given. The jar with `--headless` started Chrome, read that, and started it again 0.3 s later with `--window-size=1920,1056`, `--screen-info={1920x1080 workAreaTop=24}`, the bar for macOS, and the user agent with `Chrome/157.0.0.0`. With those two flags a page read a 1920 by 1080 screen with `availHeight` 1056 and `availTop` 24. With Linux's, `--window-size=1920,1048` and `workAreaTop=32`, it read `availHeight` 1048, `availTop` 32, and a 1920 by 961 viewport. `outerWidth` and `outerHeight` were still 0.
+On macOS on 2026-11-10, headless Chrome 157.0.8103.39's `Browser.getVersion` gave `product` `Chrome/157.0.8103.39` and its own `HeadlessChrome` user agent, and with `--user-agent` the user agent as given. The jar with `--headless` started Chrome, read that, and started it again 0.3 s later with `--window-size=1920,1056`, `--screen-info={1920x1080 workAreaTop=24}`, the bar for macOS, and the user agent with `Chrome/157.0.0.0`. With those two flags a page read a 1920 by 1080 screen with `availHeight` 1056 and `availTop` 24. With Linux's, `--window-size=1920,1048` and `workAreaTop=32`, it read `availHeight` 1048, `availTop` 32, and a 1920 by 961 viewport. That page was the one `--dump-dom` loads, which read `outerWidth` and `outerHeight` 0.
 
 CreepJS, in the image with those flags, counted against it a SwiftShader WebGL renderer, a screen whose available height is its full height (no taskbar), `ActiveText` drawn as `rgb(255, 0, 0)`, and a light color scheme. Checked on macOS the same day:
 
@@ -1169,10 +1169,19 @@ CreepJS, in the image with those flags, counted against it a SwiftShader WebGL r
 - A windowed Chrome drew `ActiveText` as `rgb(255, 0, 0)` too, so that check does not tell the two apart on Chrome 157.
 - Headless and windowed Chrome both followed the system's dark mode. Whether `--force-dark-mode` turns a headless Chrome in the image dark was not seen.
 
+On macOS on 2026-11-12, with headless Chrome 157.0.8103.39 over `--remote-debugging-port`, reading each tab's `screenX`, `screenY`, `outerWidth`, `outerHeight`, and `Browser.getWindowForTarget`:
+
+- With `--screen-info={1920x1080 workAreaTop=32}` and no `--window-size`, Chrome sized the window as `WindowSizer::GetDefaultWindowBounds` does on macOS for a new profile: 1200 by 1004, the work area's height less 44, at 22,54. A window opened later sat at 44,76. Pages read those values, and the first tab, though `hidden`, read them too.
+- With `--window-size=945,1028` too, the window was 945 by 1028 at the same places. Adding `--window-position=10,42` put every window, later ones included, at 10,42, where a windowed Chrome offsets each new one.
+- With no flags, the window was 756 by 556 at 22,22, and a later one at 44,44. Pages read `outerWidth` and `outerHeight` in every run here. A tab opened with `background` reads them 0 in a windowed Chrome too, as [Focus and background tabs on macOS](#focus-and-background-tabs-on-macos) says, which may be what the probe in the image read.
+
+Chromium's `WindowSizer` at HEAD on 2026-11-12, for a new profile: on Linux and Windows a window is the work area's width less 20, at most 1050, or half the work area less 15 when the screen is at least 16:10 and the work area is wider than 1600; its height is the work area's less 20, at 10,10 inside the work area. On macOS it is the work area's width less 44, at most 1200, and its height less 44, at 22,22 inside it.
+
 ### Still to check
 
 - Whether headless Chrome started with a user agent by `--user-agent` sends the empty high-entropy client hints in `Sec-CH-UA-Full-Version-List` too, and whether `platformVersion` is empty in a windowed Chrome in the same container, which would make it Linux's and not headless Chrome's.
 - Whether headless Chrome's WebGL names SwiftShader without `--enable-unsafe-swiftshader`, as above, where the image's windowed Chrome has no WebGL.
+- Whether headless Chrome on Linux sizes its window by `WindowSizer`, 945 by 1028 on the default screen, and what `outerWidth`, `outerHeight`, `screenX`, and `screenY` read in a tab FingertipsMCP shows there.
 - What Chrome on Linux does when its last window closes, which the placeholder keeps from happening; and what desktop Chrome answers when attaching to a tab that has just closed, so `not_found` covers that race as it does on Android.
 - A Chrome stuck at start, such as on the keychain prompt, being killed by a launch that gave up on it, end to end. The unit test covers it with a process that ignores SIGTERM. The prompt asks for the Mac's login password, so it was not brought up again.
 - A call cancelled while Chrome starts, end to end. The unit tests cover it, but neither a REST client hanging up nor a short wait cancelled the start on a real Chrome.
