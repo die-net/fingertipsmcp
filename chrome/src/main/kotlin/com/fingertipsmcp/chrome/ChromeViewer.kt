@@ -638,7 +638,7 @@ class ChromeViewer(
 
     private fun String.decodeNews(): News? =
         try {
-            ApiJson.decodeFromString(News.serializer(), this)
+            ApiJson.decodeFromString<News>(this)
         } catch (_: SerializationException) {
             null
         }
