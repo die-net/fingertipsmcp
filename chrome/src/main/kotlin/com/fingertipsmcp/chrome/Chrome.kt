@@ -79,7 +79,9 @@ interface RunningBrowser : Closeable {
  * first window itself. That also means Chrome restores no session at launch. Neither the start nor
  * that window brings Chrome in front of the person's other apps ([openFirstWindow]). A windowed
  * Chrome also gets `--disable-backgrounding-occluded-windows`, so a window covered by another app
- * keeps drawing and taking input without being raised over it.
+ * keeps drawing and taking input without being raised over it. A headless Chrome with automation
+ * hidden gets a desktop's window and screen size and a windowed Chrome's user agent
+ * ([passesForWindowed]).
  */
 class ChromeLauncher(
     private val binary: BrowserBinary,
@@ -90,7 +92,23 @@ class ChromeLauncher(
     private val io: CoroutineContext,
     private val hideAutomation: Boolean = true,
     private val windows: Boolean = isWindows(),
+    private val desktopBar: DesktopBar = DesktopBar.forOs(),
 ) {
+    /**
+     * Whether a headless Chrome is made to look windowed: the window and screen a desktop has
+     * rather than headless Chrome's 800 by 600 screen, and a user agent without `HeadlessChrome`.
+     * Only when automation is hidden too, since a page that sees `navigator.webdriver` true has
+     * nothing left to learn from the rest.
+     */
+    private val passesForWindowed = headless && hideAutomation
+
+    /**
+     * The user agent a windowed Chrome of this release would send, once a start has read it from
+     * headless Chrome, or null until then and when the `--chrome-arg` flags set one. Chrome only
+     * takes it as a flag, so learning it takes one start without it.
+     */
+    @Volatile private var userAgent: String? = null
+
     fun arguments(): List<String> = buildList {
         add("--remote-debugging-pipe")
         add("--user-data-dir=${profile.absolutePath}")
@@ -106,17 +124,57 @@ class ChromeLauncher(
         // and drops input until its window is raised over the app the person is using, which
         // Windows refuses. With this it draws and takes input where it is.
         if (!headless) add("--disable-backgrounding-occluded-windows")
+        if (passesForWindowed) addAll(windowedFlags())
         addAll(extraArgs)
     }
 
     /**
-     * Starts Chrome and waits for it to answer. On any failure, a cancel included, it stops the
-     * Chrome it started and waits for it to exit, so a later launch doesn't find the profile taken.
-     * A Chrome that never answers may be stuck where it can't take SIGTERM either, as on a macOS
-     * keychain prompt, so it is killed when it doesn't exit.
+     * The window, screen, and user agent flags that [passesForWindowed] adds, less those
+     * [extraArgs] has.
+     */
+    private fun windowedFlags(): List<String> = buildList {
+        if (!extraArgs.hasSwitch("--window-size"))
+            add(
+                "--window-size=$HEADLESS_WIDTH,${HEADLESS_HEIGHT - desktopBar.top - desktopBar.bottom}"
+            )
+        if (!extraArgs.hasSwitch("--screen-info")) {
+            val workArea =
+                listOfNotNull(
+                    " workAreaTop=${desktopBar.top}".takeIf { desktopBar.top > 0 },
+                    " workAreaBottom=${desktopBar.bottom}".takeIf { desktopBar.bottom > 0 },
+                )
+            add("--screen-info={${HEADLESS_WIDTH}x$HEADLESS_HEIGHT${workArea.joinToString("")}}")
+        }
+        userAgent?.let { add("--user-agent=$it") }
+    }
+
+    /**
+     * Starts Chrome and waits for it to answer, as [startOnce] does. A headless Chrome made to look
+     * windowed that reports a user agent other than the one it should is stopped and started again
+     * with that one: on the first start, to drop `HeadlessChrome`, and after Chrome is updated, to
+     * change the version.
+     */
+    suspend fun start(): RunningBrowser {
+        val (chrome, reported) = startOnce()
+        val wanted =
+            reported
+                ?.takeIf { passesForWindowed && !extraArgs.hasSwitch("--user-agent") }
+                ?.let { windowedUserAgent(it, chrome.product) } ?: return chrome
+        withContext(NonCancellable) { chrome.stop() }
+        userAgent = wanted
+        logger.info("Restarting headless Chrome with the user agent a windowed Chrome sends")
+        return startOnce().first
+    }
+
+    /**
+     * Starts Chrome and waits for it to answer. It gives the user agent Chrome reports with it. On
+     * any failure, a cancel included, it stops the Chrome it started and waits for it to exit, so a
+     * later launch doesn't find the profile taken. A Chrome that never answers may be stuck where
+     * it can't take SIGTERM either, as on a macOS keychain prompt, so it is killed when it doesn't
+     * exit.
      */
     @Suppress("MissingUseCall") // The launch is stopped unless it is returned.
-    suspend fun start(): RunningBrowser {
+    private suspend fun startOnce(): Pair<RunningBrowser, String?> {
         profile.mkdirs()
         logFile.parentFile?.mkdirs()
         val logStart = if (logFile.exists()) logFile.length() else 0L
@@ -125,7 +183,7 @@ class ChromeLauncher(
         try {
             val cdp = launch.connect()
             cdp.start()
-            val product =
+            val version =
                 try {
                     browserVersion(cdp)
                 } catch (e: ApiException) {
@@ -138,7 +196,7 @@ class ChromeLauncher(
                 }
             logger.info(
                 "Started {} (pid {}) with profile {}",
-                product,
+                version.product,
                 launch.process.pid(),
                 profile,
             )
@@ -152,7 +210,8 @@ class ChromeLauncher(
                     )
                 }
             }
-            return LaunchedChrome(cdp, launch.process, product).also { started = it }
+            val chrome = LaunchedChrome(cdp, launch.process, version.product).also { started = it }
+            return chrome to version.userAgent
         } finally {
             if (started == null) withContext(NonCancellable) { launch.stop() }
         }
@@ -263,7 +322,7 @@ class ChromeAttacher(private val target: String, private val io: CoroutineContex
                     }
                 cdp.closeOnFailure {
                     cdp.start()
-                    val product = browserVersion(cdp)
+                    val product = browserVersion(cdp).product
                     logger.warn(
                         "Attached to {} on {}:{}. Use this for development only.",
                         product,
@@ -521,10 +580,58 @@ private const val CLOSE_MS = 3_000L
 private const val EXIT_WAIT_MS = 5_000L
 private const val WORK_STOP_MS = 2_000L
 
-private suspend fun browserVersion(connection: CdpBrowserConnection): String =
-    connection.root.call("Browser.getVersion").decodeCdp<BrowserVersion>()?.product ?: "Chrome"
+private suspend fun browserVersion(connection: CdpBrowserConnection): BrowserVersion =
+    connection.root.call("Browser.getVersion").decodeCdp<BrowserVersion>() ?: BrowserVersion()
 
-@Serializable private data class BrowserVersion(val product: String? = null)
+@Serializable
+private data class BrowserVersion(val product: String = "Chrome", val userAgent: String? = null)
+
+/**
+ * The user agent a windowed Chrome would send where headless Chrome [reported] its own, or null
+ * when it is that already. A windowed Chrome names itself `Chrome`, where headless Chrome says
+ * `HeadlessChrome`, and its major version is the one in [product], such as `Chrome/157.0.8103.39`.
+ * A user agent given with `--user-agent` is reported as given, so after an update the version in it
+ * is changed. Null when [product] names no version.
+ */
+internal fun windowedUserAgent(reported: String, product: String): String? {
+    val major = PRODUCT_MAJOR.find(product)?.groupValues?.get(1) ?: return null
+    val wanted = reported.replace("HeadlessChrome/", "Chrome/").replace(UA_MAJOR, "Chrome/$major")
+    return wanted.takeIf { it != reported }
+}
+
+/** A list of Chrome flags has [name], as `--name` alone or `--name=value`. */
+private fun List<String>.hasSwitch(name: String): Boolean = any {
+    it == name || it.startsWith("$name=")
+}
+
+private val PRODUCT_MAJOR = Regex("""^(?:Headless)?Chrome/(\d+)\.""")
+private val UA_MAJOR = Regex("""\bChrome/\d+""")
+private const val HEADLESS_WIDTH = 1920
+private const val HEADLESS_HEIGHT = 1080
+
+/**
+ * The bar a desktop keeps along an edge of the screen, which a maximized window doesn't cover, in
+ * CSS pixels at its default size. Without one, the screen's available height is its whole height,
+ * which bot checks read as a screen with no desktop around it. Headless Chrome gets the one for the
+ * OS its user agent names, and a window maximized beside it.
+ */
+enum class DesktopBar(val top: Int, val bottom: Int) {
+    /** GNOME's top bar. */
+    LINUX(top = 32, bottom = 0),
+    /** The menu bar since macOS 11, on a Mac without a notch. */
+    MAC(top = 24, bottom = 0),
+    /** The taskbar of Windows 11. */
+    WINDOWS(top = 0, bottom = 48);
+
+    companion object {
+        fun forOs(osName: String = System.getProperty("os.name").orEmpty()): DesktopBar =
+            when {
+                isWindows(osName) -> WINDOWS
+                isMac(osName) -> MAC
+                else -> LINUX
+            }
+    }
+}
 
 private fun logTail(log: File, from: Long): String {
     if (!log.exists() || log.length() <= from) return "Chrome wrote nothing to ${log.path}."
