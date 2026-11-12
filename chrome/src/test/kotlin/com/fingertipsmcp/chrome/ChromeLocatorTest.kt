@@ -140,14 +140,82 @@ class ChromeLocatorTest {
         assertFalse("--disable-backgrounding-occluded-windows" in args)
     }
 
-    private fun launcher(headless: Boolean, hideAutomation: Boolean) =
+    @Test
+    fun `headless gets a desktop screen`() {
+        val args = launcher(headless = true, hideAutomation = true).arguments()
+        assertTrue("--window-size=1920,1048" in args)
+        assertTrue("--screen-info={1920x1080 workAreaTop=32}" in args)
+        assertFalse(
+            launcher(headless = false, hideAutomation = true).arguments().any {
+                it.startsWith("--screen-info")
+            }
+        )
+    }
+
+    @Test
+    fun `desktop bar follows the OS`() {
+        fun flags(bar: DesktopBar) =
+            launcher(headless = true, hideAutomation = true, desktopBar = bar).arguments().filter {
+                it.startsWith("--window-size") || it.startsWith("--screen-info")
+            }
+        assertEquals(
+            listOf("--window-size=1920,1056", "--screen-info={1920x1080 workAreaTop=24}"),
+            flags(DesktopBar.MAC),
+        )
+        assertEquals(
+            listOf("--window-size=1920,1032", "--screen-info={1920x1080 workAreaBottom=48}"),
+            flags(DesktopBar.WINDOWS),
+        )
+        assertEquals(DesktopBar.MAC, DesktopBar.forOs("Mac OS X"))
+        assertEquals(DesktopBar.WINDOWS, DesktopBar.forOs("Windows 11"))
+        assertEquals(DesktopBar.LINUX, DesktopBar.forOs("Linux"))
+    }
+
+    @Test
+    fun `shown automation keeps screen`() {
+        val args = launcher(headless = true, hideAutomation = false).arguments()
+        assertFalse(args.any { it.startsWith("--window-size") || it.startsWith("--screen-info") })
+    }
+
+    @Test
+    fun `own window flags win`() {
+        val own = listOf("--window-size=1280,800", "--screen-info={1280x800}")
+        val args = launcher(headless = true, hideAutomation = true, extraArgs = own).arguments()
+        assertEquals(
+            own,
+            args.filter { it.startsWith("--window-size") || it.startsWith("--screen-info") },
+        )
+    }
+
+    @Test
+    fun `user agent drops Headless`() {
+        val headless =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36"
+        val windowed =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
+        assertEquals(windowed, windowedUserAgent(headless, "Chrome/157.0.8103.39"))
+        assertEquals(null, windowedUserAgent(windowed, "Chrome/157.0.8103.39"))
+        assertEquals(
+            windowed.replace("157", "158"),
+            windowedUserAgent(windowed, "Chrome/158.0.8200.1"),
+        )
+        assertEquals(null, windowedUserAgent(headless, "Chrome"))
+    }
+
+    private fun launcher(
+        headless: Boolean,
+        hideAutomation: Boolean,
+        extraArgs: List<String> = listOf("--lang=de"),
+        desktopBar: DesktopBar = DesktopBar.LINUX,
+    ) =
         ChromeLauncher(
             BrowserBinary(File("/c"), chromium = false),
             profile = File("/p"),
             headless = headless,
-            extraArgs = listOf("--lang=de"),
+            extraArgs = extraArgs,
             logFile = File("/l"),
             io = Dispatchers.IO,
             hideAutomation = hideAutomation,
+            desktopBar = desktopBar,
         )
 }

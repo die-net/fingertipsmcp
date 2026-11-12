@@ -94,7 +94,7 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 | `--stdio` | MCP over stdin and stdout. Logs go to stderr. Refuses `--host`, `--port`, and `--unix`. |
 | `--chrome PATH` | Browser binary. Also `FINGERTIPS_CHROME`. |
 | `--profile DIR` | Chrome user data directory. |
-| `--headless` | Chrome `--headless=new`. |
+| `--headless` | Chrome `--headless=new`, made to look windowed unless `--show-automation` is given; see [Headless](#headless). |
 | `--show-automation` | Leave `navigator.webdriver` true; see [Stealth](#stealth). |
 | `--chrome-arg ARG` | One more Chrome flag. Repeatable. |
 | `--attach PORT\|URL` | Development: use a Chrome already started with `--remote-debugging-port`. Refuses `--chrome`, `--profile`, `--headless`, `--chrome-arg`, and `--show-automation`, which only apply to a Chrome it starts. |
@@ -103,7 +103,7 @@ Frames reach each viewer as the phone's do, through the same code: a joining vie
 
 ## How it drives Chrome
 
-FingertipsMCP for Chrome starts Chrome with `--remote-debugging-pipe`: DevTools runs over two file descriptors instead of a port, so no other process can connect and there is no listening socket to find. Windows has no descriptors 3 and 4 to hand a child, so there Chrome takes the pipe as two inherited handles that `--remote-debugging-io-pipes` names. Java can't pass a child those, so FingertipsMCP for Chrome starts Chrome on Windows with `CreateProcessW`, through JNA, and a handle list that lets Chrome inherit only the two pipe ends and its log file. One browser connection carries every tab as a flattened session (`Target.attachToTarget`). Other flags, besides `--remote-debugging-io-pipes` on Windows, are kept to `--user-data-dir`, `--no-first-run`, `--no-default-browser-check`, and, explained under [Stealth](#stealth), `--disable-blink-features=AutomationControlled`, `--no-startup-window`, and `--disable-backgrounding-occluded-windows`: no `--enable-automation`, `--no-sandbox`, or `--disable-gpu`. The same DevTools hygiene as on Android applies: scripts run in an isolated world, and `Runtime`, `Debugger`, and `Emulation` are not enabled on pages (`browser_console` enables `Runtime` only for its own short session).
+FingertipsMCP for Chrome starts Chrome with `--remote-debugging-pipe`: DevTools runs over two file descriptors instead of a port, so no other process can connect and there is no listening socket to find. Windows has no descriptors 3 and 4 to hand a child, so there Chrome takes the pipe as two inherited handles that `--remote-debugging-io-pipes` names. Java can't pass a child those, so FingertipsMCP for Chrome starts Chrome on Windows with `CreateProcessW`, through JNA, and a handle list that lets Chrome inherit only the two pipe ends and its log file. One browser connection carries every tab as a flattened session (`Target.attachToTarget`). Other flags, besides `--remote-debugging-io-pipes` on Windows, are kept to `--user-data-dir`, `--no-first-run`, `--no-default-browser-check`, and, explained under [Stealth](#stealth), `--disable-blink-features=AutomationControlled`, `--no-startup-window`, and `--disable-backgrounding-occluded-windows`, and for headless Chrome `--window-size`, `--screen-info`, and `--user-agent`: no `--enable-automation`, `--no-sandbox`, or `--disable-gpu`. The same DevTools hygiene as on Android applies: scripts run in an isolated world, and `Runtime`, `Debugger`, and `Emulation` are not enabled on pages (`browser_console` enables `Runtime` only for its own short session).
 
 Browser input defaults to `cdp`, which on a desktop is mouse and keyboard events, never touch:
 
@@ -138,6 +138,17 @@ How human the browser looks depends most on where it runs:
 2. **Xorg with a GPU.** Real rendering and WebGL, but no person's desktop around it.
 3. **Xvfb**, as in the Docker image. Chrome renders in software and has no WebGL: Chrome 137 and later fall back to their software WebGL only with `--enable-unsafe-swiftshader`, and Chrome 157 in the image refused WebGL with or without Mesa installed. Canvas fingerprints show software rendering, and few people's Chrome lacks WebGL. The flag would make WebGL name SwiftShader, which bot checks know, and runs page shaders through a JIT that Chrome calls unsafe, so FingertipsMCP does not pass it.
 4. **Headless** (`--headless`). The easiest to tell apart from a person's Chrome.
+
+### Headless
+
+Headless Chrome names itself `HeadlessChrome` in its user agent, and has an 800 by 600 screen. Unless `--show-automation` is given, FingertipsMCP for Chrome makes it look windowed with three flags, each left out when `--chrome-arg` passes its own:
+
+- `--screen-info`, a common 1920 by 1080 desktop screen with the bar the OS keeps along an edge, and `--window-size`, a window maximized beside the bar. The bar is the default size for the OS that the user agent names: 32 px at the top on Linux, as GNOME's top bar is, 24 px at the top on macOS, as the menu bar is on a Mac without a notch, and 48 px at the bottom on Windows, as Windows 11's taskbar is. So on Linux Chrome gets `--screen-info={1920x1080 workAreaTop=32}` and `--window-size=1920,1048`. Without the bar, the screen's available height is its whole height, which bot checks read as no desktop. Without `--screen-info`, `screen` stays 800 by 600, smaller than the viewport. The size is fixed, not the display FingertipsMCP runs on.
+- `--user-agent`, set to the user agent headless Chrome reports with `HeadlessChrome` changed to `Chrome`, which is what a windowed Chrome of the same release sends. Chrome takes a user agent only as a flag, and its version is known only once it runs, so the first start reads it and Chrome is started again with it. A later start uses it, and starts again when Chrome reports a newer major version.
+
+With `--show-automation`, `navigator.webdriver` gives Chrome away anyway, so none is passed.
+
+What stays different from a windowed Chrome: with `--user-agent`, Chrome gives empty high-entropy client hints (`fullVersionList`, `uaFullVersion`, `platformVersion`, `architecture`) to a page that asks for them. The tab reads `hidden` and unfocused, `outerWidth` and `outerHeight` are 0, `Notification.permission` is `denied`, and lazy images far down a page do not load. Measurements are in [device-notes.md](device-notes.md#headless-chrome-in-the-docker-image).
 
 ### navigator.webdriver
 

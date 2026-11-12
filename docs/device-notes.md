@@ -1152,8 +1152,27 @@ Checked on 2026-11-08 in CI, with the image built from `docker-bake.hcl`: Google
 - A video viewer then got a header of 472 by 486, half the window's viewport, and a 786-byte frame of the placeholder 309 to 314 ms after its socket opened. The extension loaded and encoded with software H.264, OpenH264 by its warnings in Chrome's log, with no GPU.
 - Chrome logged errors for the missing D-Bus system and session buses and one GPU `kTransientFailure`. None of them stopped anything.
 
+### Headless Chrome in the Docker image
+
+Checked on 2026-11-10 with Google Chrome 157.0.8103.50 run with `--headless`, from a page script on a blank page and an HTTPS page, before FingertipsMCP passed any of the flags below itself:
+
+- With only `--headless`, `navigator.userAgent` named `HeadlessChrome/157.0.0.0`, though `navigator.userAgentData` named Google Chrome and Chromium. `screen` was 800 by 600 at a `devicePixelRatio` of 1, `outerWidth` and `outerHeight` were 0, `Notification.permission` was `denied`, and WebGL named SwiftShader. `navigator.webdriver` was false, `window.chrome` was there, and plugins, languages, and `hardwareConcurrency` looked as on a windowed Chrome.
+- `--window-size=1920,1080` gave a 1920 by 937 viewport, but `screen` stayed 800 by 600 until `--screen-info={1920x1080}` was added.
+- `--user-agent` changed `navigator.userAgent` and kept the brands, but `getHighEntropyValues` then gave an empty `fullVersionList` and empty `uaFullVersion`, `platformVersion`, and `architecture`. Without it they were `157.0.8103.50` for Google Chrome and Chromium, `157.0.8103.50`, an empty string, and `x86`.
+- With `--window-size=1920,1080`, `--screen-info={1920x1080}`, and `--user-agent` set to headless Chrome's own with `Headless` taken out, Cloudflare Turnstile and reCAPTCHA checks passed.
+
+On macOS on 2026-11-10, headless Chrome 157.0.8103.39's `Browser.getVersion` gave `product` `Chrome/157.0.8103.39` and its own `HeadlessChrome` user agent, and with `--user-agent` the user agent as given. The jar with `--headless` started Chrome, read that, and started it again 0.3 s later with `--window-size=1920,1056`, `--screen-info={1920x1080 workAreaTop=24}`, the bar for macOS, and the user agent with `Chrome/157.0.0.0`. With those two flags a page read a 1920 by 1080 screen with `availHeight` 1056 and `availTop` 24. With Linux's, `--window-size=1920,1048` and `workAreaTop=32`, it read `availHeight` 1048, `availTop` 32, and a 1920 by 961 viewport. `outerWidth` and `outerHeight` were still 0.
+
+CreepJS, in the image with those flags, counted against it a SwiftShader WebGL renderer, a screen whose available height is its full height (no taskbar), `ActiveText` drawn as `rgb(255, 0, 0)`, and a light color scheme. Checked on macOS the same day:
+
+- `--screen-info={1920x1080 workAreaBottom=48}` gave `availHeight` 1032, and `{0,0 1920x1080 workAreaTop=25 workAreaBottom=48}` gave 1007 with `availTop` 25. A windowed Chrome there had a 3840 by 2160 screen with `availHeight` 2129, under the menu bar.
+- A windowed Chrome drew `ActiveText` as `rgb(255, 0, 0)` too, so that check does not tell the two apart on Chrome 157.
+- Headless and windowed Chrome both followed the system's dark mode. Whether `--force-dark-mode` turns a headless Chrome in the image dark was not seen.
+
 ### Still to check
 
+- Whether headless Chrome started with a user agent by `--user-agent` sends the empty high-entropy client hints in `Sec-CH-UA-Full-Version-List` too, and whether `platformVersion` is empty in a windowed Chrome in the same container, which would make it Linux's and not headless Chrome's.
+- Whether headless Chrome's WebGL names SwiftShader without `--enable-unsafe-swiftshader`, as above, where the image's windowed Chrome has no WebGL.
 - What Chrome on Linux does when its last window closes, which the placeholder keeps from happening; and what desktop Chrome answers when attaching to a tab that has just closed, so `not_found` covers that race as it does on Android.
 - A Chrome stuck at start, such as on the keychain prompt, being killed by a launch that gave up on it, end to end. The unit test covers it with a process that ignores SIGTERM. The prompt asks for the Mac's login password, so it was not brought up again.
 - A call cancelled while Chrome starts, end to end. The unit tests cover it, but neither a REST client hanging up nor a short wait cancelled the start on a real Chrome.

@@ -141,6 +141,92 @@ class ChromeStartTest {
     }
 
     /**
+     * Headless Chrome's user agent says `HeadlessChrome`, and only a flag changes it, so the first
+     * start learns it and a second start sends the one a windowed Chrome would.
+     */
+    @Test
+    fun `headless restarts once`(@TempDir dir: File) = runTest {
+        val runs = startFake(dir, hideAutomation = true)
+        assertEquals(2, runs.size)
+        assertFalse(runs[0].any { it.startsWith("--user-agent") })
+        assertTrue(
+            "--user-agent=$LINUX_UA_START Chrome/157.0.0.0 Safari/537.36" in runs[1],
+            runs[1].toString(),
+        )
+    }
+
+    /** With automation shown, `navigator.webdriver` gives Chrome away, so it starts once. */
+    @Test
+    fun `shown automation starts once`(@TempDir dir: File) = runTest {
+        val runs = startFake(dir, hideAutomation = false)
+        assertEquals(1, runs.size)
+        assertFalse(runs[0].any { it.startsWith("--user-agent") })
+    }
+
+    /** A user agent passed with `--chrome-arg` is kept, and Chrome starts once. */
+    @Test
+    fun `own user agent starts once`(@TempDir dir: File) = runTest {
+        val runs = startFake(dir, hideAutomation = true, extraArgs = listOf("--user-agent=Mine"))
+        assertEquals(
+            listOf("--user-agent=Mine"),
+            runs.single().filter { it.startsWith("--user-agent") },
+        )
+    }
+
+    /**
+     * Starts and stops a headless [ChromeLauncher] on a fake Chrome that answers DevTools on the
+     * pipe as Chrome 157 does, reporting the user agent it was given or headless Chrome's own.
+     * Gives the arguments of each run.
+     */
+    private suspend fun startFake(
+        dir: File,
+        hideAutomation: Boolean,
+        extraArgs: List<String> = emptyList(),
+    ): List<List<String>> {
+        val runs = File(dir, "runs")
+        val chrome =
+            File(dir, "chrome").apply {
+                writeText(
+                    """
+                        #!/usr/bin/perl
+                        use IO::Handle;
+                        open(my ${'$'}log, '>>', '${runs.path}') or die;
+                        print ${'$'}log join("\t", @ARGV), "\n";
+                        close ${'$'}log;
+                        my (${'$'}ua) = map { /^--user-agent=(.*)/ ? ${'$'}1 : () } @ARGV;
+                        ${'$'}ua //= '$LINUX_UA_START HeadlessChrome/157.0.0.0 Safari/537.36';
+                        open(my ${'$'}in, '<&=', 3) or die;
+                        open(my ${'$'}out, '>&=', 4) or die;
+                        ${'$'}out->autoflush(1);
+                        local ${'$'}/ = "\0";
+                        while (my ${'$'}msg = <${'$'}in>) {
+                            my (${'$'}id) = ${'$'}msg =~ /"id":(\d+)/;
+                            my ${'$'}result = ${'$'}msg =~ /"Browser\.getVersion"/
+                                ? qq({"product":"Chrome/157.0.8103.39","userAgent":"${'$'}ua"})
+                                : '{}';
+                            print ${'$'}out qq({"id":${'$'}id,"result":${'$'}result}\0);
+                            exit 0 if ${'$'}msg =~ /"Browser\.close"/;
+                        }
+                    """
+                        .trimIndent()
+                )
+                setExecutable(true)
+            }
+        val launcher =
+            ChromeLauncher(
+                BrowserBinary(chrome, chromium = false),
+                profile = File(dir, "profile"),
+                headless = true,
+                extraArgs = extraArgs,
+                logFile = File(dir, "chrome.log"),
+                io = Dispatchers.IO,
+                hideAutomation = hideAutomation,
+            )
+        withContext(Dispatchers.IO) { launcher.start().stop() }
+        return runs.readLines().map { it.split('\t') }
+    }
+
+    /**
      * The first window opens with `background`, since `Target.createTarget` without it brings
      * Chrome in front of whichever app the person is using.
      */
@@ -267,6 +353,8 @@ class ChromeStartTest {
             )
 
     private companion object {
+        const val LINUX_UA_START =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
         const val EXIT_LIMIT_S = 10L
         const val CLOSE_LIMIT_MS = 10_000L
         const val CRLF = "\r\n"
