@@ -143,8 +143,9 @@ class ChromeLocatorTest {
     @Test
     fun `headless gets a desktop screen`() {
         val args = launcher(headless = true, hideAutomation = true).arguments()
-        assertTrue("--window-size=1920,1048" in args)
         assertTrue("--screen-info={1920x1080 workAreaTop=32}" in args)
+        // Chrome sizes the window for that screen, as a windowed Chrome does.
+        assertFalse(args.any { it.startsWith("--window-size") })
         assertFalse(
             launcher(headless = false, hideAutomation = true).arguments().any {
                 it.startsWith("--screen-info")
@@ -159,11 +160,11 @@ class ChromeLocatorTest {
                 it.startsWith("--window-size") || it.startsWith("--screen-info")
             }
         assertEquals(
-            listOf("--window-size=1920,1056", "--screen-info={1920x1080 workAreaTop=24}"),
+            listOf("--screen-info={1920x1080 workAreaTop=24}"),
             flags(DesktopBar.MAC),
         )
         assertEquals(
-            listOf("--window-size=1920,1032", "--screen-info={1920x1080 workAreaBottom=48}"),
+            listOf("--screen-info={1920x1080 workAreaBottom=48}"),
             flags(DesktopBar.WINDOWS),
         )
         assertEquals(DesktopBar.MAC, DesktopBar.forOs("Mac OS X"))

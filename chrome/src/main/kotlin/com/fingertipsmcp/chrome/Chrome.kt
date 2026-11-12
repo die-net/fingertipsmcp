@@ -80,8 +80,8 @@ interface RunningBrowser : Closeable {
  * that window brings Chrome in front of the person's other apps ([openFirstWindow]). A windowed
  * Chrome also gets `--disable-backgrounding-occluded-windows`, so a window covered by another app
  * keeps drawing and taking input without being raised over it. A headless Chrome with automation
- * hidden gets a desktop's window and screen size and a windowed Chrome's user agent
- * ([passesForWindowed]).
+ * hidden gets a desktop's screen and a windowed Chrome's user agent ([passesForWindowed]). Chrome
+ * sizes and places its windows on that screen as a windowed Chrome does on a new profile.
  */
 class ChromeLauncher(
     private val binary: BrowserBinary,
@@ -95,10 +95,11 @@ class ChromeLauncher(
     private val desktopBar: DesktopBar = DesktopBar.forOs(),
 ) {
     /**
-     * Whether a headless Chrome is made to look windowed: the window and screen a desktop has
-     * rather than headless Chrome's 800 by 600 screen, and a user agent without `HeadlessChrome`.
-     * Only when automation is hidden too, since a page that sees `navigator.webdriver` true has
-     * nothing left to learn from the rest.
+     * Whether a headless Chrome is made to look windowed: the screen a desktop has rather than
+     * headless Chrome's 800 by 600 screen, and a user agent without `HeadlessChrome`. Chrome then
+     * sizes and places each window on that screen as a windowed Chrome does on a new profile, so
+     * there is no `--window-size`. Only when automation is hidden too, since a page that sees
+     * `navigator.webdriver` true has nothing left to learn from the rest.
      */
     private val passesForWindowed = headless && hideAutomation
 
@@ -129,14 +130,9 @@ class ChromeLauncher(
     }
 
     /**
-     * The window, screen, and user agent flags that [passesForWindowed] adds, less those
-     * [extraArgs] has.
+     * The screen and user agent flags that [passesForWindowed] adds, less those [extraArgs] has.
      */
     private fun windowedFlags(): List<String> = buildList {
-        if (!extraArgs.hasSwitch("--window-size"))
-            add(
-                "--window-size=$HEADLESS_WIDTH,${HEADLESS_HEIGHT - desktopBar.top - desktopBar.bottom}"
-            )
         if (!extraArgs.hasSwitch("--screen-info")) {
             val workArea =
                 listOfNotNull(
@@ -610,10 +606,10 @@ private const val HEADLESS_WIDTH = 1920
 private const val HEADLESS_HEIGHT = 1080
 
 /**
- * The bar a desktop keeps along an edge of the screen, which a maximized window doesn't cover, in
- * CSS pixels at its default size. Without one, the screen's available height is its whole height,
- * which bot checks read as a screen with no desktop around it. Headless Chrome gets the one for the
- * OS its user agent names, and a window maximized beside it.
+ * The bar a desktop keeps along an edge of the screen, which windows don't cover, in CSS pixels at
+ * its default size. Without one, the screen's available height is its whole height, which bot
+ * checks read as a screen with no desktop around it. Headless Chrome gets the one for the OS its
+ * user agent names.
  */
 enum class DesktopBar(val top: Int, val bottom: Int) {
     /** GNOME's top bar. */
