@@ -79,8 +79,10 @@ internal suspend fun releaseScreen(
             "Your tab on screen stays open after your session ends, as an unowned tab a later " +
                 "session can claim by using it. Your other tabs close as usual."
         } else {
-            "Chrome is not showing one of your tabs, so your tabs close when your session ends " +
-                "as usual. To keep one, bring it on screen first."
+            "Chrome is not in front, or you have no tab, so none is kept, and your tabs close " +
+                "when your session ends as usual. For a person to finish in a page, bring its " +
+                "tab on screen with show true first (on a phone, unlock it too), then release " +
+                "again."
         }
     services.lease.releaseAsIs(holder)
     return if (held) {

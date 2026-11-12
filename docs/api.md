@@ -136,6 +136,7 @@ Authenticated errors are JSON:
 | 409 | `screen_taken` | A person in the viewer took the screen from this session, or has Chrome in front and the call would change what they see: opening a tab on the phone, or navigating, closing, or sending input or script to the tab on screen |
 | 409 | `download_saved` | The URL a tab opened on was a download, which Chrome saved rather than opened, so there is no page. A PDF is read in a tab of FingertipsMCP's own instead, except in an incognito tab, which would need the phone's logins to leave its profile |
 | 409 | `tab_limit` | A session has 4 tabs it opened, or all sessions 8 |
+| 409 | `tab_not_shown` | `screen_release` with `cleanup` false while Chrome is in front and shows none of the session's tabs, so none would be left for a person. Nothing is released; bring a tab on screen with `show` and call again |
 | 409 | `tab_stuck` | Chrome shows another session's tab and would not switch away, so the screen call did not run. Also a call from a session without the screen, made while Chrome is in front, when the holder's screen calls kept running for 5 s so FingertipsMCP could not check which tab Chrome shows; a new tab from `browser_open` is closed |
 | 409 | `text_not_cleared` | `clear` with the on-screen keyboard could not empty the field, or could not see it, so nothing was typed |
 | 409 | `took_screen` | A call from a session without the screen brought an app or Chrome forward; the message names it. A tab Chrome goes back to after the call returned closes, and the session gets a note starting `took_screen` instead |
@@ -285,7 +286,7 @@ Many pages fetch their data after they load, or when a person taps something. `c
 | `DELETE` | `/v1/tokens/{id}` | admin | Revoke → 204. Ends the token's sessions within 30 s |
 | `POST` | `/v1/sessions` | any | Start a session → 201 `SessionStarted` |
 | `DELETE` | `/v1/sessions/current` | any | End the session named in `Mcp-Session-Id` → 204 |
-| `POST` | `/v1/screen/release` | any | Optional `ScreenReleaseRequest`. Let the screen go for the session named in `Mcp-Session-Id` → `ActionResult`. `cleanup` (default true) hides the keyboard, goes home, and locks when no one waits and the phone was locked before; false leaves the screen as it is, such as for a person in the viewer, and keeps the session's tab Chrome is showing, as an unowned tab, after it ends |
+| `POST` | `/v1/screen/release` | any | Optional `ScreenReleaseRequest`. Let the screen go for the session named in `Mcp-Session-Id` → `ActionResult`. `cleanup` (default true) hides the keyboard, goes home, and locks when no one waits and the phone was locked before; false leaves the screen as it is, such as for a person in the viewer, and keeps the session's tab Chrome is showing, as an unowned tab, after it ends; with Chrome in front and none of its tabs showing it fails with `tab_not_shown` and releases nothing |
 | `GET` | `/v1/sessions` | admin | `SessionInfo[]`: sessions by a hash of their id, with age, idle time, whether they hold the screen, their tab count, how often they brought an app forward without it (`tookScreen`), and for one from `session_start`, the hash of the session that started it (`parent`) |
 | `DELETE` | `/v1/sessions/{hash}` | admin | End a session → 204 |
 | `GET` | `/v1/openapi.json` | observe | OpenAPI 3.1 document |

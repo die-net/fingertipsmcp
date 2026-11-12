@@ -34,7 +34,7 @@ public data class SessionStarted(
 @Serializable
 public data class ScreenReleaseRequest(
     @Doc(
-        "Clean up the screen for the next client: hide the keyboard and go home, and lock the phone if no one is waiting and it was locked before. false leaves the screen as it is instead, such as a captcha you cannot solve for a person to finish in the viewer, and keeps your tab that Chrome is showing after your session ends, as an unowned tab a later session can claim by using it."
+        "Clean up the screen for the next client: hide the keyboard and go home, and lock the phone if no one is waiting and it was locked before. false leaves the screen as it is instead, such as a captcha you cannot solve for a person to finish in the viewer, and keeps your tab that Chrome is showing after your session ends, as an unowned tab a later session can claim by using it. Fails with tab_not_shown, releasing nothing, when Chrome is in front and shows none of your tabs: bring one on screen first."
     )
     val cleanup: Boolean = true
 )
