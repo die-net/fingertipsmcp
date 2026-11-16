@@ -210,8 +210,8 @@ jobs:
             fingertipsmcp-chrome.platform=${{ matrix.platform }}
             fingertipsmcp-chrome.tags=fingertipsmcp-chrome:ci
             fingertipsmcp-chrome.args.CHROME_CACHE_KEY=${{ steps.week.outputs.key }}
-            fingertipsmcp-chrome.cache-from=type=gha,scope=chrome-min-${{ matrix.arch }}
-            fingertipsmcp-chrome.cache-to=type=gha,scope=chrome-min-${{ matrix.arch }}
+            fingertipsmcp-chrome.cache-from=type=gha,scope=chrome-${{ matrix.arch }}
+            fingertipsmcp-chrome.cache-to=type=gha,scope=chrome-${{ matrix.arch }}
 
       - uses: actions/setup-node@v7
         with:
