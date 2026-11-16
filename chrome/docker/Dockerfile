@@ -34,7 +34,14 @@ RUN printf 'path-exclude=%s\n' \
         '/usr/lib/*/dri/*' \
         >/etc/dpkg/dpkg.cfg.d/fingertips-no-mesa
 
-RUN apt-get update \
+# CI sets this to the ISO year and week, so a layer cache it keeps rebuilds the layer below weekly and
+# follows Chrome stable. The release leaves it empty and has no cache. It is declared here, so a
+# change to it leaves the layers above this line cached, and the echo keeps it in the command, so
+# the layer's cache key holds it.
+ARG CHROME_CACHE_KEY=
+
+RUN echo "Chrome cache key: ${CHROME_CACHE_KEY:-none}" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
         | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
