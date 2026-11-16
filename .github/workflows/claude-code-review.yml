@@ -47,6 +47,11 @@ jobs:
       contents: read
       pull-requests: read
     env:
+      # Keeps the OAuth token out of the environment of the commands Claude
+      # runs. Those are only git, but git diff --no-index can read any file
+      # on the runner, /proc/self/environ included, and a finding's body is
+      # posted on this public repository. The read-only GITHUB_TOKEN stays.
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
       # Subagents run in the foreground, so the main loop waits for every
       # reviewer and validator. In the background, the main loop ends its
       # turn to wait, and --json-schema then makes it answer before they
@@ -56,7 +61,7 @@ jobs:
       reviewed: ${{ steps.save.outcome == 'success' }}
     steps:
       # The head commit, so line numbers match the pull request's diff.
-      # Full history, for git diff, log and blame against the base.
+      # Full history, for git diff, log and show against the base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -152,6 +157,27 @@ jobs:
           ' "$dir/threads-all.json" > "$dir/threads.json"
           rm "$dir/threads-all.json"
 
+      # With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set, Claude Code runs each
+      # command in a bubblewrap sandbox and won't start without bwrap. The
+      # sandbox also needs socat, or every command fails while the review
+      # itself still succeeds. The action installs both only when
+      # allowed_non_write_users is set.
+      # Ubuntu 24.04 lets a program create a user namespace only if its
+      # AppArmor profile allows it, and ships no profile for bwrap. So give
+      # bwrap one, which keeps the restriction for every other program,
+      # then check that bwrap can build a sandbox.
+      - name: Install bubblewrap and socat
+        if: steps.prompt.outputs.found == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+            'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' |
+            sudo tee /etc/apparmor.d/bwrap >/dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --unshare-all --die-with-parent --ro-bind / / --dev /dev --proc /proc -- true
+          socat -V >/dev/null
+
       # github_token makes the action use this job's read-only token rather
       # than ask for the Claude App's, which can write. No inline comment
       # tool is allowed, so the action starts no comment server, and
@@ -167,7 +193,18 @@ jobs:
       # this reviewer runs nothing, so it should cost no more per finding.
       # Spend can pass the cap a little. Default permission mode runs only
       # the tools listed: Edit and Write in the scratch directory, and
-      # read-only git.
+      # git diff, log and show.
+      #
+      # Allow rules match a command's prefix, so the deny rules close what a
+      # prefix lets through (Claude Code's permission docs: a * can go
+      # anywhere in a rule and matches any text). --output=<file> writes
+      # any file, and git diff --no-index reads one. git blame is left out
+      # of the allow list: -S <file> can be bundled with other short flags,
+      # as in -wS, and --contents and --ignore-revs-file can be abbreviated,
+      # so no deny pattern covers the way each reads a file and prints its
+      # lines. These patterns only stop the usual spelling, which is why the
+      # environment scrub above matters. git rejects an abbreviation of
+      # --output and of --no-index, checked on git 2.54.
       #
       # The action's commit fixes the Claude Code version: v1.0.276 installs
       # 2.1.325 (src/entrypoints/run.ts:90). A new CLI comes only with a new
@@ -188,7 +225,9 @@ jobs:
             --permission-mode default
             --add-dir ${{ runner.temp }}/review
             --allowedTools
-            "Edit(/${{ runner.temp }}/review/scratch/**),Write(/${{ runner.temp }}/review/scratch/**),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)"
+            "Edit(/${{ runner.temp }}/review/scratch/**),Write(/${{ runner.temp }}/review/scratch/**),Bash(git diff *),Bash(git log *),Bash(git show *)"
+            --disallowedTools
+            "Bash(git add *),Bash(git rm *),Bash(git commit *),Bash(git push *),Bash(git *--output*),Bash(git *--no-index*)"
             --json-schema
             '{"type":"object","additionalProperties":false,"required":["open_findings","comments"],"properties":{"open_findings":{"type":"integer","minimum":0},"comments":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["path","line","side","body","checked"],"properties":{"path":{"type":"string","minLength":1,"maxLength":512},"line":{"type":"integer","minimum":1},"start_line":{"type":"integer","minimum":1},"side":{"enum":["RIGHT","LEFT"]},"body":{"type":"string","minLength":1,"maxLength":8000},"checked":{"enum":["running","reading"]}}}}}}'
 
@@ -287,7 +326,7 @@ jobs:
           done < <(jq -c --arg head "$HEAD" '
             .comments[]
             | {path, line, side, commit_id: $head,
-               body: ((.body | gsub("@(?<c>[A-Za-z0-9])"; "@​\(.c)"))
+               body: ((.body | gsub("@(?<c>[A-Za-z0-9])"; "@\u200b\(.c)"))
                       + "\n\n_Found by reading only._")}
               + (if .start_line then {start_line: .start_line, start_side: .side} else {} end)
           ' "$f")
