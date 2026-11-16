@@ -93,7 +93,7 @@ To share one Chrome among several clients, or open the viewer, run it as a serve
 - [API](docs/api.md): MCP tools, REST and WebSocket routes, scopes, errors, and OpenAPI.
 - [Sharing](docs/sharing.md): sessions, the screen queue, tab ownership, and how Chrome treats background tabs.
 - [Architecture](docs/architecture.md): how the app, the shell helper, and Chrome DevTools fit together.
-- [FingertipsMCP for Chrome](docs/chrome.md): options, Docker, how it drives Chrome, and how it keeps Chrome looking like a person's.
+- [FingertipsMCP for Chrome](docs/chrome.md): options, Docker, a systemd unit, how it drives Chrome, and how it keeps Chrome looking like a person's.
 - [Development](docs/development.md): building from source, tests, and emulators.
 
 ## AI Disclosure

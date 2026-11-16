@@ -1191,6 +1191,22 @@ Chromium's `WindowSizer` at HEAD on 2026-11-12, for a new profile: on Linux and 
 - The restore of a minimized window through the jar on Linux with a window manager. Windows is under [Windows 10 in a VM](#windows-10-in-a-vm).
 - Whether `--headless=new` loads the viewer's extension. FingertipsMCP for Chrome gives headless Chrome no extension selector, since nothing there takes focus.
 
+### Linux under systemd
+
+Checked on 2026-11-10 on one Linux host, with the unit in [chrome.md](chrome.md#systemd), which ran `--headless` as a system user. The distribution, kernel, and Chrome version were not recorded.
+
+- With `SystemCallFilter=@system-service` alone, Chrome's zygote died as Chrome started, with `Zygote process exited prematurely with exit code -1 (namespace sandbox)`, followed by a crashpad `ptrace: Operation not permitted`. With the filter removed, Chrome started.
+- With a second line, `SystemCallFilter=mount umount2 pivot_root chroot unshare setns`, Chrome started with its sandbox on. Nothing else in the unit changed. Which of the six calls Chrome needs was not narrowed down, and whether `chrome://sandbox` showed the namespace sandbox was not looked at.
+
+### Still to check for systemd
+
+- Which of `mount`, `umount2`, `pivot_root`, `chroot`, `unshare`, and `setns` Chrome needs, so the second filter line can be shorter.
+- A distribution with `kernel.unprivileged_userns_clone` at 0 (Debian-family), and what the unit does there before and after the sysctl.
+- Ubuntu 24.04 or later, with `kernel.apparmor_restrict_unprivileged_userns` at 1, with Chrome from Google's apt repository and with another copy of Chrome.
+- `ProtectProc` and `ProcSubset`, which were left off without being tried.
+- Other Chrome versions, and ARM64 Linux, where `SystemCallArchitectures=native` and the system call names may differ.
+- The score `systemd-analyze security fingertips-chrome` gives, and the settings it flags.
+
 ### Windows on GitHub's runner
 
 On GitHub's Windows Server 2025 runner on 2026-11-09, with Chrome 156.0.8078.80 and Temurin 21.0.13, started from the job's Git Bash:

@@ -213,6 +213,119 @@ docker build -f chrome/docker/Dockerfile -t fingertipsmcp-chrome chrome
 
 CI and the release build it from `docker-bake.hcl` at the repository root, which names the same Dockerfile.
 
+## systemd
+
+A headless FingertipsMCP for Chrome can run as a system service on Linux. The unit below runs it as its own user with most of systemd's sandboxing on, and leaves off the few settings that Chrome's sandbox and the JIT compilers need. It has been run on one Linux host, as written here. No other distribution, Chrome version, or architecture has been tried; [device-notes.md](device-notes.md#linux-under-systemd) lists what is unchecked.
+
+Make the user, and put the jar outside `/home`:
+
+```sh
+useradd --system --create-home --home-dir /home/fingertips --shell /usr/sbin/nologin fingertips
+install -D -m 0644 fingertipsmcp-chrome.jar /opt/fingertips/fingertipsmcp-chrome.jar
+```
+
+Save this as `/etc/systemd/system/fingertips-chrome.service`:
+
+```ini
+[Unit]
+Description=FingertipsMCP for Chrome (headless)
+After=network.target
+
+[Service]
+User=fingertips
+Group=fingertips
+Environment=HOME=/home/fingertips
+# Only needed when Chrome is not where FingertipsMCP looks for it.
+# Environment=FINGERTIPS_CHROME=/usr/bin/google-chrome-stable
+ExecStart=/usr/bin/java -jar /opt/fingertips/fingertipsmcp-chrome.jar --headless --host 127.0.0.1 --port 47100
+Restart=on-failure
+TimeoutStopSec=15
+
+# Files: read-only except the user's home, which holds the config, the Chrome
+# profile, and Chrome's log. Other users' homes are hidden.
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/fingertips
+ReadWritePaths=/home/fingertips
+PrivateTmp=yes
+PrivateDevices=yes
+
+# Kernel: Chrome has no use for any of these.
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Privileges: none to gain, and no capabilities at all.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+UMask=0077
+
+# Network and system calls: Unix sockets for Chrome's own processes, IP for the
+# server and for pages, and netlink for Chrome's network change detection. The
+# second filter line is explained below.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=mount umount2 pivot_root chroot unshare setns
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Start the service, then mint a token. The service saves its `--host` and `--port` to `settings.json`, and `token create` writes `pairing.json` from there, so run it second. Run first, it would pick a random port and write that one.
+
+```sh
+systemctl enable --now fingertips-chrome
+sudo -u fingertips java -jar /opt/fingertips/fingertipsmcp-chrome.jar token create
+sudo cat /home/fingertips/.config/fingertips-chrome/pairing.json
+```
+
+Chrome starts on the first call, not with the service. The files are under `/home/fingertips/.config/fingertips-chrome` and `/home/fingertips/.local/share/fingertips-chrome`, as [Files](#files) lists. Keep `--host` on loopback, and reach the port from another computer through an SSH tunnel.
+
+### The second `SystemCallFilter` line
+
+`@system-service` leaves out `mount`, `umount2`, `pivot_root`, `chroot`, `unshare`, and `setns`, which Chrome's namespace sandbox calls. With only the first line, Chrome fails at start, and its log has:
+
+```
+Zygote process exited prematurely with exit code -1 (namespace sandbox)
+```
+
+followed by a crashpad `ptrace: Operation not permitted`. Taking the filter off let Chrome start. Adding the second line did too, with the sandbox on, and nothing else in the unit changed. Filter lines that don't start with `~` add up, so the two together allow `@system-service` and those six calls. Don't use `--no-sandbox` to get around this. FingertipsMCP never passes it, and a page that escaped a renderer would then run as the service's user.
+
+### Settings left off
+
+- `PrivateUsers`: Chrome's sandbox needs to make user namespaces as an unprivileged user, which this setting changes.
+- `RestrictNamespaces`: the sandbox makes user, PID, and network namespaces, which this setting refuses.
+- `MemoryDenyWriteExecute`: V8 and the JVM's JIT need memory that is writable and executable.
+- `ProtectProc` and `ProcSubset`: not tried. Chrome reads parts of `/proc` that they hide, so they are left off until someone checks.
+
+### The jar and `ProtectHome`
+
+`ProtectHome=tmpfs` empties `/home`, `/root`, and `/run/user` for the service, and `BindPaths=` puts the service user's home back. A jar in another user's home is not there for `ExecStart=` to find, so keep it outside `/home`, as above, or put its directory in `BindReadOnlyPaths=`.
+
+### Unprivileged user namespaces
+
+Chrome's sandbox needs the kernel to let an unprivileged process make a user namespace. Some distributions limit that, and the unit can't change it. These are untested, since the host that ran the unit allowed it:
+
+- Debian-family kernels with `kernel.unprivileged_userns_clone` at 0 refuse it. Set it to 1 with `sysctl`, in a file under `/etc/sysctl.d/`.
+- Ubuntu 24.04 and later set `kernel.apparmor_restrict_unprivileged_userns` to 1, which lets only programs that an AppArmor profile allows to make one. Whether the Chrome you run has such a profile, and what to do if it doesn't, has not been checked.
+
+If Chrome still fails at start, read `/home/fingertips/.local/share/fingertips-chrome/chrome.log` and `journalctl -u fingertips-chrome`.
+
+### Checking the unit
+
+```sh
+systemd-analyze security fingertips-chrome
+```
+
+prints each setting's exposure and an overall score. The settings left off above keep it from a perfect one.
+
 ## Files
 
 | Path | |
