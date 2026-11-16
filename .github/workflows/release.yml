@@ -70,9 +70,21 @@ jobs:
 
   image:
     # ghcr.io/die-net/fingertipsmcp-chrome: Google Chrome on Xvfb, for amd64 and arm64. The jar is the same on
-    # both; arm64 builds under QEMU.
+    # both. Each platform builds on a runner of its own architecture and pushes its image by digest, and
+    # `image-manifest` joins the two under the tags. There is no layer cache, so every release builds the
+    # Chrome stable of that day.
     needs: release
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -82,9 +94,59 @@ jobs:
           name: fingertipsmcp-chrome-jar
           path: chrome/build/dist
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
         with:
-          platforms: arm64
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only the labels matter here. The tags go on in `image-manifest`.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
+
+      # docker-bake.hcl is the build CI tests. The image is pushed by digest, with no tag.
+      - id: push
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          files: |
+            ./docker-bake.hcl
+            ${{ steps.meta.outputs.bake-file }}
+          targets: fingertipsmcp-chrome
+          set: |
+            fingertipsmcp-chrome.platform=${{ matrix.platform }}
+            fingertipsmcp-chrome.tags=
+            fingertipsmcp-chrome.output=type=image,name=ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ fromJSON(steps.push.outputs.metadata)['fingertipsmcp-chrome']['containerimage.digest'] }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-manifest:
+    # Joins the per-platform images into one multi-platform image under the release tags.
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v4
 
@@ -103,20 +165,30 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      # docker-bake.hcl is the build CI tests; the metadata adds the tags and labels.
-      - id: push
-        uses: docker/bake-action@v7
-        with:
-          source: .
-          files: |
-            ./docker-bake.hcl
-            ${{ steps.meta.outputs.bake-file }}
-          targets: fingertipsmcp-chrome
-          push: true
+      - name: Create the manifest list
+        id: manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
+        run: |
+          digests=(*)
+          test "${#digests[@]}" = 2
+          # shellcheck disable=SC2046 # The word splitting builds the -t flags and the digest references.
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " "${digests[@]}")
+          first_tag="$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          docker buildx imagetools inspect "$first_tag"
+          index="$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest}}')"
+          # The index must hold an image for each platform, besides any attestation manifests.
+          for platform in linux/amd64 linux/arm64; do
+            jq -e --arg p "$platform" 'any(.manifests[]; (.platform.os + "/" + .platform.architecture) == $p)' <<< "$index" > /dev/null
+          done
+          echo "digest=$(jq -r .digest <<< "$index")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest-build-provenance@v4
         if: ${{ !github.event.repository.private }}
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/fingertipsmcp-chrome
-          subject-digest: ${{ fromJSON(steps.push.outputs.metadata)['fingertipsmcp-chrome']['containerimage.digest'] }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
