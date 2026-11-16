@@ -180,8 +180,10 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-24.04
+            arch: amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -194,6 +196,11 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
+      # The ISO year and week, which busts the cached apt layer once a week so it follows Chrome stable.
+      - id: week
+        run: echo "key=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      # Each platform keeps its own cache scope, so the two jobs don't overwrite each other's.
       - uses: docker/bake-action@v7
         with:
           source: .
@@ -202,6 +209,9 @@ jobs:
           set: |
             fingertipsmcp-chrome.platform=${{ matrix.platform }}
             fingertipsmcp-chrome.tags=fingertipsmcp-chrome:ci
+            fingertipsmcp-chrome.args.CHROME_CACHE_KEY=${{ steps.week.outputs.key }}
+            fingertipsmcp-chrome.cache-from=type=gha,scope=chrome-${{ matrix.arch }}
+            fingertipsmcp-chrome.cache-to=type=gha,scope=chrome-${{ matrix.arch }},mode=max
 
       - uses: actions/setup-node@v7
         with:
