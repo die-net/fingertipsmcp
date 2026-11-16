@@ -105,7 +105,7 @@ java -jar fingertipsmcp-chrome.jar
 
 `token create` writes the port and token to `~/.config/fingertips-chrome/pairing.json` (`%LOCALAPPDATA%\fingertips-chrome\pairing.json` on Windows), readable only by you, in the same shape as the phone's pairing file. The token gets the `observe`, `control`, and `browser` scopes. `--scopes` replaces them, for example `--name viewer --scopes stream,control` for a viewer.
 
-Either way, it starts Chrome with a profile of its own, so the first run is a clean Chrome to sign in to. Stopping FingertipsMCP for Chrome closes Chrome. [chrome.md](chrome.md) has the options, a Docker image, where its files live, and how it keeps Chrome looking like a person's.
+Either way, it starts Chrome with a profile of its own, so the first run is a clean Chrome to sign in to. Stopping FingertipsMCP for Chrome closes Chrome. [chrome.md](chrome.md) has the options, a Docker image, a [systemd unit](chrome.md#systemd), where its files live, and how it keeps Chrome looking like a person's.
 
 ## Connecting an agent
 
