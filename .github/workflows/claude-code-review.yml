@@ -1,45 +1,308 @@
 name: Claude Code Review
 
+# Reviews every push to a pull request with the prompt in
+# .github/claude-review/review.md, read from the default branch.
+#
+# Two jobs, so that the job that reads the pull request's code holds no
+# token that can write to the repository. The review job runs Claude with a
+# read-only GITHUB_TOKEN, and returns its findings as an artifact. Claude
+# runs none of the pull request's code: a Gradle run would execute build
+# scripts and plugins the pull request can change, and
+# gradle/wrapper/gradle-wrapper.properties picks the Gradle distribution
+# that gets downloaded, so Claude only reads the code and the git history.
+# The post job runs no code from the pull request: it checks the artifact
+# against a fixed schema and posts it.
+#
+# Never add pull_request_target or workflow_run to any workflow here. They
+# run with this repository's secrets and a token that can write, so a
+# workflow that checks out or runs a pull request's code under them hands
+# both to whoever wrote that code, including a fork's author.
+
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+
+permissions: {}
+
+# A new push makes the review of the previous one moot, so stop it rather
+# than pay for both.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+  review:
+    # The review job holds CLAUDE_CODE_OAUTH_TOKEN and reads the pull
+    # request's files, so it runs only for branches in this repository
+    # written by people who can already push here.
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No id-token: the action gets no Claude GitHub App token, and uses
+    # this job's read-only GITHUB_TOKEN instead.
     permissions:
       contents: read
       pull-requests: read
-      issues: read
-      id-token: write
-
+    env:
+      # Subagents run in the foreground, so the main loop waits for every
+      # reviewer and validator. In the background, the main loop ends its
+      # turn to wait, and --json-schema then makes it answer before they
+      # report.
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+    outputs:
+      reviewed: ${{ steps.save.outcome == 'success' }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # The head commit, so line numbers match the pull request's diff.
+      # Full history, for git diff, log and blame against the base.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Run Claude Code Review
-        id: claude-review
-        uses: anthropics/claude-code-action@v1
+      - name: Load the review prompt from the default branch
+        id: prompt
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          src="refs/remotes/origin/$DEFAULT_BRANCH:.github/claude-review/review.md"
+          # Only before the pull request that adds the prompt has merged.
+          if ! git cat-file -e "$src" 2>/dev/null; then
+            echo "::warning::No review prompt on $DEFAULT_BRANCH yet, so no review."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dir="$RUNNER_TEMP/review"
+          mkdir -p "$dir/scratch"
+          eof="EOF_$(openssl rand -hex 16)"
+          {
+            echo "found=true"
+            echo "text<<$eof"
+            git show "$src"
+            cat <<EOT
+
+          ## This run
+
+          - Repository: $REPO
+          - Pull request: #$PR
+          - Base commit: $BASE
+          - Head commit: $HEAD
+          - Checkout: $GITHUB_WORKSPACE
+          - Pull request title, description and author: $dir/pr.json
+          - Unresolved review threads: $dir/threads.json
+          - Scratch directory: $dir/scratch
+          EOT
+            echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the pull request and its open review threads
+        if: steps.prompt.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          dir="$RUNNER_TEMP/review"
+          jq '.pull_request | {title, body, author: .user.login}' "$GITHUB_EVENT_PATH" > "$dir/pr.json"
+          # shellcheck disable=SC2016 # GraphQL variables, not shell.
+          gh api graphql --paginate \
+            -F owner="$OWNER" -F name="$NAME" -F pr="$PR" \
+            -f query='
+              query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100, after: $endCursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved isOutdated path line
+                        comments(first: 20) { nodes { author { login } body } }
+                      }
+                    }
+                  }
+                }
+              }' \
+            --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved | not)
+              | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body}]}' \
+            | jq -s . > "$dir/threads-all.json"
+
+          # Anyone who can read the repository can comment, so keep only
+          # comments by people who can write to it, and by this workflow's
+          # own bot, which posted the earlier findings. A thread left with no
+          # comments is dropped.
+          trusted='["github-actions"]'
+          for login in $(jq -r '[.[].comments[].author | select(. != null)] | unique | .[]' "$dir/threads-all.json"); do
+            [[ "$login" =~ ^[A-Za-z0-9-]+$ ]] || continue
+            perm=$(gh api "repos/$OWNER/$NAME/collaborators/$login/permission" --jq .permission 2>/dev/null) || continue
+            if [ "$perm" = admin ] || [ "$perm" = write ]; then
+              trusted=$(jq -c --arg l "$login" '. + [$l]' <<<"$trusted")
+            fi
+          done
+          jq --argjson ok "$trusted" '
+            map(.comments |= map(select(.author as $a | $ok | index($a))))
+            | map(select(.comments | length > 0))
+          ' "$dir/threads-all.json" > "$dir/threads.json"
+          rm "$dir/threads-all.json"
+
+      # github_token makes the action use this job's read-only token rather
+      # than ask for the Claude App's, which can write. No inline comment
+      # tool is allowed, so the action starts no comment server, and
+      # classify_inline_comments: 'false' skips its step that posts
+      # buffered comments. Claude returns its comments through --json-schema.
+      #
+      # Opus runs the main loop; the prompt picks a model for each subagent.
+      # --max-turns bounds the main loop only, which takes about 15 turns.
+      # --max-budget-usd bounds the whole run, subagents included, by Claude
+      # Code's own cost estimate, which it keeps on a subscription token
+      # too. The cap is $15. The sibling Go repository's trial reviews came
+      # to $2 to $4.30 under a $10 cap, and this repository is larger, but
+      # this reviewer runs nothing, so it should cost no more per finding.
+      # Spend can pass the cap a little. Default permission mode runs only
+      # the tools listed: Edit and Write in the scratch directory, and
+      # read-only git.
+      #
+      # The action's commit fixes the Claude Code version: v1.0.276 installs
+      # 2.1.325 (src/entrypoints/run.ts:90). A new CLI comes only with a new
+      # action pin, so check this job's needs when bumping it.
+      - name: Review
+        id: claude
+        if: steps.prompt.outputs.found == 'true'
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          github_token: ${{ github.token }}
+          classify_inline_comments: 'false'
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: >-
+            --model opus
+            --max-turns 60
+            --max-budget-usd 15
+            --permission-mode default
+            --add-dir ${{ runner.temp }}/review
+            --allowedTools
+            "Edit(/${{ runner.temp }}/review/scratch/**),Write(/${{ runner.temp }}/review/scratch/**),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)"
+            --json-schema
+            '{"type":"object","additionalProperties":false,"required":["open_findings","comments"],"properties":{"open_findings":{"type":"integer","minimum":0},"comments":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["path","line","side","body","checked"],"properties":{"path":{"type":"string","minLength":1,"maxLength":512},"line":{"type":"integer","minimum":1},"start_line":{"type":"integer","minimum":1},"side":{"enum":["RIGHT","LEFT"]},"body":{"type":"string","minLength":1,"maxLength":8000},"checked":{"enum":["running","reading"]}}}}}}'
 
+      - name: Save the findings
+        id: save
+        if: steps.prompt.outputs.found == 'true'
+        env:
+          RESULT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          if [ -z "$RESULT" ]; then
+            echo "::error::The review returned no findings object."
+            exit 1
+          fi
+          printf '%s\n' "$RESULT" > "$RUNNER_TEMP/findings.json"
+
+      - if: steps.save.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-findings
+          path: ${{ runner.temp }}/findings.json
+          retention-days: 7
+
+  # Posts the review's comments, and marks a clean review with a thumbs-up
+  # on the pull request instead of a comment, taking it back when a later
+  # push has findings. This job can write to the pull request, so it checks
+  # out nothing and runs no code from it. The artifact was written in a job
+  # that read the pull request's files, so it is untrusted data: it is
+  # checked against a fixed schema, read only through jq, and never expanded
+  # into a script.
+  post:
+    needs: review
+    if: needs.review.outputs.reviewed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      # GitHub lists the issue reaction endpoints, which also serve pull
+      # requests, under the Issues permission.
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: review-findings
+          path: ${{ runner.temp }}/findings
+
+      - name: Post the comments and set the reaction
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          raw="$RUNNER_TEMP/findings/findings.json"
+          f="$RUNNER_TEMP/findings.json"
+          # The same shape as the review's --json-schema, checked again here
+          # because the file passed through a job that read untrusted files.
+          # The file is read as one array of every JSON value in it, which
+          # must hold exactly one, so a second value cannot slip past the
+          # check: jq -e alone answers for the last value only. Everything
+          # after reads that one checked value. A path may not be absolute
+          # or step out of the repository.
+          if ! jq -es '
+            def int: type == "number" and . == floor;
+            length == 1 and (.[0] |
+            type == "object"
+            and (keys - ["open_findings", "comments"] | length == 0)
+            and (.open_findings | int and . >= 0)
+            and (.comments | type == "array" and length <= 32)
+            and (.open_findings >= (.comments | length))
+            and all(.comments[];
+              type == "object"
+              and (keys - ["path", "line", "start_line", "side", "body", "checked"] | length == 0)
+              and (.path | type == "string" and length >= 1 and length <= 512
+                   and (test("^/|(^|/)\\.\\.(/|$)") | not))
+              and (.line | int and . >= 1)
+              and (if has("start_line") then (.start_line | int and . >= 1) and .start_line < .line else true end)
+              and (.side == "RIGHT" or .side == "LEFT")
+              and (.body | type == "string" and length >= 1 and length <= 8000)
+              and (.checked == "running" or .checked == "reading")))
+          ' "$raw" >/dev/null; then
+            echo "::error::The findings file does not match the schema."
+            exit 1
+          fi
+          jq -cs '.[0]' "$raw" > "$f"
+
+          # Each comment is built as JSON by jq and sent on stdin. An @ before
+          # a name gets a zero-width space after it, so a comment cannot
+          # mention, and notify, anyone. The commit is the event's head, not
+          # anything from the file. This reviewer runs no code, so every
+          # comment gets the same label, whatever "checked" says.
+          failed=0
+          while IFS= read -r comment; do
+            if ! gh api -X POST "repos/$REPO/pulls/$PR/comments" --input - --silent <<<"$comment"; then
+              failed=$((failed + 1))
+            fi
+          done < <(jq -c --arg head "$HEAD" '
+            .comments[]
+            | {path, line, side, commit_id: $head,
+               body: ((.body | gsub("@(?<c>[A-Za-z0-9])"; "@​\(.c)"))
+                      + "\n\n_Found by reading only._")}
+              + (if .start_line then {start_line: .start_line, start_side: .side} else {} end)
+          ' "$f")
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed comment(s) could not be posted."
+            exit 1
+          fi
+
+          if [ "$(jq .open_findings "$f")" -eq 0 ]; then
+            # Answers 200 instead of 201 when the reaction is already there.
+            gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content=+1 --silent
+          else
+            gh api --paginate "repos/$REPO/issues/$PR/reactions?content=%2B1" \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | .id' |
+            while read -r id; do
+              gh api -X DELETE "repos/$REPO/issues/$PR/reactions/$id" --silent
+            done
+          fi

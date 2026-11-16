@@ -1,5 +1,17 @@
 name: Claude Code
 
+# Runs Claude when someone mentions @claude in an issue, a pull request
+# comment or a review.
+#
+# Never add pull_request_target or workflow_run to any workflow here. They
+# run with this repository's secrets and a token that can write, so a
+# workflow that checks out or runs a pull request's code under them hands
+# both to whoever wrote that code, including a fork's author.
+#
+# Do not mention @claude on a pull request from a fork. Claude then reads and
+# runs the fork's code while holding a token that can push to this
+# repository and CLAUDE_CODE_OAUTH_TOKEN.
+
 on:
   issue_comment:
     types: [created]
@@ -10,41 +22,41 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions: {}
+
 jobs:
   claude:
+    # Only people with a role in this repository can start Claude, so a
+    # stranger's comment never spends the subscription or reaches a session
+    # that can push. COLLABORATOR includes read-only collaborators, so the
+    # action's own check that the actor can write still applies.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
+    # The action writes through the Claude GitHub App's token, which it gets
+    # by trading the job's OIDC token. GITHUB_TOKEN itself only checks out
+    # the repository and reads CI results for the github_ci tools.
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # Keep checkout's credentials: the action fetches the pull request's
+        # branch with them before it sets up its own (branch.ts:241).
         with:
           fetch-depth: 1
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
-          additional_permissions: |
-            actions: read
-
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
-
