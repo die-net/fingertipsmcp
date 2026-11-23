@@ -1177,6 +1177,15 @@ On macOS on 2026-11-12, with headless Chrome 157.0.8103.39 over `--remote-debugg
 
 Chromium's `WindowSizer` at HEAD on 2026-11-12, for a new profile: on Linux and Windows a window is the work area's width less 20, at most 1050, or half the work area less 15 when the screen is at least 16:10 and the work area is wider than 1600; its height is the work area's less 20, at 10,10 inside the work area. On macOS it is the work area's width less 44, at most 1200, and its height less 44, at 22,22 inside it.
 
+Whether headless Chrome draws its own tab strip and toolbar, so that something could capture them, checked on 2026-11-22:
+
+- On macOS, headless Chrome 157.0.8103.79 with `--screen-info={1920x1080 workAreaTop=24}` owned a real window of 1200 by 1012, as `Browser.getWindowForTarget` reported, kept off the screen just below the display. The window server listed it as not on screen, with two 1 by 1 windows beside it. The page's viewport was 1200 by 925, so the tab strip and toolbar take 87 px of the window's height, and a page sees `outerHeight` larger than `innerHeight` as in a windowed Chrome.
+- `Page.captureScreenshot`, with `fromSurface` false too, returned only the page, with the window's rounded bottom corners. As under [Tab capture for a viewer](#tab-capture-for-a-viewer), `chrome.tabCapture` captures only the page as well.
+- `getDisplayMedia` with `--use-fake-ui-for-media-stream`, from a page on `http://127.0.0.1` with focus emulated, failed with `NotReadableError: Could not start video source` for both a screen and the current tab. Headless Chrome on macOS took the Mac's real display, and Chrome had no Screen Recording permission, so this says nothing about the hidden window.
+- On Linux in the 0.5.3 image, headless Chrome 158.0.8127.36 has the `--ozone-dump-file` switch, which is meant to write each window's frames to a file. It wrote nothing in 12 s, as given, with `--disable-gpu`, and with `--ozone-platform=headless` too.
+
+So nothing FingertipsMCP uses, or that these tries reached, captures headless Chrome's tab strip or toolbar. A windowed Chrome on Xvfb, as the image runs, draws them on the X display.
+
 ### Still to check
 
 - Whether headless Chrome started with a user agent by `--user-agent` sends the empty high-entropy client hints in `Sec-CH-UA-Full-Version-List` too, and whether `platformVersion` is empty in a windowed Chrome in the same container, which would make it Linux's and not headless Chrome's.
@@ -1189,6 +1198,7 @@ Chromium's `WindowSizer` at HEAD on 2026-11-12, for a new profile: on Linux and 
 - A viewer's mouse moves followed by an agent's tap on a real Chrome, to see the agent's path start where the person left the pointer. The unit tests cover it.
 - Chrome 125 to 148 falling back to `Page.bringToFront` and `Target.activateTarget` for tab selection, end to end on macOS and Linux. On Windows, Chrome 125 ran it, as [Windows 10 in a VM](#windows-10-in-a-vm) says.
 - The restore of a minimized window through the jar on Linux with a window manager. Windows is under [Windows 10 in a VM](#windows-10-in-a-vm).
+- Whether headless Chrome paints its tab strip and toolbar at all. On macOS a capture of the hidden window by its window id, which needs Screen Recording permission, might show it.
 - Whether `--headless=new` loads the viewer's extension. FingertipsMCP for Chrome gives headless Chrome no extension selector, since nothing there takes focus.
 
 ### Linux under systemd
